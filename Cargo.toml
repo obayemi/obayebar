@@ -2,3 +2,39 @@
 name = "obayebar"
 version = "0.1.0"
 edition = "2021"
+description = "Wayland status bar inspired by caelestia-shell"
+license = "MIT"
+repository = "https://github.com/obayemi/obayebar"
+readme = "README.md"
+keywords = ["wayland", "bar", "status-bar", "hyprland"]
+categories = ["gui"]
+
+[dependencies]
+iced = { version = "0.14.0", features = ["tokio", "canvas"] }
+iced_layershell = "0.17.1"
+iced_runtime = "0.14.0"
+tokio = { version = "1.51.0", features = ["full"] }
+zbus = { version = "5.14.0", default-features = false, features = ["tokio"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+chrono = "0.4.44"
+futures-util = "0.3.32"
+log = "0.4.29"
+env_logger = "0.11.10"
+async-channel = "2.5.0"
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+arithmetic_side_effects = "warn"
+# transitive dependency version conflicts are not fixable in our code
+multiple_crate_versions = "allow"

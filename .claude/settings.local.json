@@ -1,7 +1,35 @@
 {
   "permissions": {
     "allow": [
-      "Bash(jj git:*)"
+      "Bash(jj git:*)",
+      "Bash(xargs ls:*)",
+      "Bash(cargo check:*)",
+      "Bash(cargo clippy:*)",
+      "Bash(cargo fmt:*)",
+      "Bash(cargo build:*)",
+      "Bash(jj status:*)",
+      "Bash(jj describe:*)",
+      "WebSearch",
+      "WebFetch(domain:docs.rs)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:developers.google.com)",
+      "WebFetch(domain:discourse.iced.rs)",
+      "WebFetch(domain:wiki.nixos.org)",
+      "WebFetch(domain:gist.github.com)",
+      "Bash(fc-match Material Symbols Outlined:*)",
+      "Bash(fc-list)",
+      "Bash(fc-list : family)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(grep -A40 'pub struct NewLayerShellSettings' /home/obayemi/.cargo/registry/src/index.crates.io-*/layershellev-0.17.1/src/lib.rs)",
+      "Bash(grep:*)",
+      "Bash(cat:*)",
+      "Bash(find /home/obayemi/.cargo/registry/src/index.crates.io-*/ -path '*iced*' -name '*.rs' -exec grep -l 'pub struct Text.*position' {} \\\\;)",
+      "Bash(mold --version)",
+      "Bash(rustup component:*)",
+      "Bash(rustc --version -v)",
+      "Bash(nix develop:*)",
+      "Bash(jj diff:*)",
+      "Bash(jj new:*)"
     ]
   }
 }
