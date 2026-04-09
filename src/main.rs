@@ -5,7 +5,8 @@ mod style;
 
 use std::collections::HashMap;
 
-use bar::workspaces::AnimState;
+use bar::workspaces::SpringState;
+use iced::widget::canvas;
 use iced::window;
 use iced::{Color, Element, Subscription, Task, Theme};
 use iced_layershell::reexport::{
@@ -34,6 +35,7 @@ fn main() -> Result<(), iced_layershell::Error> {
                 layer: Layer::Top,
                 exclusive_zone: i32::try_from(style::BAR_WIDTH).unwrap_or(54),
                 size: Some((style::BAR_WIDTH, 0)),
+                keyboard_interactivity: KeyboardInteractivity::None,
                 ..LayerShellSettings::default()
             },
             fonts: icon_fonts,
@@ -52,8 +54,14 @@ pub struct App {
     initial_monitor: Option<String>,
     /// Set of monitors that already have bars
     monitors_with_bars: Vec<String>,
-    /// Per-monitor workspace indicator animation state
-    ws_anim: HashMap<String, AnimState>,
+    /// Per-monitor workspace indicator spring animation
+    ws_spring: HashMap<String, SpringState>,
+    /// Per-monitor workspace canvas cache (cleared on data change)
+    pub ws_cache: HashMap<String, canvas::Cache>,
+    /// Fallback cache used before monitor-specific caches are created
+    pub ws_cache_fallback: canvas::Cache,
+    /// Vector font for canvas text rendering
+    pub vector_font: Option<ab_glyph::FontArc>,
 
     notif_popup_id: Option<window::Id>,
     notif_center_id: Option<window::Id>,
@@ -99,7 +107,10 @@ impl App {
                 extra_bar_windows: HashMap::new(),
                 initial_monitor: None,
                 monitors_with_bars: Vec::new(),
-                ws_anim: HashMap::new(),
+                ws_spring: HashMap::new(),
+                ws_cache: HashMap::new(),
+                ws_cache_fallback: canvas::Cache::default(),
+                vector_font: style::load_vector_font(),
                 notif_popup_id: None,
                 notif_center_id: None,
                 workspaces: Vec::new(),
@@ -153,8 +164,13 @@ impl App {
                 self.expire_popups()
             }
             Message::AnimTick => {
-                for anim in self.ws_anim.values_mut() {
-                    anim.tick();
+                let dt = 1.0 / 60.0;
+                for (monitor, spring) in &mut self.ws_spring {
+                    if spring.tick(dt) {
+                        if let Some(cache) = self.ws_cache.get(monitor) {
+                            cache.clear();
+                        }
+                    }
                 }
                 Task::none()
             }
@@ -241,31 +257,37 @@ impl App {
         self.workspaces = state.workspaces;
         self.active_window = state.active_window;
 
-        // Update animation targets for each monitor's active workspace
+        // Invalidate all workspace caches since data changed
+        for cache in self.ws_cache.values() {
+            cache.clear();
+        }
+
+        // Update spring targets for each monitor's active workspace
         for (monitor, &active_ws_id) in &state.active_workspaces {
-            let sorted_ws: Vec<&WorkspaceInfo> = self
+            let mut sorted_ids: Vec<i32> = self
                 .workspaces
                 .iter()
                 .filter(|w| &w.monitor == monitor && w.id > 0 && !w.name.starts_with("special:"))
+                .map(|w| w.id)
                 .collect();
-            let mut sorted_ids: Vec<i32> = sorted_ws.iter().map(|w| w.id).collect();
             sorted_ids.sort_unstable();
 
-            #[allow(clippy::cast_precision_loss)] // index is tiny
-            let target_pos = sorted_ids
+            #[allow(clippy::cast_precision_loss)]
+            let target = sorted_ids
                 .iter()
                 .position(|&id| id == active_ws_id)
                 .unwrap_or(0) as f32;
 
-            let anim = self
-                .ws_anim
+            self.ws_cache
                 .entry(monitor.clone())
-                .or_insert_with(|| AnimState {
-                    current_pos: target_pos,
-                    target_pos,
-                    animating: false,
-                });
-            anim.set_target(target_pos);
+                .or_insert_with(canvas::Cache::default);
+            let spring = self.ws_spring.entry(monitor.clone()).or_default();
+            if spring.position == 0.0 && spring.target == 0.0 && target != 0.0 {
+                // First time seeing this monitor — snap to position
+                spring.snap(target);
+            } else {
+                spring.set_target(target);
+            }
         }
 
         self.active_workspaces = state.active_workspaces;
@@ -294,6 +316,7 @@ impl App {
                     exclusive_zone: Some(i32::try_from(style::BAR_WIDTH).unwrap_or(54)),
                     size: Some((style::BAR_WIDTH, 0)),
                     output_option: OutputOption::OutputName(monitor),
+                    keyboard_interactivity: KeyboardInteractivity::None,
                     ..NewLayerShellSettings::default()
                 },
                 id,
@@ -315,7 +338,7 @@ impl App {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        let is_animating = self.ws_anim.values().any(|a| a.animating);
+        let is_animating = self.ws_spring.values().any(SpringState::is_animating);
 
         let mut subs = vec![
             iced::time::every(std::time::Duration::from_secs(1)).map(|_| Message::Tick),
@@ -327,7 +350,6 @@ impl App {
             Subscription::run(notifications::daemon::stream).map(Message::Notif),
         ];
 
-        // 60fps animation tick while any workspace indicator is animating
         if is_animating {
             subs.push(
                 iced::time::every(std::time::Duration::from_millis(16)).map(|_| Message::AnimTick),
@@ -349,7 +371,7 @@ impl App {
                     exclusive_zone: Some(-1),
                     size: Some((style::NOTIF_WIDTH, 0)),
                     margin: Some((8, 8, 8, 8)),
-                    keyboard_interactivity: KeyboardInteractivity::OnDemand,
+                    keyboard_interactivity: KeyboardInteractivity::None,
                     ..NewLayerShellSettings::default()
                 },
                 id,

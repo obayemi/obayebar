@@ -5,13 +5,27 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     naersk.url = "github:nix-community/naersk";
     flake-utils.url = "github:numtide/flake-utils";
+    rust-overlay.url = "github:oxalica/rust-overlay";
   };
 
-  outputs = { self, nixpkgs, naersk, flake-utils }:
+  outputs = { self, nixpkgs, naersk, flake-utils, rust-overlay }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = nixpkgs.legacyPackages.${system};
-        naersk' = pkgs.callPackage naersk { };
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [ rust-overlay.overlays.default ];
+        };
+
+        rustNightly = pkgs.rust-bin.selectLatestNightlyWith (toolchain:
+          toolchain.default.override {
+            extensions = [ "rust-src" "clippy" "rustfmt" "rust-analyzer" "rustc-codegen-cranelift-preview" ];
+          }
+        );
+
+        naersk' = pkgs.callPackage naersk {
+          cargo = rustNightly;
+          rustc = rustNightly;
+        };
 
         buildInputs = with pkgs; [
           wayland
@@ -43,14 +57,11 @@
 
         devShells.default = pkgs.mkShell {
           inherit buildInputs;
-          nativeBuildInputs = nativeBuildInputs ++ (with pkgs; [
-            rustc
-            cargo
-            clippy
-            rustfmt
-            mold
-            clang
-          ]);
+          nativeBuildInputs = nativeBuildInputs ++ [
+            rustNightly
+            pkgs.mold
+            pkgs.clang
+          ];
 
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath buildInputs;
           OBAYEBAR_FONT_DIR = "${pkgs.material-symbols}/share/fonts/TTF";

@@ -19,16 +19,19 @@ pub fn view<'a>(app: &'a App, monitor: Option<&'a str>) -> Element<'a, Message> 
     );
 
     let active_ws = monitor.map_or(1, |m| app.active_workspace_for_monitor(m));
-    let default_anim = workspaces::AnimState::default();
-    let anim = monitor
-        .and_then(|m| app.ws_anim.get(m))
-        .unwrap_or(&default_anim);
+    let default_spring = workspaces::SpringState::default();
+    let spring = monitor
+        .and_then(|m| app.ws_spring.get(m))
+        .unwrap_or(&default_spring);
+    let ws_cache = monitor
+        .and_then(|m| app.ws_cache.get(m))
+        .unwrap_or(&app.ws_cache_fallback);
 
     let bar_content = column![
         logo::view(),
-        workspaces::view(&monitor_workspaces, active_ws, anim),
+        workspaces::view(&monitor_workspaces, active_ws, spring, ws_cache),
         Space::new().width(Length::Shrink).height(Length::Fill),
-        active_window::view(app.active_window.as_ref()),
+        active_window::view(app.active_window.as_ref(), app.vector_font.as_ref()),
         Space::new().width(Length::Shrink).height(Length::Fill),
         tray::view(&app.tray_items),
         clock::view(&app.time),

@@ -159,6 +159,21 @@ pub fn load_icon_font() -> Vec<Cow<'static, [u8]>> {
     Vec::new()
 }
 
+/// Load the system sans-serif font for vector text rendering via `ab_glyph`.
+pub fn load_vector_font() -> Option<ab_glyph::FontArc> {
+    // Use fontconfig to find the default sans-serif font
+    let output = std::process::Command::new("fc-match")
+        .args(["sans", "-f", "%{file}"])
+        .output()
+        .ok()?;
+    let path = String::from_utf8_lossy(&output.stdout);
+    let path = path.trim();
+    let data = std::fs::read(path).ok()?;
+    let font = ab_glyph::FontArc::try_from_vec(data).ok()?;
+    log::info!("Loaded vector font from {path}");
+    Some(font)
+}
+
 /// Apply alpha to a color
 pub const fn with_alpha(color: Color, alpha: f32) -> Color {
     Color { a: alpha, ..color }

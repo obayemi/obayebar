@@ -29,7 +29,12 @@
       "Bash(rustc --version -v)",
       "Bash(nix develop:*)",
       "Bash(jj diff:*)",
-      "Bash(jj new:*)"
+      "Bash(jj new:*)",
+      "Bash(jj log:*)",
+      "Bash(cargo +nightly check)",
+      "Bash(RUSTFLAGS=\"\" cargo check --config 'build.rustflags=[]')",
+      "Bash(find:*)",
+      "WebFetch(domain:crates.io)"
     ]
   }
 }

@@ -3,73 +3,79 @@ use crate::style;
 use crate::Message;
 use iced::mouse;
 use iced::widget::canvas::{self, Cache, Frame, Geometry, Path};
-use iced::widget::{container, Action};
-use iced::{alignment, Element, Event, Length, Point, Rectangle, Renderer, Size, Theme};
+use iced::widget::container;
+use iced::{alignment, Element, Length, Point, Rectangle, Renderer, Size, Theme};
 
-/// Animation state for the workspace active indicator
+/// Spring-based animation state for the workspace indicator
 #[derive(Debug, Clone)]
-pub struct AnimState {
-    /// Current animated index position (fractional for smooth movement)
-    pub current_pos: f32,
-    /// Target index position
-    pub target_pos: f32,
-    /// Whether animation is in progress
-    pub animating: bool,
+pub struct SpringState {
+    pub position: f32,
+    velocity: f32,
+    pub target: f32,
 }
 
-impl Default for AnimState {
+// Spring parameters – critically-damped feel
+const STIFFNESS: f32 = 300.0;
+const DAMPING: f32 = 30.0;
+
+impl Default for SpringState {
     fn default() -> Self {
         Self {
-            current_pos: 0.0,
-            target_pos: 0.0,
-            animating: false,
+            position: 0.0,
+            velocity: 0.0,
+            target: 0.0,
         }
     }
 }
 
-impl AnimState {
-    /// Update target to a new workspace index, starting animation
-    pub fn set_target(&mut self, index: f32) {
-        if (self.target_pos - index).abs() > f32::EPSILON {
-            self.target_pos = index;
-            self.animating = true;
-        }
+impl SpringState {
+    pub fn set_target(&mut self, target: f32) {
+        self.target = target;
     }
 
-    /// Advance the animation by one frame. Returns true if still animating.
-    pub fn tick(&mut self) -> bool {
-        if !self.animating {
-            return false;
-        }
+    /// Advance by `dt` seconds. Returns `true` while still moving.
+    pub fn tick(&mut self, dt: f32) -> bool {
+        let displacement = self.position - self.target;
+        let accel = -STIFFNESS * displacement - DAMPING * self.velocity;
+        self.velocity += accel * dt;
+        self.position += self.velocity * dt;
 
-        let diff = self.target_pos - self.current_pos;
-        if diff.abs() < 0.01 {
-            self.current_pos = self.target_pos;
-            self.animating = false;
-            return false;
+        let settled =
+            displacement.abs() < 0.001 && self.velocity.abs() < 0.01;
+        if settled {
+            self.position = self.target;
+            self.velocity = 0.0;
         }
-
-        // Ease-out: move 15% of remaining distance per frame (~60fps, ~200ms feel)
-        self.current_pos += diff * 0.15;
-        true
+        !settled
     }
-}
 
-struct WorkspaceCanvas {
-    workspaces: Vec<(i32, bool, bool)>, // (id, is_active, is_occupied)
-    indicator_pos: f32,
-    cache: Cache,
+    pub fn is_animating(&self) -> bool {
+        (self.position - self.target).abs() > 0.001 || self.velocity.abs() > 0.01
+    }
+
+    /// Snap position to target without animation
+    pub fn snap(&mut self, pos: f32) {
+        self.position = pos;
+        self.velocity = 0.0;
+        self.target = pos;
+    }
 }
 
 const fn cell_size() -> f32 {
-    style::PADDING_SMALL.mul_add(-2.0, style::BAR_INNER_WIDTH)
+    style::BAR_INNER_WIDTH - style::PADDING_SMALL * 2.0
 }
 
-fn cell_spacing() -> f32 {
+const fn cell_spacing() -> f32 {
     style::SPACING_SMALL / 2.0
 }
 
-impl canvas::Program<Message> for WorkspaceCanvas {
+struct WorkspaceCanvas<'a> {
+    workspaces: Vec<(i32, bool, bool)>, // (id, is_active, is_occupied)
+    indicator_pos: f32,
+    cache: &'a Cache,
+}
+
+impl canvas::Program<Message> for WorkspaceCanvas<'_> {
     type State = ();
 
     fn draw(
@@ -80,51 +86,55 @@ impl canvas::Program<Message> for WorkspaceCanvas {
         bounds: Rectangle,
         _cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
-        let geometry = self
-            .cache
-            .draw(renderer, bounds.size(), |frame: &mut Frame| {
-                let size = cell_size();
-                let spacing = cell_spacing();
+        let geometry = self.cache.draw(renderer, bounds.size(), |frame: &mut Frame| {
+            let size = cell_size();
+            let spacing = cell_spacing();
 
-                if self.workspaces.is_empty() {
-                    return;
-                }
+            if self.workspaces.is_empty() {
+                return;
+            }
 
-                // Draw the sliding indicator pill behind the active workspace
-                let indicator_y = self.indicator_pos * (size + spacing);
-                let indicator_rect = Path::rounded_rectangle(
-                    Point::new((bounds.width - size) / 2.0, indicator_y),
-                    Size::new(size, size),
-                    style::ROUNDING_FULL.into(),
-                );
-                frame.fill(&indicator_rect, style::with_alpha(style::M3_PRIMARY, 0.15));
+            // Draw the sliding indicator pill behind the active workspace
+            let indicator_y = self.indicator_pos * (size + spacing);
+            let indicator_rect = Path::rounded_rectangle(
+                Point::new((bounds.width - size) / 2.0, indicator_y),
+                Size::new(size, size),
+                style::ROUNDING_FULL.into(),
+            );
+            frame.fill(
+                &indicator_rect,
+                style::with_alpha(style::M3_PRIMARY, 0.15),
+            );
 
-                // Draw workspace labels
-                for (i, &(id, is_active, is_occupied)) in self.workspaces.iter().enumerate() {
-                    #[allow(clippy::cast_precision_loss)] // workspace count is tiny
-                    let y = (i as f32) * (size + spacing);
+            // Draw workspace labels
+            for (i, &(id, is_active, is_occupied)) in self.workspaces.iter().enumerate() {
+                #[allow(clippy::cast_precision_loss)]
+                let y = (i as f32) * (size + spacing);
 
-                    let color = if is_active {
-                        style::M3_PRIMARY
-                    } else if is_occupied {
-                        style::M3_ON_SURFACE
-                    } else {
-                        style::M3_OUTLINE_VARIANT
-                    };
+                let color = if is_active {
+                    style::M3_PRIMARY
+                } else if is_occupied {
+                    style::M3_ON_SURFACE
+                } else {
+                    style::M3_OUTLINE_VARIANT
+                };
 
-                    let label = canvas::Text {
-                        content: id.to_string(),
-                        position: Point::new(bounds.width / 2.0, y + size / 2.0),
-                        color,
-                        size: iced::Pixels(style::FONT_SIZE_NORMAL),
-                        font: iced::Font::MONOSPACE,
-                        align_x: iced::Alignment::Center.into(),
-                        align_y: alignment::Vertical::Center,
-                        ..canvas::Text::default()
-                    };
-                    frame.fill_text(label);
-                }
-            });
+                let label = canvas::Text {
+                    content: id.to_string(),
+                    position: Point::new(bounds.width / 2.0, y + size / 2.0),
+                    color,
+                    size: iced::Pixels(style::FONT_SIZE_LARGER),
+                    font: iced::Font {
+                        weight: iced::font::Weight::Bold,
+                        ..iced::Font::MONOSPACE
+                    },
+                    align_x: iced::Alignment::Center.into(),
+                    align_y: alignment::Vertical::Center,
+                    ..canvas::Text::default()
+                };
+                frame.fill_text(label);
+            }
+        });
 
         vec![geometry]
     }
@@ -145,13 +155,13 @@ impl canvas::Program<Message> for WorkspaceCanvas {
     fn update(
         &self,
         _state: &mut (),
-        event: &Event,
+        event: &iced::Event,
         bounds: Rectangle,
         cursor: mouse::Cursor,
-    ) -> Option<Action<Message>> {
+    ) -> Option<canvas::Action<Message>> {
         if matches!(
             event,
-            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
+            iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
         ) {
             if let Some(pos) = cursor.position_in(bounds) {
                 let step = cell_size() + cell_spacing();
@@ -159,7 +169,7 @@ impl canvas::Program<Message> for WorkspaceCanvas {
                 let index = (pos.y / step) as usize;
 
                 if let Some(&(id, _, _)) = self.workspaces.get(index) {
-                    return Some(Action::publish(Message::WorkspaceClick(id)).and_capture());
+                    return Some(canvas::Action::publish(Message::WorkspaceClick(id)).and_capture());
                 }
             }
         }
@@ -170,7 +180,8 @@ impl canvas::Program<Message> for WorkspaceCanvas {
 pub fn view<'a>(
     workspaces: &[&WorkspaceInfo],
     active: i32,
-    anim_state: &AnimState,
+    spring: &SpringState,
+    cache: &'a Cache,
 ) -> Element<'a, Message> {
     let mut sorted: Vec<&WorkspaceInfo> = workspaces
         .iter()
@@ -188,13 +199,12 @@ pub fn view<'a>(
     let spacing = cell_spacing();
     let count = ws_data.len().max(1);
     #[allow(clippy::cast_precision_loss)]
-    #[allow(clippy::cast_precision_loss)] // workspace count is tiny
-    let canvas_height = (count as f32).mul_add(size + spacing, -spacing);
+    let canvas_height = (count as f32) * (size + spacing) - spacing;
 
     let canvas_widget = iced::widget::canvas(WorkspaceCanvas {
         workspaces: ws_data,
-        indicator_pos: anim_state.current_pos,
-        cache: Cache::new(),
+        indicator_pos: spring.position,
+        cache,
     })
     .width(style::BAR_INNER_WIDTH)
     .height(canvas_height);
