@@ -81,7 +81,7 @@ async fn read_tray_items_with(conn: &zbus::Connection) -> Vec<TrayItemInfo> {
         };
 
         let Some(item_proxy) =
-            build_proxy(&conn, &bus_name, &path, "org.kde.StatusNotifierItem").await
+            build_proxy(conn, &bus_name, &path, "org.kde.StatusNotifierItem").await
         else {
             continue;
         };
@@ -115,15 +115,13 @@ async fn read_tray_items_with(conn: &zbus::Connection) -> Vec<TrayItemInfo> {
 
 pub fn stream() -> impl Stream<Item = Vec<TrayItemInfo>> {
     futures_util::stream::unfold(None, |conn: Option<zbus::Connection>| async {
-        let connection = match conn {
-            Some(c) => c,
-            None => match zbus::Connection::session().await {
-                Ok(c) => c,
-                Err(_) => {
-                    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-                    return Some((Vec::new(), None));
-                }
-            },
+        let connection = if let Some(c) = conn {
+            c
+        } else if let Ok(c) = zbus::Connection::session().await {
+            c
+        } else {
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            return Some((Vec::new(), None));
         };
         let items = read_tray_items_with(&connection).await;
         tokio::time::sleep(std::time::Duration::from_secs(3)).await;

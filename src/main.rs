@@ -280,7 +280,7 @@ impl App {
 
             self.ws_cache
                 .entry(monitor.clone())
-                .or_insert_with(canvas::Cache::default);
+                .or_default();
             let spring = self.ws_spring.entry(monitor.clone()).or_default();
             if spring.position == 0.0 && spring.target == 0.0 && target != 0.0 {
                 // First time seeing this monitor — snap to position

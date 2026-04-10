@@ -32,10 +32,13 @@
           libxkbcommon
           vulkan-loader
           fontconfig
+          pipewire
         ];
 
         nativeBuildInputs = with pkgs; [
           pkg-config
+          clang
+          llvmPackages.libclang
         ];
 
         runtimeDeps = with pkgs; [
@@ -47,6 +50,7 @@
           inherit buildInputs nativeBuildInputs;
 
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath buildInputs;
+          LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
 
           # Wrap binary to include font paths
           postInstall = ''
@@ -61,9 +65,11 @@
             rustNightly
             pkgs.mold
             pkgs.clang
+            pkgs.llvmPackages.libclang
           ];
 
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath buildInputs;
+          LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
           OBAYEBAR_FONT_DIR = "${pkgs.material-symbols}/share/fonts/TTF";
         };
       }

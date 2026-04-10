@@ -34,7 +34,8 @@
       "Bash(cargo +nightly check)",
       "Bash(RUSTFLAGS=\"\" cargo check --config 'build.rustflags=[]')",
       "Bash(find:*)",
-      "WebFetch(domain:crates.io)"
+      "WebFetch(domain:crates.io)",
+      "Bash(ls:*)"
     ]
   }
 }

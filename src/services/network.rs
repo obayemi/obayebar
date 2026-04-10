@@ -76,7 +76,7 @@ async fn read_network_dbus_with(conn: &zbus::Connection) -> NetworkInfo {
 
     for conn_path in &active_connections {
         let Some(ac_proxy) = build_proxy(
-            &conn,
+            conn,
             "org.freedesktop.NetworkManager",
             conn_path.as_str(),
             "org.freedesktop.NetworkManager.Connection.Active",
@@ -97,7 +97,7 @@ async fn read_network_dbus_with(conn: &zbus::Connection) -> NetworkInfo {
                 {
                     for dev_path in &devices {
                         let Some(dev_proxy) = build_proxy(
-                            &conn,
+                            conn,
                             "org.freedesktop.NetworkManager",
                             dev_path.as_str(),
                             "org.freedesktop.NetworkManager.Device.Wireless",
@@ -112,7 +112,7 @@ async fn read_network_dbus_with(conn: &zbus::Connection) -> NetworkInfo {
                             .await
                         {
                             let Some(access_point_proxy) = build_proxy(
-                                &conn,
+                                conn,
                                 "org.freedesktop.NetworkManager",
                                 ap_path.as_str(),
                                 "org.freedesktop.NetworkManager.AccessPoint",
@@ -158,15 +158,13 @@ async fn read_network_dbus_with(conn: &zbus::Connection) -> NetworkInfo {
 
 pub fn stream() -> impl Stream<Item = NetworkInfo> {
     futures_util::stream::unfold(None, |conn: Option<zbus::Connection>| async {
-        let connection = match conn {
-            Some(c) => c,
-            None => match zbus::Connection::system().await {
-                Ok(c) => c,
-                Err(_) => {
-                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                    return Some((NetworkInfo::default(), None));
-                }
-            },
+        let connection = if let Some(c) = conn {
+            c
+        } else if let Ok(c) = zbus::Connection::system().await {
+            c
+        } else {
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            return Some((NetworkInfo::default(), None));
         };
         let info = read_network_dbus_with(&connection).await;
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
