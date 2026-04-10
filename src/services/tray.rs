@@ -51,13 +51,9 @@ async fn activate_item_dbus(id: &str) -> Result<(), Box<dyn std::error::Error + 
     Ok(())
 }
 
-async fn read_tray_items() -> Vec<TrayItemInfo> {
-    let Ok(conn) = zbus::Connection::session().await else {
-        return Vec::new();
-    };
-
+async fn read_tray_items_with(conn: &zbus::Connection) -> Vec<TrayItemInfo> {
     let Some(watcher_proxy) = build_proxy(
-        &conn,
+        conn,
         "org.kde.StatusNotifierWatcher",
         "/StatusNotifierWatcher",
         "org.kde.StatusNotifierWatcher",
@@ -118,9 +114,19 @@ async fn read_tray_items() -> Vec<TrayItemInfo> {
 }
 
 pub fn stream() -> impl Stream<Item = Vec<TrayItemInfo>> {
-    futures_util::stream::unfold((), |()| async {
-        let items = read_tray_items().await;
+    futures_util::stream::unfold(None, |conn: Option<zbus::Connection>| async {
+        let connection = match conn {
+            Some(c) => c,
+            None => match zbus::Connection::session().await {
+                Ok(c) => c,
+                Err(_) => {
+                    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                    return Some((Vec::new(), None));
+                }
+            },
+        };
+        let items = read_tray_items_with(&connection).await;
         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-        Some((items, ()))
+        Some((items, Some(connection)))
     })
 }

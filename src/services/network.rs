@@ -50,13 +50,9 @@ async fn build_proxy<'a>(
         .ok()
 }
 
-async fn read_network_dbus() -> NetworkInfo {
-    let Ok(conn) = zbus::Connection::system().await else {
-        return NetworkInfo::default();
-    };
-
+async fn read_network_dbus_with(conn: &zbus::Connection) -> NetworkInfo {
     let Some(nm_proxy) = build_proxy(
-        &conn,
+        conn,
         "org.freedesktop.NetworkManager",
         "/org/freedesktop/NetworkManager",
         "org.freedesktop.NetworkManager",
@@ -161,9 +157,19 @@ async fn read_network_dbus() -> NetworkInfo {
 }
 
 pub fn stream() -> impl Stream<Item = NetworkInfo> {
-    futures_util::stream::unfold((), |()| async {
-        let info = read_network_dbus().await;
+    futures_util::stream::unfold(None, |conn: Option<zbus::Connection>| async {
+        let connection = match conn {
+            Some(c) => c,
+            None => match zbus::Connection::system().await {
+                Ok(c) => c,
+                Err(_) => {
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    return Some((NetworkInfo::default(), None));
+                }
+            },
+        };
+        let info = read_network_dbus_with(&connection).await;
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-        Some((info, ()))
+        Some((info, Some(connection)))
     })
 }
