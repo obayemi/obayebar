@@ -16,6 +16,7 @@ fn truncate_with_ellipsis(s: &str, max_chars: usize) -> String {
 
 /// Rasterize text using `ab_glyph` with proper anti-aliasing, then rotate the
 /// resulting bitmap -90 degrees so it reads bottom-to-top in a vertical bar.
+#[allow(clippy::arithmetic_side_effects)]
 fn render_rotated_text(font: &FontArc, text: &str, font_size: f32) -> image::Handle {
     let scaled = font.as_scaled(font_size);
 
@@ -37,10 +38,9 @@ fn render_rotated_text(font: &FontArc, text: &str, font_size: f32) -> image::Han
     let buf_w = (total_advance.ceil() as u32).max(1);
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let buf_h = (line_height.ceil() as u32).max(1);
-    let buf_len = buf_w as usize * buf_h as usize;
 
     // Rasterize glyphs into an alpha buffer
-    let mut alpha_buf = vec![0u8; buf_len];
+    let mut alpha_buf = vec![0u8; buf_w as usize * buf_h as usize];
     let mut cursor_x: f32 = 0.0;
 
     for &glyph_id in &glyph_ids {
@@ -49,14 +49,16 @@ fn render_rotated_text(font: &FontArc, text: &str, font_size: f32) -> image::Han
         if let Some(outlined) = font.outline_glyph(glyph) {
             let bb = outlined.px_bounds();
             outlined.draw(|px, py, coverage| {
-                #[allow(clippy::cast_possible_truncation)]
-                let x = px as i32 + bb.min.x as i32;
-                #[allow(clippy::cast_possible_truncation)]
-                let y = py as i32 + bb.min.y as i32;
+                #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+                let x = px.cast_signed() + (bb.min.x as i32);
+                #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+                let y = py.cast_signed() + (bb.min.y as i32);
 
                 if x >= 0 && y >= 0 {
-                    let ux = x as u32;
-                    let uy = y as u32;
+                    #[allow(clippy::cast_sign_loss)]
+                    let ux = x.cast_unsigned();
+                    #[allow(clippy::cast_sign_loss)]
+                    let uy = y.cast_unsigned();
                     if ux < buf_w && uy < buf_h {
                         let idx = uy as usize * buf_w as usize + ux as usize;
                         if let Some(pixel) = alpha_buf.get_mut(idx) {

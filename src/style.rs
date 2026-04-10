@@ -117,6 +117,53 @@ pub const ICON_BLUETOOTH_DISABLED: &str = "\u{E1A9}";
 pub const ICON_LANGUAGE: &str = "\u{E894}";
 pub const ICON_DESKTOP: &str = "\u{E30C}";
 pub const ICON_NOTIFICATIONS_NONE: &str = "\u{E7F5}";
+pub const ICON_SETTINGS: &str = "\u{E8B8}";
+
+pub const AUDIO_PANEL_WIDTH: u32 = 320;
+
+/// Line-height multiplier: iced cosmic-text renders text taller than the font size.
+const LINE_HEIGHT: f32 = 1.3;
+
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    clippy::as_conversions
+)]
+pub fn audio_panel_height(sink_count: usize) -> u32 {
+    let container_padding = PADDING_LARGE * 2.0;
+
+    // Header row: icon + "Audio" text
+    let header = FONT_SIZE_LARGE * LINE_HEIGHT;
+
+    // Outer column: 4 items (header, sink_list, separator, volume_section) → 3 gaps
+    let outer_spacing = SPACING_NORMAL * 3.0;
+
+    // Sink list column (spacing = 2.0):
+    //   "Output device" label + N sink entries (or 1 "no devices" fallback)
+    let sink_label = FONT_SIZE_SMALLER * LINE_HEIGHT;
+    let n = sink_count.max(1) as f32;
+    // Each sink button: text + vertical padding
+    let per_sink = PADDING_SMALL.mul_add(2.0, FONT_SIZE_NORMAL * LINE_HEIGHT);
+    // N entries + label = (N+1) items → N gaps of 2px
+    let sink_list = sink_label + n * per_sink + n * 2.0;
+
+    // Separator
+    let separator = 1.0;
+
+    // Volume section column (spacing = SPACING_SMALL):
+    //   label + slider row
+    let vol_label = FONT_SIZE_SMALLER * LINE_HEIGHT;
+    // Slider row: mute button (icon + padding) determines height
+    let vol_row = PADDING_SMALL.mul_add(2.0, FONT_SIZE_LARGE * LINE_HEIGHT);
+    let volume_section = vol_label + SPACING_SMALL + vol_row;
+
+    // Extra margin to account for widget intrinsic sizing (slider track, button chrome, etc.)
+    let safety = 30.0;
+
+    (container_padding + header + outer_spacing + sink_list + separator + volume_section + safety)
+        .ceil() as u32
+}
 
 /// Load the Material Symbols font from the system or `OBAYEBAR_FONT_DIR` env var.
 pub fn load_icon_font() -> Vec<Cow<'static, [u8]>> {
@@ -220,6 +267,22 @@ pub fn notification_critical_container(theme: &iced::Theme) -> container::Style 
 
 /// Notification center sidebar container
 pub fn notif_center_container(theme: &iced::Theme) -> container::Style {
+    let _ = theme;
+    container::Style {
+        background: Some(Background::Color(with_alpha(
+            M3_SURFACE_CONTAINER_LOW,
+            0.92,
+        ))),
+        border: Border {
+            radius: ROUNDING_NORMAL.into(),
+            ..Border::default()
+        },
+        ..container::Style::default()
+    }
+}
+
+/// Audio panel overlay container
+pub fn audio_panel_container(theme: &iced::Theme) -> container::Style {
     let _ = theme;
     container::Style {
         background: Some(Background::Color(with_alpha(

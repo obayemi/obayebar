@@ -35,7 +35,18 @@
       "Bash(RUSTFLAGS=\"\" cargo check --config 'build.rustflags=[]')",
       "Bash(find:*)",
       "WebFetch(domain:crates.io)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(rustc --version)",
+      "Bash(CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS=\"-C link-arg=-fuse-ld=mold\" cargo build:*)",
+      "Bash(cargo cc:*)",
+      "Bash(jj st:*)",
+      "Bash(jj desc:*)",
+      "Bash(wpctl status:*)",
+      "Bash(pw-cli info:*)",
+      "Bash(pw-metadata 0:*)",
+      "Bash(pw-cli list-objects:*)",
+      "WebFetch(domain:docs.pipewire.org)",
+      "Bash(cargo doc:*)"
     ]
   }
 }

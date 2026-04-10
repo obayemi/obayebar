@@ -15,7 +15,7 @@ use iced_layershell::reexport::{
 use iced_layershell::settings::{LayerShellSettings, Settings};
 use iced_layershell::to_layer_message;
 use notifications::{NotifEvent, NotificationData};
-use services::audio::AudioInfo;
+use services::audio::{AudioCommand, AudioInfo};
 use services::battery::BatteryInfo;
 use services::hyprland::{HyprEvent, HyprState, WindowInfo, WorkspaceInfo};
 use services::network::NetworkInfo;
@@ -65,6 +65,8 @@ pub struct App {
 
     notif_popup_id: Option<window::Id>,
     notif_center_id: Option<window::Id>,
+    audio_panel_id: Option<window::Id>,
+    audio_panel_open: bool,
 
     pub workspaces: Vec<WorkspaceInfo>,
     /// Per-monitor active workspace: `monitor_name` -> `active_workspace_id`
@@ -98,6 +100,12 @@ pub enum Message {
     NotifCenterToggle,
     NotifClearAll,
     PowerClick,
+    AudioPanelOpen(Option<String>),
+    AudioPanelClose,
+    AudioSetVolume(f32),
+    AudioSetMute(bool),
+    AudioSetDefaultSink(u32),
+    AudioOpenPavucontrol,
 }
 
 impl App {
@@ -113,6 +121,8 @@ impl App {
                 vector_font: style::load_vector_font(),
                 notif_popup_id: None,
                 notif_center_id: None,
+                audio_panel_id: None,
+                audio_panel_open: false,
                 workspaces: Vec::new(),
                 active_workspaces: HashMap::new(),
                 active_window: None,
@@ -248,6 +258,26 @@ impl App {
                 }
                 Task::batch(tasks)
             }
+            Message::AudioPanelOpen(monitor) => self.open_audio_panel(monitor),
+            Message::AudioPanelClose => self.close_audio_panel(),
+            Message::AudioSetVolume(vol) => {
+                services::audio::send_command(AudioCommand::Volume(vol));
+                Task::none()
+            }
+            Message::AudioSetMute(muted) => {
+                services::audio::send_command(AudioCommand::Mute(muted));
+                Task::none()
+            }
+            Message::AudioSetDefaultSink(id) => {
+                services::audio::send_command(AudioCommand::DefaultSink { id });
+                Task::none()
+            }
+            Message::AudioOpenPavucontrol => {
+                tokio::spawn(async {
+                    let _ = tokio::process::Command::new("pavucontrol").spawn();
+                });
+                Task::none()
+            }
             _ => Task::none(),
         }
     }
@@ -278,9 +308,7 @@ impl App {
                 .position(|&id| id == active_ws_id)
                 .unwrap_or(0) as f32;
 
-            self.ws_cache
-                .entry(monitor.clone())
-                .or_default();
+            self.ws_cache.entry(monitor.clone()).or_default();
             let spring = self.ws_spring.entry(monitor.clone()).or_default();
             if spring.position == 0.0 && spring.target == 0.0 && target != 0.0 {
                 // First time seeing this monitor — snap to position
@@ -331,6 +359,8 @@ impl App {
             notifications::popup_view(self)
         } else if Some(id) == self.notif_center_id {
             notifications::center_view(self)
+        } else if Some(id) == self.audio_panel_id {
+            bar::audio_panel::view(&self.audio)
         } else {
             let monitor = self.monitor_for_bar(id);
             bar::view(self, monitor)
@@ -381,6 +411,40 @@ impl App {
         } else {
             Task::none()
         }
+    }
+
+    fn open_audio_panel(&mut self, monitor: Option<String>) -> Task<Message> {
+        if self.audio_panel_open {
+            return Task::none();
+        }
+        self.audio_panel_open = true;
+        let id = window::Id::unique();
+        self.audio_panel_id = Some(id);
+        let output_option = monitor.map_or(OutputOption::LastOutput, OutputOption::OutputName);
+        let panel_height = style::audio_panel_height(self.audio.sinks.len());
+        Task::done(Message::NewLayerShell {
+            settings: NewLayerShellSettings {
+                anchor: Anchor::Left | Anchor::Bottom,
+                layer: Layer::Overlay,
+                exclusive_zone: Some(-1),
+                size: Some((style::AUDIO_PANEL_WIDTH, panel_height)),
+                margin: Some((0, 0, 8, (style::BAR_WIDTH + 8).cast_signed())),
+                keyboard_interactivity: KeyboardInteractivity::None,
+                output_option,
+                ..NewLayerShellSettings::default()
+            },
+            id,
+        })
+    }
+
+    fn close_audio_panel(&mut self) -> Task<Message> {
+        if !self.audio_panel_open {
+            return Task::none();
+        }
+        self.audio_panel_open = false;
+        self.audio_panel_id
+            .take()
+            .map_or_else(Task::none, close_window)
     }
 
     fn expire_popups(&mut self) -> Task<Message> {
