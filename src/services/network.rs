@@ -236,17 +236,22 @@ async fn read_network_dbus_with(conn: &zbus::Connection) -> NetworkInfo {
 }
 
 pub fn stream() -> impl Stream<Item = NetworkInfo> {
-    futures_util::stream::unfold(None, |conn: Option<zbus::Connection>| async {
-        let connection = if let Some(c) = conn {
-            c
-        } else if let Ok(c) = zbus::Connection::system().await {
-            c
-        } else {
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-            return Some((NetworkInfo::default(), None));
-        };
-        let info = read_network_dbus_with(&connection).await;
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-        Some((info, Some(connection)))
-    })
+    futures_util::stream::unfold(
+        (None, false),
+        |(conn, should_sleep): (Option<zbus::Connection>, bool)| async move {
+            if should_sleep {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            }
+            let connection = if let Some(c) = conn {
+                c
+            } else if let Ok(c) = zbus::Connection::system().await {
+                c
+            } else {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                return Some((NetworkInfo::default(), (None, false)));
+            };
+            let info = read_network_dbus_with(&connection).await;
+            Some((info, (Some(connection), true)))
+        },
+    )
 }

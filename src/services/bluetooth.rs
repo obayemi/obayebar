@@ -171,17 +171,22 @@ pub fn toggle_device_connection(path: &str, currently_connected: bool) {
 }
 
 pub fn stream() -> impl Stream<Item = BluetoothInfo> {
-    futures_util::stream::unfold(None, |conn: Option<zbus::Connection>| async {
-        let connection = if let Some(c) = conn {
-            c
-        } else if let Ok(c) = zbus::Connection::system().await {
-            c
-        } else {
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-            return Some((BluetoothInfo::default(), None));
-        };
-        let info = read_bluetooth_dbus(&connection).await;
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-        Some((info, Some(connection)))
-    })
+    futures_util::stream::unfold(
+        (None, false),
+        |(conn, should_sleep): (Option<zbus::Connection>, bool)| async move {
+            if should_sleep {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            }
+            let connection = if let Some(c) = conn {
+                c
+            } else if let Ok(c) = zbus::Connection::system().await {
+                c
+            } else {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                return Some((BluetoothInfo::default(), (None, false)));
+            };
+            let info = read_bluetooth_dbus(&connection).await;
+            Some((info, (Some(connection), true)))
+        },
+    )
 }

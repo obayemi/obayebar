@@ -114,17 +114,22 @@ async fn read_tray_items_with(conn: &zbus::Connection) -> Vec<TrayItemInfo> {
 }
 
 pub fn stream() -> impl Stream<Item = Vec<TrayItemInfo>> {
-    futures_util::stream::unfold(None, |conn: Option<zbus::Connection>| async {
-        let connection = if let Some(c) = conn {
-            c
-        } else if let Ok(c) = zbus::Connection::session().await {
-            c
-        } else {
-            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-            return Some((Vec::new(), None));
-        };
-        let items = read_tray_items_with(&connection).await;
-        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-        Some((items, Some(connection)))
-    })
+    futures_util::stream::unfold(
+        (None, false),
+        |(conn, should_sleep): (Option<zbus::Connection>, bool)| async move {
+            if should_sleep {
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            }
+            let connection = if let Some(c) = conn {
+                c
+            } else if let Ok(c) = zbus::Connection::session().await {
+                c
+            } else {
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                return Some((Vec::new(), (None, false)));
+            };
+            let items = read_tray_items_with(&connection).await;
+            Some((items, (Some(connection), true)))
+        },
+    )
 }

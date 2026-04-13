@@ -161,29 +161,34 @@ async fn read_battery_dbus(proxy: &zbus::Proxy<'_>) -> Option<BatteryInfo> {
 }
 
 pub fn stream() -> impl Stream<Item = BatteryInfo> {
-    futures_util::stream::unfold(None, |conn: Option<zbus::Connection>| async {
-        let connection = if let Some(c) = conn {
-            c
-        } else if let Ok(c) = zbus::Connection::system().await {
-            c
-        } else {
-            log::warn!("battery: failed to connect to system D-Bus");
-            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-            return Some((BatteryInfo::default(), None));
-        };
-        let mut info = if let Some(proxy) = build_upower_proxy(&connection).await {
-            read_battery_dbus(&proxy).await.unwrap_or_default()
-        } else {
-            log::debug!("battery: UPower proxy unavailable");
-            BatteryInfo::default()
-        };
-        info.power_profiles = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            read_power_profiles(&connection),
-        )
-        .await
-        .unwrap_or(None);
-        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-        Some((info, Some(connection)))
-    })
+    futures_util::stream::unfold(
+        (None, false),
+        |(conn, should_sleep): (Option<zbus::Connection>, bool)| async move {
+            if should_sleep {
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            }
+            let connection = if let Some(c) = conn {
+                c
+            } else if let Ok(c) = zbus::Connection::system().await {
+                c
+            } else {
+                log::warn!("battery: failed to connect to system D-Bus");
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                return Some((BatteryInfo::default(), (None, true)));
+            };
+            let mut info = if let Some(proxy) = build_upower_proxy(&connection).await {
+                read_battery_dbus(&proxy).await.unwrap_or_default()
+            } else {
+                log::debug!("battery: UPower proxy unavailable");
+                BatteryInfo::default()
+            };
+            info.power_profiles = tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                read_power_profiles(&connection),
+            )
+            .await
+            .unwrap_or(None);
+            Some((info, (Some(connection), true)))
+        },
+    )
 }
