@@ -403,6 +403,16 @@ pub fn notif_center_container(theme: &iced::Theme) -> container::Style {
     }
 }
 
+/// Outer wrapper for popup panels — near-invisible background ensures the
+/// compositor includes the gap area in the input region.
+pub fn panel_wrapper_container(theme: &iced::Theme) -> container::Style {
+    let _ = theme;
+    container::Style {
+        background: Some(Background::Color(with_alpha(iced::Color::BLACK, 0.01))),
+        ..container::Style::default()
+    }
+}
+
 /// Audio panel overlay container
 pub fn audio_panel_container(theme: &iced::Theme) -> container::Style {
     let _ = theme;

@@ -300,7 +300,8 @@ pub fn view(battery: &BatteryInfo) -> Element<'_, Message> {
                 right: 0.0,
                 bottom: style::PANEL_GAP,
                 left: style::PANEL_GAP,
-            }),
+            })
+            .style(style::panel_wrapper_container),
     )
     .on_exit(Message::CloseAllPanels)
     .into()

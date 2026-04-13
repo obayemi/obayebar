@@ -56,42 +56,7 @@ fn sink_entry(description: &str, sink_id: u32, is_selected: bool) -> Element<'_,
     .into()
 }
 
-pub fn view(audio: &AudioInfo) -> Element<'_, Message> {
-    let header = row![
-        text(audio.icon_name)
-            .font(style::ICON_FONT)
-            .size(style::FONT_SIZE_LARGE)
-            .color(style::M3_PRIMARY),
-        text("Audio")
-            .size(style::FONT_SIZE_LARGE)
-            .color(style::M3_ON_SURFACE),
-    ]
-    .spacing(style::SPACING_SMALLER)
-    .align_y(Alignment::Center);
-
-    // Output device selection
-    let mut sink_list = column![text("Output device")
-        .size(style::FONT_SIZE_SMALLER)
-        .color(style::M3_ON_SURFACE_VARIANT)]
-    .spacing(2.0)
-    .width(Length::Fill);
-
-    let selected_name = audio.default_sink_name.as_deref();
-
-    for sink in &audio.sinks {
-        let is_selected = selected_name == Some(sink.name.as_str());
-        sink_list = sink_list.push(sink_entry(&sink.description, sink.id, is_selected));
-    }
-
-    if audio.sinks.is_empty() {
-        sink_list = sink_list.push(
-            text("No output devices found")
-                .size(style::FONT_SIZE_NORMAL)
-                .color(style::M3_ON_SURFACE_VARIANT),
-        );
-    }
-
-    // Volume control
+fn volume_section(audio: &AudioInfo) -> Element<'_, Message> {
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let volume_pct = (audio.volume * 100.0).round() as u32;
     let volume_text: Element<'_, Message> = if audio.muted {
@@ -139,16 +104,53 @@ pub fn view(audio: &AudioInfo) -> Element<'_, Message> {
     .height(volume_row_height)
     .align_y(Alignment::Center);
 
-    let volume_section = column![
+    column![
         volume_text,
         row![volume_slider, mute_btn]
             .spacing(style::SPACING_SMALLER)
             .align_y(Alignment::Center)
             .height(volume_row_height),
     ]
-    .spacing(style::SPACING_SMALL);
+    .spacing(style::SPACING_SMALL)
+    .into()
+}
 
-    let content = column![header, sink_list, separator(), volume_section,]
+pub fn view(audio: &AudioInfo) -> Element<'_, Message> {
+    let header = row![
+        text(audio.icon_name)
+            .font(style::ICON_FONT)
+            .size(style::FONT_SIZE_LARGE)
+            .color(style::M3_PRIMARY),
+        text("Audio")
+            .size(style::FONT_SIZE_LARGE)
+            .color(style::M3_ON_SURFACE),
+    ]
+    .spacing(style::SPACING_SMALLER)
+    .align_y(Alignment::Center);
+
+    // Output device selection
+    let mut sink_list = column![text("Output device")
+        .size(style::FONT_SIZE_SMALLER)
+        .color(style::M3_ON_SURFACE_VARIANT)]
+    .spacing(2.0)
+    .width(Length::Fill);
+
+    let selected_name = audio.default_sink_name.as_deref();
+
+    for sink in &audio.sinks {
+        let is_selected = selected_name == Some(sink.name.as_str());
+        sink_list = sink_list.push(sink_entry(&sink.description, sink.id, is_selected));
+    }
+
+    if audio.sinks.is_empty() {
+        sink_list = sink_list.push(
+            text("No output devices found")
+                .size(style::FONT_SIZE_NORMAL)
+                .color(style::M3_ON_SURFACE_VARIANT),
+        );
+    }
+
+    let content = column![header, sink_list, separator(), volume_section(audio),]
         .spacing(style::SPACING_NORMAL)
         .width(Length::Fill);
 
@@ -168,7 +170,8 @@ pub fn view(audio: &AudioInfo) -> Element<'_, Message> {
                 right: 0.0,
                 bottom: style::PANEL_GAP,
                 left: style::PANEL_GAP,
-            }),
+            })
+            .style(style::panel_wrapper_container),
     )
     .on_exit(Message::CloseAllPanels)
     .into()
