@@ -13,7 +13,7 @@ pub mod workspaces;
 use crate::style;
 use crate::App;
 use crate::Message;
-use iced::widget::{column, container, mouse_area, Space};
+use iced::widget::{column, container, Space};
 use iced::{Background, Element, Length, Padding};
 
 pub fn view<'a>(app: &'a App, monitor: Option<&'a str>) -> Element<'a, Message> {
@@ -71,5 +71,5 @@ pub fn view<'a>(app: &'a App, monitor: Option<&'a str>) -> Element<'a, Message> 
             ..container::Style::default()
         });
 
-    mouse_area(bar).on_exit(Message::CloseAllPanels).into()
+    bar.into()
 }
