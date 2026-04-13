@@ -21,14 +21,14 @@ use services::hyprland::{HyprEvent, HyprState, WindowInfo, WorkspaceInfo};
 use services::network::NetworkInfo;
 use services::tray::TrayItemInfo;
 
-fn main() -> Result<(), iced_layershell::Error> {
+fn main() {
     env_logger::init();
 
     let icon_fonts = style::load_icon_font();
 
     // The initial window is created by settings on the default output.
     // Additional monitors get windows via NewLayerShell in setup_bars().
-    iced_layershell::daemon(App::new, App::namespace, App::update, App::view)
+    let result = iced_layershell::daemon(App::new, App::namespace, App::update, App::view)
         .settings(Settings {
             layer_settings: LayerShellSettings {
                 anchor: Anchor::Left | Anchor::Top | Anchor::Bottom,
@@ -43,7 +43,12 @@ fn main() -> Result<(), iced_layershell::Error> {
         })
         .subscription(App::subscription)
         .theme(theme_fn)
-        .run()
+        .run();
+
+    if let Err(err) = result {
+        log::error!("obayebar exiting: {err}");
+        std::process::exit(1);
+    }
 }
 
 #[derive(Debug)]

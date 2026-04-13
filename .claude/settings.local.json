@@ -46,7 +46,8 @@
       "Bash(pw-metadata 0:*)",
       "Bash(pw-cli list-objects:*)",
       "WebFetch(domain:docs.pipewire.org)",
-      "Bash(cargo doc:*)"
+      "Bash(cargo doc:*)",
+      "Bash(cargo tree:*)"
     ]
   }
 }
