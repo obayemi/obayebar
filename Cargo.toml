@@ -12,7 +12,7 @@ keywords = ["wayland", "bar", "status-bar", "hyprland"]
 categories = ["gui"]
 
 [dependencies]
-iced = { version = "0.14.0", features = ["tokio", "canvas", "image"] }
+iced = { version = "0.14.0", default-features = false, features = ["wgpu", "tiny-skia", "crisp", "thread-pool", "linux-theme-detection", "wayland", "tokio", "canvas", "image"] }
 iced_layershell = "0.17.1"
 iced_runtime = "0.14.0"
 tokio = { version = "1.51.0", features = ["full"] }
