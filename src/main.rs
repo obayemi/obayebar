@@ -90,6 +90,7 @@ fn main() {
 }
 
 #[derive(Debug)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct App {
     /// Map of bar window ID -> monitor name (for extra monitors only)
     extra_bar_windows: HashMap<window::Id, String>,
@@ -112,6 +113,8 @@ pub struct App {
     audio_panel_open: bool,
     network_panel_id: Option<window::Id>,
     network_panel_open: bool,
+    battery_panel_id: Option<window::Id>,
+    battery_panel_open: bool,
 
     pub workspaces: Vec<WorkspaceInfo>,
     /// Per-monitor active workspace: `monitor_name` -> `active_workspace_id`
@@ -147,6 +150,7 @@ pub enum Message {
     PowerClick,
     AudioPanelOpen(Option<String>),
     NetworkPanelOpen(Option<String>),
+    BatteryPanelOpen(Option<String>),
     CloseAllPanels,
     AudioSetVolume(f32),
     AudioSetMute(bool),
@@ -171,6 +175,8 @@ impl App {
                 audio_panel_open: false,
                 network_panel_id: None,
                 network_panel_open: false,
+                battery_panel_id: None,
+                battery_panel_open: false,
                 workspaces: Vec::new(),
                 active_workspaces: HashMap::new(),
                 active_window: None,
@@ -316,6 +322,11 @@ impl App {
                 let open = self.open_network_panel(monitor);
                 Task::batch([close, open])
             }
+            Message::BatteryPanelOpen(monitor) => {
+                let close = self.close_all_panels();
+                let open = self.open_battery_panel(monitor);
+                Task::batch([close, open])
+            }
             Message::CloseAllPanels => self.close_all_panels(),
             Message::AudioSetVolume(vol) => {
                 services::audio::send_command(AudioCommand::Volume(vol));
@@ -420,6 +431,8 @@ impl App {
             bar::audio_panel::view(&self.audio)
         } else if Some(id) == self.network_panel_id {
             bar::network_panel::view(&self.network)
+        } else if Some(id) == self.battery_panel_id {
+            bar::battery_panel::view(&self.battery)
         } else {
             let monitor = self.monitor_for_bar(id);
             bar::view(self, monitor)
@@ -486,6 +499,12 @@ impl App {
                 tasks.push(close_window(id));
             }
         }
+        if self.battery_panel_open {
+            self.battery_panel_open = false;
+            if let Some(id) = self.battery_panel_id.take() {
+                tasks.push(close_window(id));
+            }
+        }
         Task::batch(tasks)
     }
 
@@ -531,6 +550,31 @@ impl App {
                 layer: Layer::Overlay,
                 exclusive_zone: Some(-1),
                 size: Some((style::NETWORK_PANEL_WIDTH + gap, panel_height + gap)),
+                margin: Some((0, 0, 0, style::BAR_WIDTH.cast_signed())),
+                keyboard_interactivity: KeyboardInteractivity::None,
+                output_option,
+                ..NewLayerShellSettings::default()
+            },
+            id,
+        })
+    }
+
+    fn open_battery_panel(&mut self, monitor: Option<String>) -> Task<Message> {
+        if self.battery_panel_open {
+            return Task::none();
+        }
+        self.battery_panel_open = true;
+        let id = window::Id::unique();
+        self.battery_panel_id = Some(id);
+        let output_option = monitor.map_or(OutputOption::LastOutput, OutputOption::OutputName);
+        let panel_height = style::battery_panel_height();
+        let gap = style::PANEL_GAP_PX;
+        Task::done(Message::NewLayerShell {
+            settings: NewLayerShellSettings {
+                anchor: Anchor::Left | Anchor::Bottom,
+                layer: Layer::Overlay,
+                exclusive_zone: Some(-1),
+                size: Some((style::BATTERY_PANEL_WIDTH + gap, panel_height + gap)),
                 margin: Some((0, 0, 0, style::BAR_WIDTH.cast_signed())),
                 keyboard_interactivity: KeyboardInteractivity::None,
                 output_option,

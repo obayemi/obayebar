@@ -6,6 +6,10 @@ pub struct BatteryInfo {
     pub percentage: f64,
     pub charging: bool,
     pub icon_name: &'static str,
+    /// Seconds until empty (on battery), 0 if unknown
+    pub time_to_empty: i64,
+    /// Seconds until full (on AC), 0 if unknown
+    pub time_to_full: i64,
 }
 
 impl Default for BatteryInfo {
@@ -15,6 +19,8 @@ impl Default for BatteryInfo {
             percentage: 100.0,
             charging: false,
             icon_name: crate::style::ICON_BATTERY_FULL,
+            time_to_empty: 0,
+            time_to_full: 0,
         }
     }
 }
@@ -76,12 +82,16 @@ async fn read_battery_dbus() -> Option<BatteryInfo> {
     let percentage: f64 = proxy.get_property("Percentage").await.ok()?;
     let state: u32 = proxy.get_property("State").await.ok()?;
     let charging = matches!(state, 1 | 4 | 6);
+    let time_to_empty: i64 = proxy.get_property("TimeToEmpty").await.unwrap_or(0);
+    let time_to_full: i64 = proxy.get_property("TimeToFull").await.unwrap_or(0);
 
     Some(BatteryInfo {
         present: true,
         percentage,
         charging,
         icon_name: battery_icon(percentage, charging),
+        time_to_empty,
+        time_to_full,
     })
 }
 

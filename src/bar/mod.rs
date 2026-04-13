@@ -1,5 +1,6 @@
 mod active_window;
 pub mod audio_panel;
+pub mod battery_panel;
 mod clock;
 mod logo;
 pub mod network_panel;

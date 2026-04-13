@@ -6,15 +6,6 @@ use crate::Message;
 use iced::widget::{column, container, mouse_area, text};
 use iced::{Alignment, Element, Length};
 
-fn status_icon(icon_name: &str, color: iced::Color) -> Element<'_, Message> {
-    text(icon_name)
-        .font(style::ICON_FONT)
-        .size(style::FONT_SIZE_LARGE)
-        .color(color)
-        .align_x(Alignment::Center)
-        .into()
-}
-
 pub fn view<'a>(
     battery: &BatteryInfo,
     network: &NetworkInfo,
@@ -53,7 +44,15 @@ pub fn view<'a>(
         } else {
             style::M3_SECONDARY
         };
-        icons = icons.push(status_icon(battery.icon_name, battery_color));
+        let battery_icon = mouse_area(
+            text(battery.icon_name)
+                .font(style::ICON_FONT)
+                .size(style::FONT_SIZE_LARGE)
+                .color(battery_color)
+                .align_x(Alignment::Center),
+        )
+        .on_enter(Message::BatteryPanelOpen(monitor.map(String::from)));
+        icons = icons.push(battery_icon);
     }
 
     container(icons)
