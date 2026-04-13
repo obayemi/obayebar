@@ -124,8 +124,8 @@ pub fn set_power_profile(profile: &str) {
     });
 }
 
-async fn read_battery_dbus(conn: &zbus::Connection) -> Option<BatteryInfo> {
-    let proxy: zbus::Proxy<'_> = zbus::proxy::Builder::new(conn)
+async fn build_upower_proxy(conn: &zbus::Connection) -> Option<zbus::Proxy<'_>> {
+    zbus::proxy::Builder::new(conn)
         .destination("org.freedesktop.UPower")
         .ok()?
         .path("/org/freedesktop/UPower/devices/DisplayDevice")
@@ -134,8 +134,10 @@ async fn read_battery_dbus(conn: &zbus::Connection) -> Option<BatteryInfo> {
         .ok()?
         .build()
         .await
-        .ok()?;
+        .ok()
+}
 
+async fn read_battery_dbus(proxy: &zbus::Proxy<'_>) -> Option<BatteryInfo> {
     let is_battery: bool = proxy.get_property("IsPresent").await.ok()?;
     if !is_battery {
         return None;
@@ -166,11 +168,21 @@ pub fn stream() -> impl Stream<Item = BatteryInfo> {
             c
         } else {
             log::warn!("battery: failed to connect to system D-Bus");
-            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
             return Some((BatteryInfo::default(), None));
         };
-        let mut info = read_battery_dbus(&connection).await.unwrap_or_default();
-        info.power_profiles = read_power_profiles(&connection).await;
+        let mut info = if let Some(proxy) = build_upower_proxy(&connection).await {
+            read_battery_dbus(&proxy).await.unwrap_or_default()
+        } else {
+            log::debug!("battery: UPower proxy unavailable");
+            BatteryInfo::default()
+        };
+        info.power_profiles = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            read_power_profiles(&connection),
+        )
+        .await
+        .unwrap_or(None);
         tokio::time::sleep(std::time::Duration::from_secs(30)).await;
         Some((info, Some(connection)))
     })
