@@ -98,6 +98,7 @@ pub const ICON_BATTERY_CHARGING_50: &str = "\u{F0A4}";
 pub const ICON_BATTERY_CHARGING_60: &str = "\u{F0A5}";
 pub const ICON_BATTERY_CHARGING_90: &str = "\u{F0A7}";
 pub const ICON_BOLT: &str = "\u{EA0B}";
+pub const ICON_ECO: &str = "\u{EA35}";
 pub const ICON_WIFI_4: &str = "\u{F065}";
 pub const ICON_WIFI_3: &str = "\u{EBE1}";
 pub const ICON_WIFI_2: &str = "\u{EBD6}";
@@ -230,15 +231,31 @@ pub fn network_panel_height(ap_count: usize) -> u32 {
     clippy::cast_sign_loss,
     clippy::as_conversions
 )]
-pub fn battery_panel_height() -> u32 {
+pub fn battery_panel_height(has_power_profiles: bool) -> u32 {
     let container_padding = PADDING_LARGE * 2.0;
     let header = FONT_SIZE_LARGE * LINE_HEIGHT;
     let gauge = 140.0; // GAUGE_SIZE in battery_panel
     let time_label = FONT_SIZE_SMALLER * LINE_HEIGHT;
     // 2 gaps between header, gauge, time_label
     let outer_spacing = SPACING_NORMAL * 2.0;
+
+    let profiles_section = if has_power_profiles {
+        let separator = 1.0;
+        let label = FONT_SIZE_SMALLER * LINE_HEIGHT;
+        // Profile buttons: icon (FONT_SIZE_NORMAL) + label (FONT_SIZE_SMALL) + spacing + padding
+        let button_height = PADDING_SMALL.mul_add(
+            2.0,
+            FONT_SIZE_SMALL.mul_add(LINE_HEIGHT, FONT_SIZE_NORMAL * LINE_HEIGHT) + 2.0,
+        );
+        // 3 extra SPACING_NORMAL gaps (separator, label, buttons row)
+        SPACING_NORMAL.mul_add(3.0, separator + label + button_height)
+    } else {
+        0.0
+    };
+
     let safety = 10.0;
-    (container_padding + header + gauge + time_label + outer_spacing + safety).ceil() as u32
+    (container_padding + header + gauge + time_label + outer_spacing + profiles_section + safety)
+        .ceil() as u32
 }
 
 /// Load the Material Symbols font from the system or `OBAYEBAR_FONT_DIR` env var.

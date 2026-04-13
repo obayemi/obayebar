@@ -156,6 +156,7 @@ pub enum Message {
     AudioSetMute(bool),
     AudioSetDefaultSink(u32),
     AudioOpenPavucontrol,
+    SetPowerProfile(String),
 }
 
 impl App {
@@ -338,6 +339,10 @@ impl App {
             }
             Message::AudioSetDefaultSink(id) => {
                 services::audio::send_command(AudioCommand::DefaultSink { id });
+                Task::none()
+            }
+            Message::SetPowerProfile(profile) => {
+                services::battery::set_power_profile(&profile);
                 Task::none()
             }
             Message::AudioOpenPavucontrol => {
@@ -567,7 +572,7 @@ impl App {
         let id = window::Id::unique();
         self.battery_panel_id = Some(id);
         let output_option = monitor.map_or(OutputOption::LastOutput, OutputOption::OutputName);
-        let panel_height = style::battery_panel_height();
+        let panel_height = style::battery_panel_height(self.battery.power_profiles.is_some());
         let gap = style::PANEL_GAP_PX;
         Task::done(Message::NewLayerShell {
             settings: NewLayerShellSettings {

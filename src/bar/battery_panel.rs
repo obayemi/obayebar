@@ -2,8 +2,8 @@ use crate::services::battery::BatteryInfo;
 use crate::style;
 use crate::Message;
 use iced::widget::canvas::{self, Frame, Geometry, Path, Stroke};
-use iced::widget::{column, container, mouse_area, text, Stack};
-use iced::{Alignment, Element, Length, Padding, Point, Rectangle, Renderer, Theme};
+use iced::widget::{button, column, container, mouse_area, row, text, Space, Stack};
+use iced::{Alignment, Border, Element, Length, Padding, Point, Rectangle, Renderer, Theme};
 
 const GAUGE_SIZE: f32 = 140.0;
 const ARC_WIDTH: f32 = 10.0;
@@ -100,20 +100,90 @@ fn format_duration(seconds: i64) -> String {
     }
 }
 
-pub fn view(battery: &BatteryInfo) -> Element<'_, Message> {
-    let header = iced::widget::row![
-        text(battery.icon_name)
-            .font(style::ICON_FONT)
-            .size(style::FONT_SIZE_LARGE)
-            .color(style::M3_PRIMARY),
-        text("Battery")
-            .size(style::FONT_SIZE_LARGE)
-            .color(style::M3_ON_SURFACE),
-    ]
-    .spacing(style::SPACING_SMALLER)
-    .align_y(Alignment::Center);
+fn separator<'a>() -> Element<'a, Message> {
+    container(Space::new().width(Length::Fill).height(1.0))
+        .style(|_theme| container::Style {
+            background: Some(iced::Background::Color(style::with_alpha(
+                style::M3_OUTLINE_VARIANT,
+                0.5,
+            ))),
+            ..container::Style::default()
+        })
+        .into()
+}
 
-    // Percentage text overlay on gauge
+fn profile_label(name: &str) -> &str {
+    match name {
+        "power-saver" => "Saver",
+        "balanced" => "Balanced",
+        "performance" => "Perf",
+        other => other,
+    }
+}
+
+fn profile_icon(name: &str) -> &'static str {
+    match name {
+        "power-saver" => style::ICON_ECO,
+        "performance" => style::ICON_SPEED,
+        _ => style::ICON_BOLT,
+    }
+}
+
+fn profile_button(name: &str, is_active: bool) -> Element<'_, Message> {
+    let (bg, text_color) = if is_active {
+        (
+            style::with_alpha(style::M3_PRIMARY, 0.15),
+            style::M3_PRIMARY,
+        )
+    } else {
+        (iced::Color::TRANSPARENT, style::M3_ON_SURFACE)
+    };
+
+    let label = profile_label(name);
+    let icon = profile_icon(name);
+    let profile_name = name.to_string();
+
+    let content = column![
+        text(icon)
+            .font(style::ICON_FONT)
+            .size(style::FONT_SIZE_NORMAL)
+            .color(text_color)
+            .align_x(Alignment::Center),
+        text(label)
+            .size(style::FONT_SIZE_SMALL)
+            .color(text_color)
+            .align_x(Alignment::Center),
+    ]
+    .align_x(Alignment::Center)
+    .spacing(2.0)
+    .width(Length::Fill);
+
+    button(content)
+        .on_press(Message::SetPowerProfile(profile_name))
+        .style(move |_theme, status| {
+            let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
+            let bg_color = if hover {
+                style::with_alpha(style::M3_ON_SURFACE, 0.08)
+            } else {
+                bg
+            };
+            button::Style {
+                background: Some(iced::Background::Color(bg_color)),
+                text_color,
+                border: Border {
+                    radius: style::ROUNDING_SMALL.into(),
+                    ..Border::default()
+                },
+                shadow: iced::Shadow::default(),
+                snap: false,
+            }
+        })
+        .padding([style::PADDING_SMALL, style::PADDING_SMALLER])
+        .width(Length::Fill)
+        .into()
+}
+
+fn gauge_widget(battery: &BatteryInfo) -> Element<'_, Message> {
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let pct = battery.percentage.round() as u32;
     let pct_text = text(format!("{pct}%"))
@@ -147,7 +217,7 @@ pub fn view(battery: &BatteryInfo) -> Element<'_, Message> {
     .width(Length::Fixed(GAUGE_SIZE))
     .height(Length::Fixed(GAUGE_SIZE));
 
-    let gauge = container(Stack::with_children(vec![
+    container(Stack::with_children(vec![
         gauge_canvas.into(),
         container(pct_overlay)
             .width(Length::Fixed(GAUGE_SIZE))
@@ -157,7 +227,22 @@ pub fn view(battery: &BatteryInfo) -> Element<'_, Message> {
             .into(),
     ]))
     .width(Length::Fill)
-    .align_x(Alignment::Center);
+    .align_x(Alignment::Center)
+    .into()
+}
+
+pub fn view(battery: &BatteryInfo) -> Element<'_, Message> {
+    let header = iced::widget::row![
+        text(battery.icon_name)
+            .font(style::ICON_FONT)
+            .size(style::FONT_SIZE_LARGE)
+            .color(style::M3_PRIMARY),
+        text("Battery")
+            .size(style::FONT_SIZE_LARGE)
+            .color(style::M3_ON_SURFACE),
+    ]
+    .spacing(style::SPACING_SMALLER)
+    .align_y(Alignment::Center);
 
     // Time remaining text
     let time_text = if battery.charging && battery.time_to_full > 0 {
@@ -178,10 +263,26 @@ pub fn view(battery: &BatteryInfo) -> Element<'_, Message> {
         .align_x(Alignment::Center)
         .width(Length::Fill);
 
-    let content = column![header, gauge, time_label]
+    let mut content = column![header, gauge_widget(battery), time_label]
         .spacing(style::SPACING_NORMAL)
         .width(Length::Fill)
         .align_x(Alignment::Center);
+
+    // Power profile selector
+    if let Some(ref profiles) = battery.power_profiles {
+        content = content.push(separator());
+        content = content.push(
+            text("Power profile")
+                .size(style::FONT_SIZE_SMALLER)
+                .color(style::M3_ON_SURFACE_VARIANT),
+        );
+        let mut profile_row = row![].spacing(4.0).width(Length::Fill);
+        for profile in &profiles.available_profiles {
+            let is_active = profile == &profiles.active_profile;
+            profile_row = profile_row.push(profile_button(profile, is_active));
+        }
+        content = content.push(profile_row);
+    }
 
     let panel = container(content)
         .padding(style::PADDING_LARGE)

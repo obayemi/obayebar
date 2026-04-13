@@ -1,6 +1,12 @@
 use futures_util::Stream;
 
 #[derive(Debug, Clone)]
+pub struct PowerProfileInfo {
+    pub available_profiles: Vec<String>,
+    pub active_profile: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct BatteryInfo {
     pub present: bool,
     pub percentage: f64,
@@ -10,6 +16,7 @@ pub struct BatteryInfo {
     pub time_to_empty: i64,
     /// Seconds until full (on AC), 0 if unknown
     pub time_to_full: i64,
+    pub power_profiles: Option<PowerProfileInfo>,
 }
 
 impl Default for BatteryInfo {
@@ -21,6 +28,7 @@ impl Default for BatteryInfo {
             icon_name: crate::style::ICON_BATTERY_FULL,
             time_to_empty: 0,
             time_to_full: 0,
+            power_profiles: None,
         }
     }
 }
@@ -60,10 +68,64 @@ fn battery_icon(percentage: f64, charging: bool) -> &'static str {
     }
 }
 
-async fn read_battery_dbus() -> Option<BatteryInfo> {
-    let conn = zbus::Connection::system().await.ok()?;
+async fn read_power_profiles(conn: &zbus::Connection) -> Option<PowerProfileInfo> {
+    let proxy: zbus::Proxy<'_> = zbus::proxy::Builder::new(conn)
+        .destination("net.hadess.PowerProfiles")
+        .ok()?
+        .path("/net/hadess/PowerProfiles")
+        .ok()?
+        .interface("net.hadess.PowerProfiles")
+        .ok()?
+        .build()
+        .await
+        .ok()?;
 
-    let proxy: zbus::Proxy<'_> = zbus::proxy::Builder::new(&conn)
+    let active: String = proxy.get_property("ActiveProfile").await.ok()?;
+
+    // Profiles is aa{sv} — array of dicts, each with a "Profile" string key
+    let profiles_raw: Vec<std::collections::HashMap<String, zbus::zvariant::OwnedValue>> =
+        proxy.get_property("Profiles").await.ok()?;
+
+    let available: Vec<String> = profiles_raw
+        .iter()
+        .filter_map(|dict| {
+            dict.get("Profile")
+                .and_then(|v| <String as TryFrom<_>>::try_from(v.clone()).ok())
+        })
+        .collect();
+
+    if available.is_empty() {
+        return None;
+    }
+
+    Some(PowerProfileInfo {
+        available_profiles: available,
+        active_profile: active,
+    })
+}
+
+pub fn set_power_profile(profile: &str) {
+    let profile = profile.to_string();
+    tokio::spawn(async move {
+        let Ok(conn) = zbus::Connection::system().await else {
+            return;
+        };
+        let Some(proxy) = (zbus::proxy::Builder::<zbus::Proxy<'_>>::new(&conn)
+            .destination("net.hadess.PowerProfiles")
+            .ok()
+            .and_then(|b| b.path("/net/hadess/PowerProfiles").ok())
+            .and_then(|b| b.interface("net.hadess.PowerProfiles").ok()))
+        else {
+            return;
+        };
+        if let Ok(proxy) = proxy.build().await {
+            let _ = proxy.set_property("ActiveProfile", &profile).await;
+        }
+    });
+}
+
+async fn read_battery_dbus(conn: &zbus::Connection) -> Option<BatteryInfo> {
+    let proxy: zbus::Proxy<'_> = zbus::proxy::Builder::new(conn)
         .destination("org.freedesktop.UPower")
         .ok()?
         .path("/org/freedesktop/UPower/devices/DisplayDevice")
@@ -92,13 +154,24 @@ async fn read_battery_dbus() -> Option<BatteryInfo> {
         icon_name: battery_icon(percentage, charging),
         time_to_empty,
         time_to_full,
+        power_profiles: None,
     })
 }
 
 pub fn stream() -> impl Stream<Item = BatteryInfo> {
-    futures_util::stream::unfold((), |()| async {
-        let info = read_battery_dbus().await.unwrap_or_default();
+    futures_util::stream::unfold(None, |conn: Option<zbus::Connection>| async {
+        let connection = if let Some(c) = conn {
+            c
+        } else if let Ok(c) = zbus::Connection::system().await {
+            c
+        } else {
+            log::warn!("battery: failed to connect to system D-Bus");
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            return Some((BatteryInfo::default(), None));
+        };
+        let mut info = read_battery_dbus(&connection).await.unwrap_or_default();
+        info.power_profiles = read_power_profiles(&connection).await;
         tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-        Some((info, ()))
+        Some((info, Some(connection)))
     })
 }
