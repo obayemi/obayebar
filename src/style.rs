@@ -121,6 +121,10 @@ pub const ICON_SETTINGS: &str = "\u{E8B8}";
 
 pub const AUDIO_PANEL_WIDTH: u32 = 320;
 pub const NETWORK_PANEL_WIDTH: u32 = 300;
+/// Visual gap between the bar and popup panels, rendered as transparent padding
+/// inside the panel window so the `mouse_area` covers the gap.
+pub const PANEL_GAP: f32 = 8.0;
+pub const PANEL_GAP_PX: u32 = 8;
 
 /// Line-height multiplier: iced cosmic-text renders text taller than the font size.
 const LINE_HEIGHT: f32 = 1.3;

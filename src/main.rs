@@ -498,13 +498,14 @@ impl App {
         self.audio_panel_id = Some(id);
         let output_option = monitor.map_or(OutputOption::LastOutput, OutputOption::OutputName);
         let panel_height = style::audio_panel_height(self.audio.sinks.len());
+        let gap = style::PANEL_GAP_PX;
         Task::done(Message::NewLayerShell {
             settings: NewLayerShellSettings {
                 anchor: Anchor::Left | Anchor::Bottom,
                 layer: Layer::Overlay,
                 exclusive_zone: Some(-1),
-                size: Some((style::AUDIO_PANEL_WIDTH, panel_height)),
-                margin: Some((0, 0, 8, (style::BAR_WIDTH + 8).cast_signed())),
+                size: Some((style::AUDIO_PANEL_WIDTH + gap, panel_height + gap)),
+                margin: Some((0, 0, 0, style::BAR_WIDTH.cast_signed())),
                 keyboard_interactivity: KeyboardInteractivity::None,
                 output_option,
                 ..NewLayerShellSettings::default()
@@ -523,13 +524,14 @@ impl App {
         let output_option = monitor.map_or(OutputOption::LastOutput, OutputOption::OutputName);
         let ap_count = self.network.access_points.len().clamp(1, 8);
         let panel_height = style::network_panel_height(ap_count);
+        let gap = style::PANEL_GAP_PX;
         Task::done(Message::NewLayerShell {
             settings: NewLayerShellSettings {
                 anchor: Anchor::Left | Anchor::Bottom,
                 layer: Layer::Overlay,
                 exclusive_zone: Some(-1),
-                size: Some((style::NETWORK_PANEL_WIDTH, panel_height)),
-                margin: Some((0, 0, 8, (style::BAR_WIDTH + 8).cast_signed())),
+                size: Some((style::NETWORK_PANEL_WIDTH + gap, panel_height + gap)),
+                margin: Some((0, 0, 0, style::BAR_WIDTH.cast_signed())),
                 keyboard_interactivity: KeyboardInteractivity::None,
                 output_option,
                 ..NewLayerShellSettings::default()

@@ -133,7 +133,13 @@ pub fn view(network: &NetworkInfo) -> Element<'_, Message> {
         container(panel)
             .width(Length::Fill)
             .height(Length::Fill)
-            .align_y(Alignment::End),
+            .align_y(Alignment::End)
+            .padding(iced::Padding {
+                top: 0.0,
+                right: 0.0,
+                bottom: style::PANEL_GAP,
+                left: style::PANEL_GAP,
+            }),
     )
     .on_exit(Message::CloseAllPanels)
     .into()
