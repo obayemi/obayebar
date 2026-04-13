@@ -11,7 +11,7 @@ pub mod workspaces;
 use crate::style;
 use crate::App;
 use crate::Message;
-use iced::widget::{column, container, Space};
+use iced::widget::{column, container, mouse_area, Space};
 use iced::{Background, Element, Length, Padding};
 
 pub fn view<'a>(app: &'a App, monitor: Option<&'a str>) -> Element<'a, Message> {
@@ -52,7 +52,7 @@ pub fn view<'a>(app: &'a App, monitor: Option<&'a str>) -> Element<'a, Message> 
     .height(Length::Fill);
 
     // Caelestia uses m3surface background with transparency.base (0.85) alpha
-    container(bar_content)
+    let bar = container(bar_content)
         .width(Length::Fill)
         .height(Length::Fill)
         .style(|_theme| container::Style {
@@ -61,6 +61,7 @@ pub fn view<'a>(app: &'a App, monitor: Option<&'a str>) -> Element<'a, Message> 
                 0.85,
             ))),
             ..container::Style::default()
-        })
-        .into()
+        });
+
+    mouse_area(bar).on_exit(Message::CloseAllPanels).into()
 }

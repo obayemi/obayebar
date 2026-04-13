@@ -202,24 +202,20 @@ pub fn network_panel_height(ap_count: usize) -> u32 {
 
     // Header: icon + "Network"
     let header = FONT_SIZE_LARGE * LINE_HEIGHT;
-    // Status line
-    let status = FONT_SIZE_SMALLER * LINE_HEIGHT;
     // Separator
     let separator = 1.0;
 
-    // 3 gaps between header, status, separator, network_list
-    let outer_spacing = SPACING_NORMAL * 3.0;
+    // 2 gaps between header, separator, network_list
+    let outer_spacing = SPACING_NORMAL * 2.0;
 
     // "Wi-Fi networks" label + N entries
     let label = FONT_SIZE_SMALLER * LINE_HEIGHT;
     let n = ap_count.max(1) as f32;
     let per_entry = PADDING_SMALL.mul_add(2.0, FONT_SIZE_NORMAL * LINE_HEIGHT);
-    // icon row adds SPACING_SMALLER for the icon gap
     let network_list = label + (n - 1.0).max(0.0).mul_add(2.0, n * per_entry);
 
     let safety = 20.0;
-    (container_padding + header + status + separator + outer_spacing + network_list + safety).ceil()
-        as u32
+    (container_padding + header + separator + outer_spacing + network_list + safety).ceil() as u32
 }
 
 /// Load the Material Symbols font from the system or `OBAYEBAR_FONT_DIR` env var.

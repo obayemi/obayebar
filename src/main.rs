@@ -146,9 +146,8 @@ pub enum Message {
     NotifClearAll,
     PowerClick,
     AudioPanelOpen(Option<String>),
-    AudioPanelClose,
     NetworkPanelOpen(Option<String>),
-    NetworkPanelClose,
+    CloseAllPanels,
     AudioSetVolume(f32),
     AudioSetMute(bool),
     AudioSetDefaultSink(u32),
@@ -307,10 +306,17 @@ impl App {
                 }
                 Task::batch(tasks)
             }
-            Message::AudioPanelOpen(monitor) => self.open_audio_panel(monitor),
-            Message::AudioPanelClose => self.close_audio_panel(),
-            Message::NetworkPanelOpen(monitor) => self.open_network_panel(monitor),
-            Message::NetworkPanelClose => self.close_network_panel(),
+            Message::AudioPanelOpen(monitor) => {
+                let close = self.close_all_panels();
+                let open = self.open_audio_panel(monitor);
+                Task::batch([close, open])
+            }
+            Message::NetworkPanelOpen(monitor) => {
+                let close = self.close_all_panels();
+                let open = self.open_network_panel(monitor);
+                Task::batch([close, open])
+            }
+            Message::CloseAllPanels => self.close_all_panels(),
             Message::AudioSetVolume(vol) => {
                 services::audio::send_command(AudioCommand::Volume(vol));
                 Task::none()
@@ -466,6 +472,23 @@ impl App {
         }
     }
 
+    fn close_all_panels(&mut self) -> Task<Message> {
+        let mut tasks = Vec::new();
+        if self.audio_panel_open {
+            self.audio_panel_open = false;
+            if let Some(id) = self.audio_panel_id.take() {
+                tasks.push(close_window(id));
+            }
+        }
+        if self.network_panel_open {
+            self.network_panel_open = false;
+            if let Some(id) = self.network_panel_id.take() {
+                tasks.push(close_window(id));
+            }
+        }
+        Task::batch(tasks)
+    }
+
     fn open_audio_panel(&mut self, monitor: Option<String>) -> Task<Message> {
         if self.audio_panel_open {
             return Task::none();
@@ -488,16 +511,6 @@ impl App {
             },
             id,
         })
-    }
-
-    fn close_audio_panel(&mut self) -> Task<Message> {
-        if !self.audio_panel_open {
-            return Task::none();
-        }
-        self.audio_panel_open = false;
-        self.audio_panel_id
-            .take()
-            .map_or_else(Task::none, close_window)
     }
 
     fn open_network_panel(&mut self, monitor: Option<String>) -> Task<Message> {
@@ -523,16 +536,6 @@ impl App {
             },
             id,
         })
-    }
-
-    fn close_network_panel(&mut self) -> Task<Message> {
-        if !self.network_panel_open {
-            return Task::none();
-        }
-        self.network_panel_open = false;
-        self.network_panel_id
-            .take()
-            .map_or_else(Task::none, close_window)
     }
 
     fn expire_popups(&mut self) -> Task<Message> {

@@ -81,22 +81,7 @@ pub fn view(network: &NetworkInfo) -> Element<'_, Message> {
     .spacing(style::SPACING_SMALLER)
     .align_y(Alignment::Center);
 
-    // Connection status line
-    let status_text = if network.ethernet {
-        "Connected via Ethernet".to_string()
-    } else if let Some(ref ssid) = network.wifi_ssid {
-        format!("Connected to {ssid}")
-    } else if network.connected {
-        "Connected".to_string()
-    } else {
-        "Disconnected".to_string()
-    };
-
-    let status = text(status_text)
-        .size(style::FONT_SIZE_SMALLER)
-        .color(style::M3_ON_SURFACE_VARIANT);
-
-    let mut content = column![header, status, separator()]
+    let mut content = column![header, separator()]
         .spacing(style::SPACING_NORMAL)
         .width(Length::Fill);
 
@@ -150,6 +135,6 @@ pub fn view(network: &NetworkInfo) -> Element<'_, Message> {
             .height(Length::Fill)
             .align_y(Alignment::End),
     )
-    .on_exit(Message::NetworkPanelClose)
+    .on_exit(Message::CloseAllPanels)
     .into()
 }

@@ -164,6 +164,6 @@ pub fn view(audio: &AudioInfo) -> Element<'_, Message> {
             .height(Length::Fill)
             .align_y(Alignment::End),
     )
-    .on_exit(Message::AudioPanelClose)
+    .on_exit(Message::CloseAllPanels)
     .into()
 }
