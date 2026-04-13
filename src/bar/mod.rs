@@ -2,6 +2,7 @@ mod active_window;
 pub mod audio_panel;
 mod clock;
 mod logo;
+pub mod network_panel;
 mod power;
 mod status;
 mod tray;

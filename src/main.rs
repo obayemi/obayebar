@@ -110,6 +110,8 @@ pub struct App {
     notif_center_id: Option<window::Id>,
     audio_panel_id: Option<window::Id>,
     audio_panel_open: bool,
+    network_panel_id: Option<window::Id>,
+    network_panel_open: bool,
 
     pub workspaces: Vec<WorkspaceInfo>,
     /// Per-monitor active workspace: `monitor_name` -> `active_workspace_id`
@@ -145,6 +147,8 @@ pub enum Message {
     PowerClick,
     AudioPanelOpen(Option<String>),
     AudioPanelClose,
+    NetworkPanelOpen(Option<String>),
+    NetworkPanelClose,
     AudioSetVolume(f32),
     AudioSetMute(bool),
     AudioSetDefaultSink(u32),
@@ -166,6 +170,8 @@ impl App {
                 notif_center_id: None,
                 audio_panel_id: None,
                 audio_panel_open: false,
+                network_panel_id: None,
+                network_panel_open: false,
                 workspaces: Vec::new(),
                 active_workspaces: HashMap::new(),
                 active_window: None,
@@ -303,6 +309,8 @@ impl App {
             }
             Message::AudioPanelOpen(monitor) => self.open_audio_panel(monitor),
             Message::AudioPanelClose => self.close_audio_panel(),
+            Message::NetworkPanelOpen(monitor) => self.open_network_panel(monitor),
+            Message::NetworkPanelClose => self.close_network_panel(),
             Message::AudioSetVolume(vol) => {
                 services::audio::send_command(AudioCommand::Volume(vol));
                 Task::none()
@@ -404,6 +412,8 @@ impl App {
             notifications::center_view(self)
         } else if Some(id) == self.audio_panel_id {
             bar::audio_panel::view(&self.audio)
+        } else if Some(id) == self.network_panel_id {
+            bar::network_panel::view(&self.network)
         } else {
             let monitor = self.monitor_for_bar(id);
             bar::view(self, monitor)
@@ -486,6 +496,41 @@ impl App {
         }
         self.audio_panel_open = false;
         self.audio_panel_id
+            .take()
+            .map_or_else(Task::none, close_window)
+    }
+
+    fn open_network_panel(&mut self, monitor: Option<String>) -> Task<Message> {
+        if self.network_panel_open {
+            return Task::none();
+        }
+        self.network_panel_open = true;
+        let id = window::Id::unique();
+        self.network_panel_id = Some(id);
+        let output_option = monitor.map_or(OutputOption::LastOutput, OutputOption::OutputName);
+        let ap_count = self.network.access_points.len().clamp(1, 8);
+        let panel_height = style::network_panel_height(ap_count);
+        Task::done(Message::NewLayerShell {
+            settings: NewLayerShellSettings {
+                anchor: Anchor::Left | Anchor::Bottom,
+                layer: Layer::Overlay,
+                exclusive_zone: Some(-1),
+                size: Some((style::NETWORK_PANEL_WIDTH, panel_height)),
+                margin: Some((0, 0, 8, (style::BAR_WIDTH + 8).cast_signed())),
+                keyboard_interactivity: KeyboardInteractivity::None,
+                output_option,
+                ..NewLayerShellSettings::default()
+            },
+            id,
+        })
+    }
+
+    fn close_network_panel(&mut self) -> Task<Message> {
+        if !self.network_panel_open {
+            return Task::none();
+        }
+        self.network_panel_open = false;
+        self.network_panel_id
             .take()
             .map_or_else(Task::none, close_window)
     }

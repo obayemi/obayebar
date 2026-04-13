@@ -35,8 +35,17 @@ pub fn view<'a>(
     .on_enter(Message::AudioPanelOpen(monitor.map(String::from)))
     .on_press(Message::AudioOpenPavucontrol);
 
+    let network_icon = mouse_area(
+        text(network.icon_name)
+            .font(style::ICON_FONT)
+            .size(style::FONT_SIZE_LARGE)
+            .color(style::M3_SECONDARY)
+            .align_x(Alignment::Center),
+    )
+    .on_enter(Message::NetworkPanelOpen(monitor.map(String::from)));
+
     icons = icons.push(audio_icon);
-    icons = icons.push(status_icon(network.icon_name, style::M3_SECONDARY));
+    icons = icons.push(network_icon);
 
     if battery.present {
         let battery_color = if battery.percentage <= 20.0 {

@@ -120,6 +120,7 @@ pub const ICON_NOTIFICATIONS_NONE: &str = "\u{E7F5}";
 pub const ICON_SETTINGS: &str = "\u{E8B8}";
 
 pub const AUDIO_PANEL_WIDTH: u32 = 320;
+pub const NETWORK_PANEL_WIDTH: u32 = 300;
 
 /// Line-height multiplier: iced cosmic-text renders text taller than the font size.
 const LINE_HEIGHT: f32 = 1.3;
@@ -187,6 +188,38 @@ pub fn notif_popup_height(notif_count: usize) -> u32 {
 
     let safety = 20.0;
     (container_padding + cards + safety).ceil() as u32
+}
+
+/// Compute the network panel window height for `ap_count` visible networks.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    clippy::as_conversions
+)]
+pub fn network_panel_height(ap_count: usize) -> u32 {
+    let container_padding = PADDING_LARGE * 2.0;
+
+    // Header: icon + "Network"
+    let header = FONT_SIZE_LARGE * LINE_HEIGHT;
+    // Status line
+    let status = FONT_SIZE_SMALLER * LINE_HEIGHT;
+    // Separator
+    let separator = 1.0;
+
+    // 3 gaps between header, status, separator, network_list
+    let outer_spacing = SPACING_NORMAL * 3.0;
+
+    // "Wi-Fi networks" label + N entries
+    let label = FONT_SIZE_SMALLER * LINE_HEIGHT;
+    let n = ap_count.max(1) as f32;
+    let per_entry = PADDING_SMALL.mul_add(2.0, FONT_SIZE_NORMAL * LINE_HEIGHT);
+    // icon row adds SPACING_SMALLER for the icon gap
+    let network_list = label + (n - 1.0).max(0.0).mul_add(2.0, n * per_entry);
+
+    let safety = 20.0;
+    (container_padding + header + status + separator + outer_spacing + network_list + safety).ceil()
+        as u32
 }
 
 /// Load the Material Symbols font from the system or `OBAYEBAR_FONT_DIR` env var.
