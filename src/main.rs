@@ -498,12 +498,19 @@ impl App {
     }
 
     fn ensure_popup_window(&mut self) -> Task<Message> {
-        if self.notif_popup_id.is_some() || self.popup_notifications.is_empty() {
+        if self.popup_notifications.is_empty() {
             return Task::none();
+        }
+        let height = style::notif_popup_height(self.popup_notifications.len());
+        if let Some(id) = self.notif_popup_id {
+            // Resize existing window to fit current notification count
+            return Task::done(Message::SizeChange {
+                id,
+                size: (style::NOTIF_WIDTH, height),
+            });
         }
         let id = window::Id::unique();
         self.notif_popup_id = Some(id);
-        let height = style::notif_popup_height(self.popup_notifications.len());
         Task::done(Message::NewLayerShell {
             settings: NewLayerShellSettings {
                 anchor: Anchor::Right | Anchor::Top,
@@ -523,8 +530,10 @@ impl App {
             if let Some(id) = self.notif_popup_id.take() {
                 return close_window(id);
             }
+            return Task::none();
         }
-        Task::none()
+        // Resize to fit remaining notifications
+        self.ensure_popup_window()
     }
 }
 
