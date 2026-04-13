@@ -12,14 +12,14 @@ keywords = ["wayland", "bar", "status-bar", "hyprland"]
 categories = ["gui"]
 
 [dependencies]
-iced = { version = "0.14.0", default-features = false, features = ["wgpu", "tiny-skia", "crisp", "thread-pool", "linux-theme-detection", "wayland", "tokio", "canvas", "image"] }
+iced = { version = "0.14.0", default-features = false, features = ["wgpu", "crisp", "linux-theme-detection", "wayland", "tokio", "canvas", "image-without-codecs"] }
 iced_layershell = "0.17.1"
 iced_runtime = "0.14.0"
 tokio = { version = "1.51.0", features = ["full"] }
 zbus = { version = "5.14.0", default-features = false, features = ["tokio"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
-chrono = "0.4.44"
+chrono = { version = "0.4.44", default-features = false, features = ["clock", "std"] }
 futures-util = "0.3.32"
 log = "0.4.29"
 env_logger = "0.11.10"
