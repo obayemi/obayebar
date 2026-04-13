@@ -1,5 +1,6 @@
 use crate::services::audio::AudioInfo;
 use crate::services::battery::BatteryInfo;
+use crate::services::bluetooth::BluetoothInfo;
 use crate::services::network::NetworkInfo;
 use crate::style;
 use crate::Message;
@@ -10,6 +11,7 @@ pub fn view<'a>(
     battery: &BatteryInfo,
     network: &NetworkInfo,
     audio: &AudioInfo,
+    bluetooth: &BluetoothInfo,
     monitor: Option<&str>,
 ) -> Element<'a, Message> {
     let mut icons = column![]
@@ -35,7 +37,17 @@ pub fn view<'a>(
     )
     .on_enter(Message::NetworkPanelOpen(monitor.map(String::from)));
 
+    let bluetooth_icon = mouse_area(
+        text(bluetooth.icon_name)
+            .font(style::ICON_FONT)
+            .size(style::FONT_SIZE_LARGE)
+            .color(style::M3_SECONDARY)
+            .align_x(Alignment::Center),
+    )
+    .on_enter(Message::BluetoothPanelOpen(monitor.map(String::from)));
+
     icons = icons.push(audio_icon);
+    icons = icons.push(bluetooth_icon);
     icons = icons.push(network_icon);
 
     if battery.present {

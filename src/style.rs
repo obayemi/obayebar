@@ -124,6 +124,7 @@ pub const ICON_SETTINGS: &str = "\u{E8B8}";
 pub const AUDIO_PANEL_WIDTH: u32 = 320;
 pub const NETWORK_PANEL_WIDTH: u32 = 300;
 pub const BATTERY_PANEL_WIDTH: u32 = 200;
+pub const BLUETOOTH_PANEL_WIDTH: u32 = 280;
 /// Visual gap between the bar and popup panels, rendered as transparent padding
 /// inside the panel window so the `mouse_area` covers the gap.
 pub const PANEL_GAP: f32 = 8.0;
@@ -256,6 +257,34 @@ pub fn battery_panel_height(has_power_profiles: bool) -> u32 {
     let safety = 10.0;
     (container_padding + header + gauge + time_label + outer_spacing + profiles_section + safety)
         .ceil() as u32
+}
+
+/// Compute the bluetooth panel window height for `device_count` paired devices.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    clippy::as_conversions
+)]
+pub fn bluetooth_panel_height(device_count: usize) -> u32 {
+    let container_padding = PADDING_LARGE * 2.0;
+    let header = FONT_SIZE_LARGE * LINE_HEIGHT;
+    let separator = 1.0;
+    // 2 gaps: header→separator, separator→list
+    let outer_spacing = SPACING_NORMAL * 2.0;
+
+    // "Devices" label + N device entries (or 1 fallback line)
+    let label = FONT_SIZE_SMALLER * LINE_HEIGHT;
+    let n = device_count.max(1) as f32;
+    // Each device: icon row + optional battery sub-line, with padding
+    let per_entry = PADDING_SMALL.mul_add(
+        2.0,
+        FONT_SIZE_SMALL.mul_add(LINE_HEIGHT, FONT_SIZE_NORMAL * LINE_HEIGHT),
+    );
+    let device_list = label + (n - 1.0).max(0.0).mul_add(2.0, n * per_entry);
+
+    let safety = 20.0;
+    (container_padding + header + separator + outer_spacing + device_list + safety).ceil() as u32
 }
 
 /// Load the Material Symbols font from the system or `OBAYEBAR_FONT_DIR` env var.

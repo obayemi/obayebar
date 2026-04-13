@@ -49,7 +49,9 @@
       "Bash(cargo doc:*)",
       "Bash(cargo tree:*)",
       "Bash(busctl introspect:*)",
-      "Bash(busctl get-property:*)"
+      "Bash(busctl get-property:*)",
+      "Bash(busctl tree:*)",
+      "Bash(busctl call:*)"
     ]
   }
 }

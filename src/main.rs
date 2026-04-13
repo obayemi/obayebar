@@ -18,6 +18,7 @@ use iced_layershell::to_layer_message;
 use notifications::{NotifEvent, NotificationData};
 use services::audio::{AudioCommand, AudioInfo};
 use services::battery::BatteryInfo;
+use services::bluetooth::BluetoothInfo;
 use services::hyprland::{HyprEvent, HyprState, WindowInfo, WorkspaceInfo};
 use services::network::NetworkInfo;
 use services::tray::TrayItemInfo;
@@ -115,6 +116,8 @@ pub struct App {
     network_panel_open: bool,
     battery_panel_id: Option<window::Id>,
     battery_panel_open: bool,
+    bluetooth_panel_id: Option<window::Id>,
+    bluetooth_panel_open: bool,
 
     pub workspaces: Vec<WorkspaceInfo>,
     /// Per-monitor active workspace: `monitor_name` -> `active_workspace_id`
@@ -124,6 +127,7 @@ pub struct App {
     pub battery: BatteryInfo,
     pub network: NetworkInfo,
     pub audio: AudioInfo,
+    pub bluetooth: BluetoothInfo,
     pub tray_items: Vec<TrayItemInfo>,
     pub notifications: Vec<NotificationData>,
     pub popup_notifications: Vec<NotificationData>,
@@ -151,6 +155,9 @@ pub enum Message {
     AudioPanelOpen(Option<String>),
     NetworkPanelOpen(Option<String>),
     BatteryPanelOpen(Option<String>),
+    BluetoothPanelOpen(Option<String>),
+    Bluetooth(BluetoothInfo),
+    BluetoothToggleDevice { path: String, connected: bool },
     CloseAllPanels,
     AudioSetVolume(f32),
     AudioSetMute(bool),
@@ -178,6 +185,8 @@ impl App {
                 network_panel_open: false,
                 battery_panel_id: None,
                 battery_panel_open: false,
+                bluetooth_panel_id: None,
+                bluetooth_panel_open: false,
                 workspaces: Vec::new(),
                 active_workspaces: HashMap::new(),
                 active_window: None,
@@ -185,6 +194,7 @@ impl App {
                 battery: BatteryInfo::default(),
                 network: NetworkInfo::default(),
                 audio: AudioInfo::default(),
+                bluetooth: BluetoothInfo::default(),
                 tray_items: Vec::new(),
                 notifications: Vec::new(),
                 popup_notifications: Vec::new(),
@@ -262,6 +272,10 @@ impl App {
                 self.audio = info;
                 Task::none()
             }
+            Message::Bluetooth(info) => {
+                self.bluetooth = info;
+                Task::none()
+            }
             Message::TrayItems(items) => {
                 self.tray_items = items;
                 Task::none()
@@ -327,6 +341,15 @@ impl App {
                 let close = self.close_all_panels();
                 let open = self.open_battery_panel(monitor);
                 Task::batch([close, open])
+            }
+            Message::BluetoothPanelOpen(monitor) => {
+                let close = self.close_all_panels();
+                let open = self.open_bluetooth_panel(monitor);
+                Task::batch([close, open])
+            }
+            Message::BluetoothToggleDevice { path, connected } => {
+                services::bluetooth::toggle_device_connection(&path, connected);
+                Task::none()
             }
             Message::CloseAllPanels => self.close_all_panels(),
             Message::AudioSetVolume(vol) => {
@@ -438,6 +461,8 @@ impl App {
             bar::network_panel::view(&self.network)
         } else if Some(id) == self.battery_panel_id {
             bar::battery_panel::view(&self.battery)
+        } else if Some(id) == self.bluetooth_panel_id {
+            bar::bluetooth_panel::view(&self.bluetooth)
         } else {
             let monitor = self.monitor_for_bar(id);
             bar::view(self, monitor)
@@ -454,6 +479,7 @@ impl App {
             Subscription::run(services::network::stream).map(Message::Network),
             Subscription::run(services::audio::stream).map(Message::Audio),
             Subscription::run(services::tray::stream).map(Message::TrayItems),
+            Subscription::run(services::bluetooth::stream).map(Message::Bluetooth),
             Subscription::run(notifications::daemon::stream).map(Message::Notif),
         ];
 
@@ -507,6 +533,12 @@ impl App {
         if self.battery_panel_open {
             self.battery_panel_open = false;
             if let Some(id) = self.battery_panel_id.take() {
+                tasks.push(close_window(id));
+            }
+        }
+        if self.bluetooth_panel_open {
+            self.bluetooth_panel_open = false;
+            if let Some(id) = self.bluetooth_panel_id.take() {
                 tasks.push(close_window(id));
             }
         }
@@ -580,6 +612,32 @@ impl App {
                 layer: Layer::Overlay,
                 exclusive_zone: Some(-1),
                 size: Some((style::BATTERY_PANEL_WIDTH + gap, panel_height + gap)),
+                margin: Some((0, 0, 0, style::BAR_WIDTH.cast_signed())),
+                keyboard_interactivity: KeyboardInteractivity::None,
+                output_option,
+                ..NewLayerShellSettings::default()
+            },
+            id,
+        })
+    }
+
+    fn open_bluetooth_panel(&mut self, monitor: Option<String>) -> Task<Message> {
+        if self.bluetooth_panel_open {
+            return Task::none();
+        }
+        self.bluetooth_panel_open = true;
+        let id = window::Id::unique();
+        self.bluetooth_panel_id = Some(id);
+        let output_option = monitor.map_or(OutputOption::LastOutput, OutputOption::OutputName);
+        let device_count = self.bluetooth.devices.len().clamp(1, 8);
+        let panel_height = style::bluetooth_panel_height(device_count);
+        let gap = style::PANEL_GAP_PX;
+        Task::done(Message::NewLayerShell {
+            settings: NewLayerShellSettings {
+                anchor: Anchor::Left | Anchor::Bottom,
+                layer: Layer::Overlay,
+                exclusive_zone: Some(-1),
+                size: Some((style::BLUETOOTH_PANEL_WIDTH + gap, panel_height + gap)),
                 margin: Some((0, 0, 0, style::BAR_WIDTH.cast_signed())),
                 keyboard_interactivity: KeyboardInteractivity::None,
                 output_option,

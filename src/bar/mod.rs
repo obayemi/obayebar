@@ -1,6 +1,7 @@
 mod active_window;
 pub mod audio_panel;
 pub mod battery_panel;
+pub mod bluetooth_panel;
 mod clock;
 mod logo;
 pub mod network_panel;
@@ -38,7 +39,13 @@ pub fn view<'a>(app: &'a App, monitor: Option<&'a str>) -> Element<'a, Message> 
         Space::new().width(Length::Shrink).height(Length::Fill),
         tray::view(&app.tray_items),
         clock::view(&app.time),
-        status::view(&app.battery, &app.network, &app.audio, monitor),
+        status::view(
+            &app.battery,
+            &app.network,
+            &app.audio,
+            &app.bluetooth,
+            monitor
+        ),
         power::view(),
     ]
     .spacing(style::SPACING_NORMAL)
