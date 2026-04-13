@@ -165,6 +165,30 @@ pub fn audio_panel_height(sink_count: usize) -> u32 {
         .ceil() as u32
 }
 
+/// Compute the popup notification window height for `notif_count` cards.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    clippy::as_conversions
+)]
+pub fn notif_popup_height(notif_count: usize) -> u32 {
+    let container_padding = PADDING_LARGE * 2.0;
+    let n = notif_count.max(1) as f32;
+
+    // Each notification card: two text lines + badge height + padding
+    let summary_line = FONT_SIZE_NORMAL * LINE_HEIGHT;
+    let body_line = FONT_SIZE_SMALL * LINE_HEIGHT;
+    let card_inner = summary_line.mul_add(1.0, 2.0 + body_line);
+    let card_height = PADDING_NORMAL.mul_add(2.0, card_inner.max(36.0));
+
+    // N cards with SPACING_SMALLER gaps between them
+    let cards = (n - 1.0).max(0.0).mul_add(SPACING_SMALLER, n * card_height);
+
+    let safety = 20.0;
+    (container_padding + cards + safety).ceil() as u32
+}
+
 /// Load the Material Symbols font from the system or `OBAYEBAR_FONT_DIR` env var.
 pub fn load_icon_font() -> Vec<Cow<'static, [u8]>> {
     let font_paths = [

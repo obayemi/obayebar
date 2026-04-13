@@ -4,6 +4,7 @@ mod services;
 mod style;
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use bar::workspaces::SpringState;
 use iced::widget::canvas;
@@ -21,8 +22,45 @@ use services::hyprland::{HyprEvent, HyprState, WindowInfo, WorkspaceInfo};
 use services::network::NetworkInfo;
 use services::tray::TrayItemInfo;
 
+/// A logger wrapper that exits the process on fatal Wayland protocol errors,
+/// since layershellev silently swallows them and keeps the event loop running.
+struct FatalErrorLogger {
+    inner: env_logger::Logger,
+}
+
+static WAYLAND_FATAL: AtomicBool = AtomicBool::new(false);
+
+impl log::Log for FatalErrorLogger {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        self.inner.enabled(metadata)
+    }
+
+    fn log(&self, record: &log::Record) {
+        if self.inner.enabled(record.metadata()) {
+            self.inner.log(record);
+        }
+
+        // Detect fatal Wayland protocol errors and exit on first occurrence
+        if record.level() == log::Level::Error
+            && record.target().starts_with("wayland_backend")
+            && !WAYLAND_FATAL.swap(true, Ordering::Relaxed)
+        {
+            eprintln!("Fatal Wayland error, exiting.");
+            std::process::exit(1);
+        }
+    }
+
+    fn flush(&self) {
+        self.inner.flush();
+    }
+}
+
 fn main() {
-    env_logger::init();
+    let logger = env_logger::Builder::from_default_env().build();
+    let max_level = logger.filter();
+    log::set_boxed_logger(Box::new(FatalErrorLogger { inner: logger }))
+        .map(|()| log::set_max_level(max_level))
+        .ok();
 
     let icon_fonts = style::load_icon_font();
 
@@ -465,12 +503,13 @@ impl App {
         }
         let id = window::Id::unique();
         self.notif_popup_id = Some(id);
+        let height = style::notif_popup_height(self.popup_notifications.len());
         Task::done(Message::NewLayerShell {
             settings: NewLayerShellSettings {
                 anchor: Anchor::Right | Anchor::Top,
                 layer: Layer::Overlay,
                 exclusive_zone: Some(-1),
-                size: Some((style::NOTIF_WIDTH, 0)),
+                size: Some((style::NOTIF_WIDTH, height)),
                 margin: Some((8, 8, 8, 8)),
                 keyboard_interactivity: KeyboardInteractivity::None,
                 ..NewLayerShellSettings::default()
