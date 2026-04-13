@@ -61,7 +61,7 @@ fn battery_icon(percentage: f64, charging: bool) -> &'static str {
 }
 
 async fn read_battery_dbus() -> Option<BatteryInfo> {
-    let conn = zbus::Connection::session().await.ok()?;
+    let conn = zbus::Connection::system().await.ok()?;
 
     let proxy: zbus::Proxy<'_> = zbus::proxy::Builder::new(&conn)
         .destination("org.freedesktop.UPower")
