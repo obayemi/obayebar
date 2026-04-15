@@ -54,7 +54,7 @@ pub enum AudioCommand {
     DefaultSink { id: u32 },
 }
 
-fn volume_icon(volume: f32, muted: bool) -> &'static str {
+pub fn volume_icon(volume: f32, muted: bool) -> &'static str {
     if muted {
         return crate::style::ICON_VOLUME_OFF;
     }

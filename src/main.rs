@@ -386,10 +386,15 @@ impl App {
             }
             Message::CloseAllPanels => self.close_all_panels(),
             Message::AudioSetVolume(vol) => {
+                self.audio.volume = vol;
+                self.audio.icon_name = crate::services::audio::volume_icon(vol, self.audio.muted);
                 services::audio::send_command(AudioCommand::Volume(vol));
                 Task::none()
             }
             Message::AudioSetMute(muted) => {
+                self.audio.muted = muted;
+                self.audio.icon_name =
+                    crate::services::audio::volume_icon(self.audio.volume, muted);
                 services::audio::send_command(AudioCommand::Mute(muted));
                 Task::none()
             }
