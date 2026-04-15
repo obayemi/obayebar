@@ -5,15 +5,19 @@ use crate::services::network::NetworkInfo;
 use crate::services::sysinfo::SysInfo;
 use crate::style;
 use crate::Message;
+use iced::widget::canvas::{self, Frame, Geometry, Path, Stroke};
 use iced::widget::{column, container, mouse_area, text};
-use iced::{Alignment, Color, Element, Length};
+use iced::{Alignment, Color, Element, Length, Pixels, Point, Rectangle, Renderer, Theme};
 
 /// Threshold above which usage is considered elevated.
 const ELEVATED_THRESHOLD: f32 = 70.0;
 /// Threshold above which usage is considered critical.
 const CRITICAL_THRESHOLD: f32 = 90.0;
 
-fn usage_color(percent: f32) -> iced::Color {
+/// Canvas size for the split icon (matches single icon visual size).
+const SPLIT_SIZE: f32 = style::FONT_SIZE_LARGE + 6.0;
+
+fn usage_color(percent: f32) -> Color {
     if percent >= CRITICAL_THRESHOLD {
         style::M3_ERROR
     } else if percent >= ELEVATED_THRESHOLD {
@@ -22,9 +26,6 @@ fn usage_color(percent: f32) -> iced::Color {
         style::M3_SECONDARY
     }
 }
-
-/// Approximate line height matching iced cosmic-text rendering.
-const ICON_LINE_HEIGHT: f32 = style::FONT_SIZE_LARGE * 1.3;
 
 /// Render a single icon at the standard bar size.
 fn single_icon(icon: &str, color: Color) -> Element<'_, Message> {
@@ -36,78 +37,136 @@ fn single_icon(icon: &str, color: Color) -> Element<'_, Message> {
         .into()
 }
 
-/// Render two icons split diagonally within the same space as one icon.
-/// Shows the top-right half of `icon1` and the bottom-left half of `icon2`.
-fn split_icon<'a>(
-    icon1: &'a str,
-    color1: Color,
-    icon2: &'a str,
-    color2: Color,
-) -> Element<'a, Message> {
-    let half_h = ICON_LINE_HEIGHT / 2.0;
+/// Canvas program that draws two icon glyphs split diagonally:
+/// CPU (top-right triangle) and RAM (bottom-left triangle).
+struct DiagonalSplitProgram {
+    cpu_icon: &'static str,
+    cpu_color: Color,
+    ram_icon: &'static str,
+    ram_color: Color,
+}
 
-    // Top half: icon1 clipped to upper portion, aligned right
-    let top_half = container(
-        text(icon1)
-            .font(style::ICON_FONT)
-            .size(style::FONT_SIZE_LARGE)
-            .color(color1),
-    )
-    .width(Length::Fill)
-    .height(Length::Fixed(half_h))
-    .align_x(Alignment::End)
-    .clip(true);
+impl canvas::Program<Message> for DiagonalSplitProgram {
+    type State = ();
 
-    // Bottom half: icon2 inside a full-height inner container, outer clips to
-    // half height aligned to bottom so only the lower portion is visible
-    let inner = container(
-        text(icon2)
-            .font(style::ICON_FONT)
-            .size(style::FONT_SIZE_LARGE)
-            .color(color2),
-    )
-    .width(Length::Fill)
-    .height(Length::Fixed(ICON_LINE_HEIGHT))
-    .align_x(Alignment::Start);
+    fn draw(
+        &self,
+        _state: &Self::State,
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: iced::mouse::Cursor,
+    ) -> Vec<Geometry<Renderer>> {
+        let mut frame = Frame::new(renderer, bounds.size());
+        let s = bounds.width.min(bounds.height);
+        let center = Point::new(s / 2.0, s / 2.0);
 
-    let bottom_half = container(inner)
-        .width(Length::Fill)
-        .height(Length::Fixed(half_h))
-        .align_y(Alignment::End)
-        .clip(true);
+        // Offset each icon away from the diagonal so only the correct half
+        // peeks into the visible triangle. The diagonal goes top-right → bottom-left.
+        let offset = s * 0.18;
 
-    column![top_half, bottom_half]
-        .spacing(0)
-        .width(Length::Fill)
-        .align_x(Alignment::Center)
-        .into()
+        // RAM icon: shifted toward bottom-left
+        frame.fill_text(canvas::Text {
+            content: self.ram_icon.to_string(),
+            position: Point::new(center.x - offset, center.y + offset),
+            color: self.ram_color,
+            size: Pixels(style::FONT_SIZE_LARGE),
+            font: style::ICON_FONT,
+            align_x: iced::alignment::Horizontal::Center.into(),
+            align_y: iced::alignment::Vertical::Center,
+            ..canvas::Text::default()
+        });
+
+        // Cover the top-right half of the RAM icon with a filled triangle
+        // so only its bottom-left portion remains visible.
+        frame.fill(
+            &top_right_triangle(s),
+            style::with_alpha(style::M3_SURFACE_CONTAINER, 0.85),
+        );
+
+        // CPU icon: shifted toward top-right
+        frame.fill_text(canvas::Text {
+            content: self.cpu_icon.to_string(),
+            position: Point::new(center.x + offset, center.y - offset),
+            color: self.cpu_color,
+            size: Pixels(style::FONT_SIZE_LARGE),
+            font: style::ICON_FONT,
+            align_x: iced::alignment::Horizontal::Center.into(),
+            align_y: iced::alignment::Vertical::Center,
+            ..canvas::Text::default()
+        });
+
+        // Cover the bottom-left half of the CPU icon with a filled triangle
+        // so only its top-right portion remains visible.
+        frame.fill(
+            &bottom_left_triangle(s),
+            style::with_alpha(style::M3_SURFACE_CONTAINER, 0.85),
+        );
+
+        // Draw a subtle diagonal separator line (top-right to bottom-left)
+        frame.stroke(
+            &Path::line(Point::new(s, 0.0), Point::new(0.0, s)),
+            Stroke::default()
+                .with_width(1.0)
+                .with_color(style::with_alpha(style::M3_OUTLINE_VARIANT, 0.6)),
+        );
+
+        vec![frame.into_geometry()]
+    }
+}
+
+/// Triangle covering the top-right half (above the diagonal from top-right to bottom-left).
+fn top_right_triangle(size: f32) -> Path {
+    Path::new(|b| {
+        b.move_to(Point::new(0.0, 0.0));
+        b.line_to(Point::new(size, 0.0));
+        b.line_to(Point::new(size, size));
+        b.close();
+    })
+}
+
+/// Triangle covering the bottom-left half (below the diagonal from top-right to bottom-left).
+fn bottom_left_triangle(size: f32) -> Path {
+    Path::new(|b| {
+        b.move_to(Point::new(0.0, 0.0));
+        b.line_to(Point::new(size, size));
+        b.line_to(Point::new(0.0, size));
+        b.close();
+    })
 }
 
 /// Find the worst elevated metric to display in the bar icon.
+/// When both CPU and RAM are elevated, shows a diagonal split icon.
 fn sysinfo_icon_view(sysinfo: &SysInfo) -> Element<'_, Message> {
-    let mut elevated: Vec<(f32, &str)> = Vec::new();
-    if sysinfo.cpu_percent >= ELEVATED_THRESHOLD {
-        elevated.push((sysinfo.cpu_percent, style::ICON_SPEED));
-    }
-    if sysinfo.gpu_percent >= ELEVATED_THRESHOLD {
-        elevated.push((sysinfo.gpu_percent, style::ICON_GPU));
-    }
-    if sysinfo.ram_percent >= ELEVATED_THRESHOLD {
-        elevated.push((sysinfo.ram_percent, style::ICON_MEMORY));
+    let cpu_high = sysinfo.cpu_percent >= ELEVATED_THRESHOLD;
+    let gpu_high = sysinfo.gpu_percent >= ELEVATED_THRESHOLD;
+    let ram_high = sysinfo.ram_percent >= ELEVATED_THRESHOLD;
+
+    // CPU + RAM both elevated → diagonal split
+    if cpu_high && ram_high {
+        return canvas::Canvas::new(DiagonalSplitProgram {
+            cpu_icon: style::ICON_SPEED,
+            cpu_color: usage_color(sysinfo.cpu_percent),
+            ram_icon: style::ICON_MEMORY,
+            ram_color: usage_color(sysinfo.ram_percent),
+        })
+        .width(Length::Fixed(SPLIT_SIZE))
+        .height(Length::Fixed(SPLIT_SIZE))
+        .into();
     }
 
-    // Sort by severity (highest first)
-    elevated.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-
-    if let Some(&(pct1, icon1)) = elevated.first() {
-        if let Some(&(pct2, icon2)) = elevated.get(1) {
-            split_icon(icon1, usage_color(pct1), icon2, usage_color(pct2))
-        } else {
-            single_icon(icon1, usage_color(pct1))
-        }
-    } else {
-        single_icon(style::ICON_CHECK_CIRCLE, style::M3_SECONDARY)
+    // Single worst metric
+    if cpu_high {
+        return single_icon(style::ICON_SPEED, usage_color(sysinfo.cpu_percent));
     }
+    if ram_high {
+        return single_icon(style::ICON_MEMORY, usage_color(sysinfo.ram_percent));
+    }
+    if gpu_high {
+        return single_icon(style::ICON_GPU, usage_color(sysinfo.gpu_percent));
+    }
+
+    single_icon(style::ICON_CHECK_CIRCLE, style::M3_SECONDARY)
 }
 
 pub fn view<'a>(
