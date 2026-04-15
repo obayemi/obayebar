@@ -1,3 +1,4 @@
+use futures_util::stream::StreamExt;
 use futures_util::Stream;
 
 #[derive(Debug, Clone)]
@@ -114,22 +115,69 @@ async fn read_tray_items_with(conn: &zbus::Connection) -> Vec<TrayItemInfo> {
 }
 
 pub fn stream() -> impl Stream<Item = Vec<TrayItemInfo>> {
-    futures_util::stream::unfold(
-        (None, false),
-        |(conn, should_sleep): (Option<zbus::Connection>, bool)| async move {
-            if should_sleep {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+
+    tokio::spawn(async move {
+        loop {
+            let conn = loop {
+                match zbus::Connection::session().await {
+                    Ok(c) => break c,
+                    Err(_) => {
+                        log::warn!("tray: failed to connect to session D-Bus, retrying");
+                        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                    }
+                }
+            };
+
+            if run_tray_loop(&conn, &tx).await.is_err() {
+                log::warn!("tray: signal loop ended, reconnecting");
                 tokio::time::sleep(std::time::Duration::from_secs(3)).await;
             }
-            let connection = if let Some(c) = conn {
-                c
-            } else if let Ok(c) = zbus::Connection::session().await {
-                c
-            } else {
-                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-                return Some((Vec::new(), (None, false)));
-            };
-            let items = read_tray_items_with(&connection).await;
-            Some((items, (Some(connection), true)))
-        },
+        }
+    });
+
+    tokio_stream::wrappers::UnboundedReceiverStream::new(rx)
+}
+
+async fn run_tray_loop(
+    conn: &zbus::Connection,
+    tx: &tokio::sync::mpsc::UnboundedSender<Vec<TrayItemInfo>>,
+) -> Result<(), ()> {
+    let watcher_proxy = build_proxy(
+        conn,
+        "org.kde.StatusNotifierWatcher",
+        "/StatusNotifierWatcher",
+        "org.kde.StatusNotifierWatcher",
     )
+    .await
+    .ok_or(())?;
+
+    // Subscribe to item registered/unregistered signals
+    let mut registered = watcher_proxy
+        .receive_signal("StatusNotifierItemRegistered")
+        .await
+        .map_err(|_| ())?;
+    let mut unregistered = watcher_proxy
+        .receive_signal("StatusNotifierItemUnregistered")
+        .await
+        .map_err(|_| ())?;
+
+    // Emit initial state
+    let items = read_tray_items_with(conn).await;
+    tx.send(items).map_err(|_| ())?;
+
+    loop {
+        tokio::select! {
+            Some(_) = registered.next() => {}
+            Some(_) = unregistered.next() => {}
+            // Fallback refresh every 2 minutes
+            () = tokio::time::sleep(std::time::Duration::from_secs(120)) => {}
+        }
+
+        // Small delay to let D-Bus settle after registration changes
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let items = read_tray_items_with(conn).await;
+        tx.send(items).map_err(|_| ())?;
+    }
 }
