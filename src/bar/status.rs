@@ -6,7 +6,7 @@ use crate::services::sysinfo::SysInfo;
 use crate::style;
 use crate::Message;
 use iced::widget::{column, container, mouse_area, text};
-use iced::{Alignment, Element, Length};
+use iced::{Alignment, Color, Element, Length};
 
 /// Threshold above which usage is considered elevated.
 const ELEVATED_THRESHOLD: f32 = 70.0;
@@ -23,9 +23,68 @@ fn usage_color(percent: f32) -> iced::Color {
     }
 }
 
+/// Approximate line height matching iced cosmic-text rendering.
+const ICON_LINE_HEIGHT: f32 = style::FONT_SIZE_LARGE * 1.3;
+
+/// Render a single icon at the standard bar size.
+fn single_icon(icon: &str, color: Color) -> Element<'_, Message> {
+    text(icon)
+        .font(style::ICON_FONT)
+        .size(style::FONT_SIZE_LARGE)
+        .color(color)
+        .align_x(Alignment::Center)
+        .into()
+}
+
+/// Render two icons split diagonally within the same space as one icon.
+/// Shows the top-right half of `icon1` and the bottom-left half of `icon2`.
+fn split_icon<'a>(
+    icon1: &'a str,
+    color1: Color,
+    icon2: &'a str,
+    color2: Color,
+) -> Element<'a, Message> {
+    let half_h = ICON_LINE_HEIGHT / 2.0;
+
+    // Top half: icon1 clipped to upper portion, aligned right
+    let top_half = container(
+        text(icon1)
+            .font(style::ICON_FONT)
+            .size(style::FONT_SIZE_LARGE)
+            .color(color1),
+    )
+    .width(Length::Fill)
+    .height(Length::Fixed(half_h))
+    .align_x(Alignment::End)
+    .clip(true);
+
+    // Bottom half: icon2 inside a full-height inner container, outer clips to
+    // half height aligned to bottom so only the lower portion is visible
+    let inner = container(
+        text(icon2)
+            .font(style::ICON_FONT)
+            .size(style::FONT_SIZE_LARGE)
+            .color(color2),
+    )
+    .width(Length::Fill)
+    .height(Length::Fixed(ICON_LINE_HEIGHT))
+    .align_x(Alignment::Start);
+
+    let bottom_half = container(inner)
+        .width(Length::Fill)
+        .height(Length::Fixed(half_h))
+        .align_y(Alignment::End)
+        .clip(true);
+
+    column![top_half, bottom_half]
+        .spacing(0)
+        .width(Length::Fill)
+        .align_x(Alignment::Center)
+        .into()
+}
+
 /// Find the worst elevated metric to display in the bar icon.
 fn sysinfo_icon_view(sysinfo: &SysInfo) -> Element<'_, Message> {
-    // Collect elevated metrics: (percent, icon)
     let mut elevated: Vec<(f32, &str)> = Vec::new();
     if sysinfo.cpu_percent >= ELEVATED_THRESHOLD {
         elevated.push((sysinfo.cpu_percent, style::ICON_SPEED));
@@ -42,41 +101,12 @@ fn sysinfo_icon_view(sysinfo: &SysInfo) -> Element<'_, Message> {
 
     if let Some(&(pct1, icon1)) = elevated.first() {
         if let Some(&(pct2, icon2)) = elevated.get(1) {
-            // Show top two in diagonal layout
-            let top = container(
-                text(icon1)
-                    .font(style::ICON_FONT)
-                    .size(style::FONT_SIZE_LARGER)
-                    .color(usage_color(pct1)),
-            )
-            .width(Length::Fill)
-            .align_x(Alignment::End);
-
-            let bottom = container(
-                text(icon2)
-                    .font(style::ICON_FONT)
-                    .size(style::FONT_SIZE_LARGER)
-                    .color(usage_color(pct2)),
-            )
-            .width(Length::Fill)
-            .align_x(Alignment::Start);
-
-            column![top, bottom].spacing(0).into()
+            split_icon(icon1, usage_color(pct1), icon2, usage_color(pct2))
         } else {
-            text(icon1)
-                .font(style::ICON_FONT)
-                .size(style::FONT_SIZE_LARGE)
-                .color(usage_color(pct1))
-                .align_x(Alignment::Center)
-                .into()
+            single_icon(icon1, usage_color(pct1))
         }
     } else {
-        text(style::ICON_CHECK_CIRCLE)
-            .font(style::ICON_FONT)
-            .size(style::FONT_SIZE_LARGE)
-            .color(style::M3_SECONDARY)
-            .align_x(Alignment::Center)
-            .into()
+        single_icon(style::ICON_CHECK_CIRCLE, style::M3_SECONDARY)
     }
 }
 
