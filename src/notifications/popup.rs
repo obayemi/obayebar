@@ -1,5 +1,4 @@
-use super::NotificationData;
-use super::Urgency;
+use crate::services::notifications::{NotificationData, Urgency};
 use crate::style;
 use crate::Message;
 use iced::widget::{button, column, container, row, text, Space};

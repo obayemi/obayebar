@@ -15,7 +15,7 @@ use iced_layershell::reexport::{
 };
 use iced_layershell::settings::{LayerShellSettings, Settings};
 use iced_layershell::to_layer_message;
-use notifications::{NotifEvent, NotificationData};
+use services::notifications::{NotifEvent, NotificationData};
 use services::audio::{AudioCommand, AudioInfo};
 use services::battery::BatteryInfo;
 use services::bluetooth::BluetoothInfo;
@@ -440,7 +440,7 @@ impl App {
             Subscription::run(services::audio::stream).map(Message::Audio),
             Subscription::run(services::tray::stream).map(Message::TrayItems),
             Subscription::run(services::bluetooth::stream).map(Message::Bluetooth),
-            Subscription::run(notifications::daemon::stream).map(Message::Notif),
+            Subscription::run(services::notifications::stream).map(Message::Notif),
         ];
 
         if is_animating {

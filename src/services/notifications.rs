@@ -1,9 +1,35 @@
-use super::{NotifEvent, NotificationData, Urgency};
 use futures_util::Stream;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use zbus::object_server::SignalEmitter;
+
+#[derive(Debug, Clone)]
+pub struct NotificationData {
+    pub id: u32,
+    pub app_name: String,
+    pub app_icon: String,
+    pub summary: String,
+    pub body: String,
+    pub actions: Vec<(String, String)>,
+    pub time: chrono::DateTime<chrono::Local>,
+    pub expire_at: Option<chrono::DateTime<chrono::Local>>,
+    pub expanded: bool,
+    pub urgency: Urgency,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Urgency {
+    Low,
+    Normal,
+    Critical,
+}
+
+#[derive(Debug, Clone)]
+pub enum NotifEvent {
+    Received(NotificationData),
+    Closed(u32),
+}
 
 struct NotificationServer {
     sender: async_channel::Sender<NotifEvent>,
@@ -11,7 +37,7 @@ struct NotificationServer {
 }
 
 #[zbus::interface(name = "org.freedesktop.Notifications")]
-#[allow(clippy::unused_self)] // &self required by zbus interface spec
+#[allow(clippy::unused_self)]
 impl NotificationServer {
     fn get_capabilities(&self) -> Vec<String> {
         vec![
@@ -143,7 +169,6 @@ async fn run_server(sender: async_channel::Sender<NotifEvent>) {
 
     log::info!("Notification daemon running on D-Bus");
 
-    // Keep connection alive
     let _conn = conn;
     std::future::pending::<()>().await;
 }
