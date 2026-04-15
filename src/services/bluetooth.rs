@@ -174,13 +174,11 @@ pub fn stream() -> impl Stream<Item = BluetoothInfo> {
     tokio::spawn(async move {
         loop {
             let conn = loop {
-                match zbus::Connection::system().await {
-                    Ok(c) => break c,
-                    Err(_) => {
-                        log::warn!("bluetooth: failed to connect to system D-Bus, retrying");
-                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                    }
+                if let Ok(c) = zbus::Connection::system().await {
+                    break c;
                 }
+                log::warn!("bluetooth: failed to connect to system D-Bus, retrying");
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
             };
 
             if run_bluetooth_loop(&conn, &tx).await.is_err() {
@@ -234,7 +232,7 @@ async fn run_bluetooth_loop(
             Some(_) = ifaces_removed.next() => {}
             Some(_) = adapter_signals.next() => {}
             // Fallback refresh every 2 minutes
-            () = tokio::time::sleep(std::time::Duration::from_secs(120)) => {}
+            () = tokio::time::sleep(std::time::Duration::from_mins(2)) => {}
         }
 
         // Small delay to let D-Bus settle

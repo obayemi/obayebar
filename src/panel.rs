@@ -43,7 +43,7 @@ impl Panel {
                 anchor: Anchor::Left | Anchor::Bottom,
                 layer: Layer::Overlay,
                 exclusive_zone: Some(-1),
-                size: Some((width + gap, height + gap)),
+                size: Some((width.saturating_add(gap), height.saturating_add(gap))),
                 margin: Some((0, 0, 0, style::BAR_WIDTH.cast_signed())),
                 keyboard_interactivity: KeyboardInteractivity::None,
                 output_option,
@@ -55,10 +55,8 @@ impl Panel {
 
     pub fn close(&mut self) -> iced::Task<Message> {
         self.open = false;
-        if let Some(id) = self.id.take() {
-            super::close_window(id)
-        } else {
-            iced::Task::none()
-        }
+        self.id
+            .take()
+            .map_or_else(iced::Task::none, super::close_window)
     }
 }

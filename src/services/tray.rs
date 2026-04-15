@@ -120,13 +120,11 @@ pub fn stream() -> impl Stream<Item = Vec<TrayItemInfo>> {
     tokio::spawn(async move {
         loop {
             let conn = loop {
-                match zbus::Connection::session().await {
-                    Ok(c) => break c,
-                    Err(_) => {
-                        log::warn!("tray: failed to connect to session D-Bus, retrying");
-                        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-                    }
+                if let Ok(c) = zbus::Connection::session().await {
+                    break c;
                 }
+                log::warn!("tray: failed to connect to session D-Bus, retrying");
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
             };
 
             if run_tray_loop(&conn, &tx).await.is_err() {
@@ -171,7 +169,7 @@ async fn run_tray_loop(
             Some(_) = registered.next() => {}
             Some(_) = unregistered.next() => {}
             // Fallback refresh every 2 minutes
-            () = tokio::time::sleep(std::time::Duration::from_secs(120)) => {}
+            () = tokio::time::sleep(std::time::Duration::from_mins(2)) => {}
         }
 
         // Small delay to let D-Bus settle after registration changes

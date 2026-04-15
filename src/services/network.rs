@@ -239,13 +239,11 @@ pub fn stream() -> impl Stream<Item = NetworkInfo> {
     tokio::spawn(async move {
         loop {
             let conn = loop {
-                match zbus::Connection::system().await {
-                    Ok(c) => break c,
-                    Err(_) => {
-                        log::warn!("network: failed to connect to system D-Bus, retrying");
-                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                    }
+                if let Ok(c) = zbus::Connection::system().await {
+                    break c;
                 }
+                log::warn!("network: failed to connect to system D-Bus, retrying");
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
             };
 
             if run_network_loop(&conn, &tx).await.is_err() {

@@ -191,13 +191,11 @@ pub fn stream() -> impl Stream<Item = BatteryInfo> {
     tokio::spawn(async move {
         loop {
             let conn = loop {
-                match zbus::Connection::system().await {
-                    Ok(c) => break c,
-                    Err(_) => {
-                        log::warn!("battery: failed to connect to system D-Bus, retrying");
-                        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-                    }
+                if let Ok(c) = zbus::Connection::system().await {
+                    break c;
                 }
+                log::warn!("battery: failed to connect to system D-Bus, retrying");
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
             };
 
             if run_battery_loop(&conn, &tx).await.is_err() {
@@ -261,7 +259,7 @@ async fn run_battery_loop(
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             }
             // Fallback refresh every 5 minutes in case signals are missed
-            () = tokio::time::sleep(std::time::Duration::from_secs(300)) => {}
+            () = tokio::time::sleep(std::time::Duration::from_mins(5)) => {}
         }
 
         let info = read_full_state(&upower_proxy, conn).await;
