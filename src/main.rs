@@ -109,7 +109,6 @@ pub struct App {
     pub vector_font: Option<ab_glyph::FontArc>,
 
     notif_popup_id: Option<window::Id>,
-    notif_center_id: Option<window::Id>,
     audio_panel_id: Option<window::Id>,
     audio_panel_open: bool,
     network_panel_id: Option<window::Id>,
@@ -129,9 +128,7 @@ pub struct App {
     pub audio: AudioInfo,
     pub bluetooth: BluetoothInfo,
     pub tray_items: Vec<TrayItemInfo>,
-    pub notifications: Vec<NotificationData>,
     pub popup_notifications: Vec<NotificationData>,
-    pub notification_center_open: bool,
 }
 
 #[to_layer_message(multi)]
@@ -148,10 +145,6 @@ pub enum Message {
     TrayClick(String),
     Notif(NotifEvent),
     NotifDismiss(u32),
-    NotifToggleExpand(u32),
-    NotifCenterToggle,
-    NotifClearAll,
-    PowerClick,
     AudioPanelOpen(Option<String>),
     NetworkPanelOpen(Option<String>),
     BatteryPanelOpen(Option<String>),
@@ -178,7 +171,6 @@ impl App {
                 ws_cache_fallback: canvas::Cache::default(),
                 vector_font: style::load_vector_font(),
                 notif_popup_id: None,
-                notif_center_id: None,
                 audio_panel_id: None,
                 audio_panel_open: false,
                 network_panel_id: None,
@@ -196,9 +188,7 @@ impl App {
                 audio: AudioInfo::default(),
                 bluetooth: BluetoothInfo::default(),
                 tray_items: Vec::new(),
-                notifications: Vec::new(),
                 popup_notifications: Vec::new(),
-                notification_center_open: false,
             },
             Task::none(),
         )
@@ -286,46 +276,18 @@ impl App {
             }
             Message::Notif(event) => match event {
                 NotifEvent::Received(notif) => {
-                    self.notifications.retain(|n| n.id != notif.id);
                     self.popup_notifications.retain(|n| n.id != notif.id);
-                    self.notifications.insert(0, notif.clone());
                     self.popup_notifications.insert(0, notif);
                     self.ensure_popup_window()
                 }
                 NotifEvent::Closed(id) => {
                     self.popup_notifications.retain(|n| n.id != id);
-                    self.notifications.retain(|n| n.id != id);
                     self.maybe_close_popup_window()
                 }
             },
             Message::NotifDismiss(id) => {
                 self.popup_notifications.retain(|n| n.id != id);
-                self.notifications.retain(|n| n.id != id);
                 self.maybe_close_popup_window()
-            }
-            Message::NotifToggleExpand(id) => {
-                for notif in &mut self.notifications {
-                    if notif.id == id {
-                        notif.expanded = !notif.expanded;
-                    }
-                }
-                for notif in &mut self.popup_notifications {
-                    if notif.id == id {
-                        notif.expanded = !notif.expanded;
-                    }
-                }
-                Task::none()
-            }
-            Message::NotifCenterToggle | Message::PowerClick => self.toggle_notif_center(),
-            Message::NotifClearAll => {
-                self.notifications.clear();
-                self.popup_notifications.clear();
-                let mut tasks = vec![self.maybe_close_popup_window()];
-                if let Some(id) = self.notif_center_id.take() {
-                    self.notification_center_open = false;
-                    tasks.push(close_window(id));
-                }
-                Task::batch(tasks)
             }
             Message::AudioPanelOpen(monitor) => {
                 let close = self.close_all_panels();
@@ -453,8 +415,6 @@ impl App {
     fn view(&self, id: window::Id) -> Element<'_, Message> {
         if Some(id) == self.notif_popup_id {
             notifications::popup_view(self)
-        } else if Some(id) == self.notif_center_id {
-            notifications::center_view(self)
         } else if Some(id) == self.audio_panel_id {
             bar::audio_panel::view(&self.audio)
         } else if Some(id) == self.network_panel_id {
@@ -490,30 +450,6 @@ impl App {
         }
 
         Subscription::batch(subs)
-    }
-
-    fn toggle_notif_center(&mut self) -> Task<Message> {
-        self.notification_center_open = !self.notification_center_open;
-        if self.notification_center_open {
-            let id = window::Id::unique();
-            self.notif_center_id = Some(id);
-            Task::done(Message::NewLayerShell {
-                settings: NewLayerShellSettings {
-                    anchor: Anchor::Right | Anchor::Top | Anchor::Bottom,
-                    layer: Layer::Overlay,
-                    exclusive_zone: Some(-1),
-                    size: Some((style::NOTIF_WIDTH, 0)),
-                    margin: Some((8, 8, 8, 8)),
-                    keyboard_interactivity: KeyboardInteractivity::None,
-                    ..NewLayerShellSettings::default()
-                },
-                id,
-            })
-        } else if let Some(id) = self.notif_center_id.take() {
-            close_window(id)
-        } else {
-            Task::none()
-        }
     }
 
     fn close_all_panels(&mut self) -> Task<Message> {

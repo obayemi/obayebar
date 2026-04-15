@@ -1,4 +1,3 @@
-pub mod center;
 pub mod daemon;
 pub mod popup;
 
@@ -36,8 +35,4 @@ use iced::Element;
 
 pub fn popup_view(app: &crate::App) -> Element<'_, Message> {
     popup::view(&app.popup_notifications)
-}
-
-pub fn center_view(app: &crate::App) -> Element<'_, Message> {
-    center::view(&app.notifications)
 }

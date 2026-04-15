@@ -387,22 +387,6 @@ pub fn notification_critical_container(theme: &iced::Theme) -> container::Style 
     }
 }
 
-/// Notification center sidebar container
-pub fn notif_center_container(theme: &iced::Theme) -> container::Style {
-    let _ = theme;
-    container::Style {
-        background: Some(Background::Color(with_alpha(
-            M3_SURFACE_CONTAINER_LOW,
-            0.92,
-        ))),
-        border: Border {
-            radius: ROUNDING_NORMAL.into(),
-            ..Border::default()
-        },
-        ..container::Style::default()
-    }
-}
-
 /// Outer wrapper for popup panels — near-invisible background ensures the
 /// compositor includes the gap area in the input region.
 pub fn panel_wrapper_container(theme: &iced::Theme) -> container::Style {

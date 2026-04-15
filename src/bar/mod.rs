@@ -5,7 +5,6 @@ pub mod bluetooth_panel;
 mod clock;
 mod logo;
 pub mod network_panel;
-mod power;
 mod status;
 mod tray;
 pub mod workspaces;
@@ -46,7 +45,6 @@ pub fn view<'a>(app: &'a App, monitor: Option<&'a str>) -> Element<'a, Message> 
             &app.bluetooth,
             monitor
         ),
-        power::view(),
     ]
     .spacing(style::SPACING_NORMAL)
     .padding(Padding {
