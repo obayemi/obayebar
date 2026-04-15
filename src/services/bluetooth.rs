@@ -1,3 +1,4 @@
+use futures_util::stream::StreamExt;
 use futures_util::Stream;
 
 #[derive(Debug, Clone)]
@@ -69,7 +70,6 @@ async fn read_bluetooth_dbus(conn: &zbus::Connection) -> BluetoothInfo {
         };
     }
 
-    // Enumerate device objects under the adapter using ObjectManager
     let devices = enumerate_devices(conn).await;
     let has_connected = devices.iter().any(|d| d.connected);
 
@@ -127,7 +127,6 @@ async fn enumerate_devices(conn: &zbus::Connection) -> Vec<BluetoothDevice> {
             .and_then(|v| <bool as TryFrom<_>>::try_from(v.clone()).ok())
             .unwrap_or(false);
 
-        // Only show paired devices
         if !paired {
             continue;
         }
@@ -147,7 +146,6 @@ async fn enumerate_devices(conn: &zbus::Connection) -> Vec<BluetoothDevice> {
         });
     }
 
-    // Connected devices first, then by name
     devices.sort_by(|a, b| b.connected.cmp(&a.connected).then(a.alias.cmp(&b.alias)));
     devices
 }
@@ -171,22 +169,78 @@ pub fn toggle_device_connection(path: &str, currently_connected: bool) {
 }
 
 pub fn stream() -> impl Stream<Item = BluetoothInfo> {
-    futures_util::stream::unfold(
-        (None, false),
-        |(conn, should_sleep): (Option<zbus::Connection>, bool)| async move {
-            if should_sleep {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+
+    tokio::spawn(async move {
+        loop {
+            let conn = loop {
+                match zbus::Connection::system().await {
+                    Ok(c) => break c,
+                    Err(_) => {
+                        log::warn!("bluetooth: failed to connect to system D-Bus, retrying");
+                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    }
+                }
+            };
+
+            if run_bluetooth_loop(&conn, &tx).await.is_err() {
+                log::warn!("bluetooth: signal loop ended, reconnecting");
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
             }
-            let connection = if let Some(c) = conn {
-                c
-            } else if let Ok(c) = zbus::Connection::system().await {
-                c
-            } else {
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                return Some((BluetoothInfo::default(), (None, false)));
-            };
-            let info = read_bluetooth_dbus(&connection).await;
-            Some((info, (Some(connection), true)))
-        },
-    )
+        }
+    });
+
+    tokio_stream::wrappers::UnboundedReceiverStream::new(rx)
+}
+
+async fn run_bluetooth_loop(
+    conn: &zbus::Connection,
+    tx: &tokio::sync::mpsc::UnboundedSender<BluetoothInfo>,
+) -> Result<(), ()> {
+    // Subscribe to ObjectManager signals for device add/remove
+    let om_proxy = build_proxy(conn, "/", "org.freedesktop.DBus.ObjectManager")
+        .await
+        .ok_or(())?;
+    let mut ifaces_added = om_proxy
+        .receive_signal("InterfacesAdded")
+        .await
+        .map_err(|_| ())?;
+    let mut ifaces_removed = om_proxy
+        .receive_signal("InterfacesRemoved")
+        .await
+        .map_err(|_| ())?;
+
+    // Subscribe to PropertiesChanged on the adapter for Powered state
+    let adapter_props = zbus::fdo::PropertiesProxy::builder(conn)
+        .destination("org.bluez")
+        .map_err(|_| ())?
+        .path("/org/bluez/hci0")
+        .map_err(|_| ())?
+        .build()
+        .await
+        .map_err(|_| ())?;
+    let mut adapter_signals = adapter_props
+        .receive_properties_changed()
+        .await
+        .map_err(|_| ())?;
+
+    // Emit initial state
+    let info = read_bluetooth_dbus(conn).await;
+    tx.send(info).map_err(|_| ())?;
+
+    loop {
+        tokio::select! {
+            Some(_) = ifaces_added.next() => {}
+            Some(_) = ifaces_removed.next() => {}
+            Some(_) = adapter_signals.next() => {}
+            // Fallback refresh every 2 minutes
+            () = tokio::time::sleep(std::time::Duration::from_secs(120)) => {}
+        }
+
+        // Small delay to let D-Bus settle
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let info = read_bluetooth_dbus(conn).await;
+        tx.send(info).map_err(|_| ())?;
+    }
 }
