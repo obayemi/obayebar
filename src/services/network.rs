@@ -1,3 +1,4 @@
+use futures_util::stream::StreamExt;
 use futures_util::Stream;
 
 #[derive(Debug, Clone)]
@@ -116,13 +117,10 @@ async fn scan_access_points(
                         ssid,
                         strength,
                     });
-                } else {
-                    // Keep the strongest signal for duplicate SSIDs
-                    if let Some(existing) = aps.iter_mut().find(|a| a.ssid == ssid) {
-                        if strength > existing.strength {
-                            existing.strength = strength;
-                            existing.icon_name = wifi_icon(strength);
-                        }
+                } else if let Some(existing) = aps.iter_mut().find(|a| a.ssid == ssid) {
+                    if strength > existing.strength {
+                        existing.strength = strength;
+                        existing.icon_name = wifi_icon(strength);
                     }
                 }
             }
@@ -236,22 +234,79 @@ async fn read_network_dbus_with(conn: &zbus::Connection) -> NetworkInfo {
 }
 
 pub fn stream() -> impl Stream<Item = NetworkInfo> {
-    futures_util::stream::unfold(
-        (None, false),
-        |(conn, should_sleep): (Option<zbus::Connection>, bool)| async move {
-            if should_sleep {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+
+    tokio::spawn(async move {
+        loop {
+            let conn = loop {
+                match zbus::Connection::system().await {
+                    Ok(c) => break c,
+                    Err(_) => {
+                        log::warn!("network: failed to connect to system D-Bus, retrying");
+                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    }
+                }
+            };
+
+            if run_network_loop(&conn, &tx).await.is_err() {
+                log::warn!("network: signal loop ended, reconnecting");
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
             }
-            let connection = if let Some(c) = conn {
-                c
-            } else if let Ok(c) = zbus::Connection::system().await {
-                c
-            } else {
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                return Some((NetworkInfo::default(), (None, false)));
-            };
-            let info = read_network_dbus_with(&connection).await;
-            Some((info, (Some(connection), true)))
-        },
+        }
+    });
+
+    tokio_stream::wrappers::UnboundedReceiverStream::new(rx)
+}
+
+async fn run_network_loop(
+    conn: &zbus::Connection,
+    tx: &tokio::sync::mpsc::UnboundedSender<NetworkInfo>,
+) -> Result<(), ()> {
+    // Subscribe to PropertiesChanged on the main NetworkManager object
+    // This fires when ActiveConnections, Connectivity, etc. change
+    let nm_props = zbus::fdo::PropertiesProxy::builder(conn)
+        .destination("org.freedesktop.NetworkManager")
+        .map_err(|_| ())?
+        .path("/org/freedesktop/NetworkManager")
+        .map_err(|_| ())?
+        .build()
+        .await
+        .map_err(|_| ())?;
+    let mut nm_signals = nm_props
+        .receive_properties_changed()
+        .await
+        .map_err(|_| ())?;
+
+    // Subscribe to StateChanged signal for connection state transitions
+    let nm_proxy = build_proxy(
+        conn,
+        "org.freedesktop.NetworkManager",
+        "/org/freedesktop/NetworkManager",
+        "org.freedesktop.NetworkManager",
     )
+    .await
+    .ok_or(())?;
+    let mut state_changed = nm_proxy
+        .receive_signal("StateChanged")
+        .await
+        .map_err(|_| ())?;
+
+    // Emit initial state
+    let info = read_network_dbus_with(conn).await;
+    tx.send(info).map_err(|_| ())?;
+
+    loop {
+        tokio::select! {
+            Some(_) = nm_signals.next() => {}
+            Some(_) = state_changed.next() => {}
+            // Periodic refresh for AP signal strength updates (not signaled)
+            () = tokio::time::sleep(std::time::Duration::from_secs(30)) => {}
+        }
+
+        // Small delay to let D-Bus settle after state changes
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let info = read_network_dbus_with(conn).await;
+        tx.send(info).map_err(|_| ())?;
+    }
 }
