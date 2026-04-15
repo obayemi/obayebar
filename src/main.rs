@@ -1,5 +1,6 @@
 mod bar;
 mod notifications;
+mod panel;
 mod services;
 mod style;
 
@@ -109,14 +110,10 @@ pub struct App {
     pub vector_font: Option<ab_glyph::FontArc>,
 
     notif_popup_id: Option<window::Id>,
-    audio_panel_id: Option<window::Id>,
-    audio_panel_open: bool,
-    network_panel_id: Option<window::Id>,
-    network_panel_open: bool,
-    battery_panel_id: Option<window::Id>,
-    battery_panel_open: bool,
-    bluetooth_panel_id: Option<window::Id>,
-    bluetooth_panel_open: bool,
+    audio_panel: panel::Panel,
+    network_panel: panel::Panel,
+    battery_panel: panel::Panel,
+    bluetooth_panel: panel::Panel,
 
     pub workspaces: Vec<WorkspaceInfo>,
     /// Per-monitor active workspace: `monitor_name` -> `active_workspace_id`
@@ -171,14 +168,10 @@ impl App {
                 ws_cache_fallback: canvas::Cache::default(),
                 vector_font: style::load_vector_font(),
                 notif_popup_id: None,
-                audio_panel_id: None,
-                audio_panel_open: false,
-                network_panel_id: None,
-                network_panel_open: false,
-                battery_panel_id: None,
-                battery_panel_open: false,
-                bluetooth_panel_id: None,
-                bluetooth_panel_open: false,
+                audio_panel: panel::Panel::new(),
+                network_panel: panel::Panel::new(),
+                battery_panel: panel::Panel::new(),
+                bluetooth_panel: panel::Panel::new(),
                 workspaces: Vec::new(),
                 active_workspaces: HashMap::new(),
                 active_window: None,
@@ -291,22 +284,28 @@ impl App {
             }
             Message::AudioPanelOpen(monitor) => {
                 let close = self.close_all_panels();
-                let open = self.open_audio_panel(monitor);
+                let height = style::audio_panel_height(self.audio.sinks.len());
+                let open = self.audio_panel.open(style::AUDIO_PANEL_WIDTH, height, monitor);
                 Task::batch([close, open])
             }
             Message::NetworkPanelOpen(monitor) => {
                 let close = self.close_all_panels();
-                let open = self.open_network_panel(monitor);
+                let ap_count = self.network.access_points.len().clamp(1, 8);
+                let height = style::network_panel_height(ap_count);
+                let open = self.network_panel.open(style::NETWORK_PANEL_WIDTH, height, monitor);
                 Task::batch([close, open])
             }
             Message::BatteryPanelOpen(monitor) => {
                 let close = self.close_all_panels();
-                let open = self.open_battery_panel(monitor);
+                let height = style::battery_panel_height(self.battery.power_profiles.is_some());
+                let open = self.battery_panel.open(style::BATTERY_PANEL_WIDTH, height, monitor);
                 Task::batch([close, open])
             }
             Message::BluetoothPanelOpen(monitor) => {
                 let close = self.close_all_panels();
-                let open = self.open_bluetooth_panel(monitor);
+                let device_count = self.bluetooth.devices.len().clamp(1, 8);
+                let height = style::bluetooth_panel_height(device_count);
+                let open = self.bluetooth_panel.open(style::BLUETOOTH_PANEL_WIDTH, height, monitor);
                 Task::batch([close, open])
             }
             Message::BluetoothToggleDevice { path, connected } => {
@@ -415,13 +414,13 @@ impl App {
     fn view(&self, id: window::Id) -> Element<'_, Message> {
         if Some(id) == self.notif_popup_id {
             notifications::popup_view(self)
-        } else if Some(id) == self.audio_panel_id {
+        } else if self.audio_panel.is_window(id) {
             bar::audio_panel::view(&self.audio)
-        } else if Some(id) == self.network_panel_id {
+        } else if self.network_panel.is_window(id) {
             bar::network_panel::view(&self.network)
-        } else if Some(id) == self.battery_panel_id {
+        } else if self.battery_panel.is_window(id) {
             bar::battery_panel::view(&self.battery)
-        } else if Some(id) == self.bluetooth_panel_id {
+        } else if self.bluetooth_panel.is_window(id) {
             bar::bluetooth_panel::view(&self.bluetooth)
         } else {
             let monitor = self.monitor_for_bar(id);
@@ -453,134 +452,12 @@ impl App {
     }
 
     fn close_all_panels(&mut self) -> Task<Message> {
-        let mut tasks = Vec::new();
-        if self.audio_panel_open {
-            self.audio_panel_open = false;
-            if let Some(id) = self.audio_panel_id.take() {
-                tasks.push(close_window(id));
-            }
-        }
-        if self.network_panel_open {
-            self.network_panel_open = false;
-            if let Some(id) = self.network_panel_id.take() {
-                tasks.push(close_window(id));
-            }
-        }
-        if self.battery_panel_open {
-            self.battery_panel_open = false;
-            if let Some(id) = self.battery_panel_id.take() {
-                tasks.push(close_window(id));
-            }
-        }
-        if self.bluetooth_panel_open {
-            self.bluetooth_panel_open = false;
-            if let Some(id) = self.bluetooth_panel_id.take() {
-                tasks.push(close_window(id));
-            }
-        }
-        Task::batch(tasks)
-    }
-
-    fn open_audio_panel(&mut self, monitor: Option<String>) -> Task<Message> {
-        if self.audio_panel_open {
-            return Task::none();
-        }
-        self.audio_panel_open = true;
-        let id = window::Id::unique();
-        self.audio_panel_id = Some(id);
-        let output_option = monitor.map_or(OutputOption::LastOutput, OutputOption::OutputName);
-        let panel_height = style::audio_panel_height(self.audio.sinks.len());
-        let gap = style::PANEL_GAP_PX;
-        Task::done(Message::NewLayerShell {
-            settings: NewLayerShellSettings {
-                anchor: Anchor::Left | Anchor::Bottom,
-                layer: Layer::Overlay,
-                exclusive_zone: Some(-1),
-                size: Some((style::AUDIO_PANEL_WIDTH + gap, panel_height + gap)),
-                margin: Some((0, 0, 0, style::BAR_WIDTH.cast_signed())),
-                keyboard_interactivity: KeyboardInteractivity::None,
-                output_option,
-                ..NewLayerShellSettings::default()
-            },
-            id,
-        })
-    }
-
-    fn open_network_panel(&mut self, monitor: Option<String>) -> Task<Message> {
-        if self.network_panel_open {
-            return Task::none();
-        }
-        self.network_panel_open = true;
-        let id = window::Id::unique();
-        self.network_panel_id = Some(id);
-        let output_option = monitor.map_or(OutputOption::LastOutput, OutputOption::OutputName);
-        let ap_count = self.network.access_points.len().clamp(1, 8);
-        let panel_height = style::network_panel_height(ap_count);
-        let gap = style::PANEL_GAP_PX;
-        Task::done(Message::NewLayerShell {
-            settings: NewLayerShellSettings {
-                anchor: Anchor::Left | Anchor::Bottom,
-                layer: Layer::Overlay,
-                exclusive_zone: Some(-1),
-                size: Some((style::NETWORK_PANEL_WIDTH + gap, panel_height + gap)),
-                margin: Some((0, 0, 0, style::BAR_WIDTH.cast_signed())),
-                keyboard_interactivity: KeyboardInteractivity::None,
-                output_option,
-                ..NewLayerShellSettings::default()
-            },
-            id,
-        })
-    }
-
-    fn open_battery_panel(&mut self, monitor: Option<String>) -> Task<Message> {
-        if self.battery_panel_open {
-            return Task::none();
-        }
-        self.battery_panel_open = true;
-        let id = window::Id::unique();
-        self.battery_panel_id = Some(id);
-        let output_option = monitor.map_or(OutputOption::LastOutput, OutputOption::OutputName);
-        let panel_height = style::battery_panel_height(self.battery.power_profiles.is_some());
-        let gap = style::PANEL_GAP_PX;
-        Task::done(Message::NewLayerShell {
-            settings: NewLayerShellSettings {
-                anchor: Anchor::Left | Anchor::Bottom,
-                layer: Layer::Overlay,
-                exclusive_zone: Some(-1),
-                size: Some((style::BATTERY_PANEL_WIDTH + gap, panel_height + gap)),
-                margin: Some((0, 0, 0, style::BAR_WIDTH.cast_signed())),
-                keyboard_interactivity: KeyboardInteractivity::None,
-                output_option,
-                ..NewLayerShellSettings::default()
-            },
-            id,
-        })
-    }
-
-    fn open_bluetooth_panel(&mut self, monitor: Option<String>) -> Task<Message> {
-        if self.bluetooth_panel_open {
-            return Task::none();
-        }
-        self.bluetooth_panel_open = true;
-        let id = window::Id::unique();
-        self.bluetooth_panel_id = Some(id);
-        let output_option = monitor.map_or(OutputOption::LastOutput, OutputOption::OutputName);
-        let device_count = self.bluetooth.devices.len().clamp(1, 8);
-        let panel_height = style::bluetooth_panel_height(device_count);
-        let gap = style::PANEL_GAP_PX;
-        Task::done(Message::NewLayerShell {
-            settings: NewLayerShellSettings {
-                anchor: Anchor::Left | Anchor::Bottom,
-                layer: Layer::Overlay,
-                exclusive_zone: Some(-1),
-                size: Some((style::BLUETOOTH_PANEL_WIDTH + gap, panel_height + gap)),
-                margin: Some((0, 0, 0, style::BAR_WIDTH.cast_signed())),
-                keyboard_interactivity: KeyboardInteractivity::None,
-                output_option,
-                ..NewLayerShellSettings::default()
-            },
-            id,
-        })
+        Task::batch([
+            self.audio_panel.close(),
+            self.network_panel.close(),
+            self.battery_panel.close(),
+            self.bluetooth_panel.close(),
+        ])
     }
 
     fn expire_popups(&mut self) -> Task<Message> {
