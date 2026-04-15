@@ -119,11 +119,11 @@ pub fn set_power_profile(profile: &str) {
         let Ok(conn) = zbus::Connection::system().await else {
             return;
         };
-        let Some(proxy) = (zbus::proxy::Builder::<zbus::Proxy<'_>>::new(&conn)
+        let Some(proxy) = zbus::proxy::Builder::<zbus::Proxy<'_>>::new(&conn)
             .destination("net.hadess.PowerProfiles")
             .ok()
             .and_then(|b| b.path("/net/hadess/PowerProfiles").ok())
-            .and_then(|b| b.interface("net.hadess.PowerProfiles").ok()))
+            .and_then(|b| b.interface("net.hadess.PowerProfiles").ok())
         else {
             return;
         };
