@@ -4,7 +4,7 @@ use chrono::{DateTime, Local, Timelike};
 use iced::widget::{column, container, text, Space};
 use iced::{Alignment, Background, Element, Length};
 
-pub fn view(time: &DateTime<Local>) -> Element<'_, Message> {
+pub fn view(time: &DateTime<Local>) -> Element<'static, Message> {
     let day_abbr = time.format("%a").to_string();
     let day_num = time.format("%-d").to_string();
     let hour = format!("{:02}", time.hour());

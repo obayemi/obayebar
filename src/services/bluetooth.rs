@@ -1,7 +1,7 @@
 use futures_util::stream::StreamExt;
 use futures_util::Stream;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct BluetoothDevice {
     pub alias: String,
     pub icon: String,
@@ -11,7 +11,7 @@ pub struct BluetoothDevice {
     pub path: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct BluetoothInfo {
     pub powered: bool,
     pub icon_name: &'static str,
@@ -223,8 +223,8 @@ async fn run_bluetooth_loop(
         .map_err(|_| ())?;
 
     // Emit initial state
-    let info = read_bluetooth_dbus(conn).await;
-    tx.send(info).map_err(|_| ())?;
+    let mut last = read_bluetooth_dbus(conn).await;
+    tx.send(last.clone()).map_err(|_| ())?;
 
     loop {
         tokio::select! {
@@ -239,6 +239,9 @@ async fn run_bluetooth_loop(
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         let info = read_bluetooth_dbus(conn).await;
-        tx.send(info).map_err(|_| ())?;
+        if info != last {
+            last = info.clone();
+            tx.send(info).map_err(|_| ())?;
+        }
     }
 }

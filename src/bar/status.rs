@@ -137,7 +137,7 @@ fn bottom_left_triangle(size: f32) -> Path {
 
 /// Find the worst elevated metric to display in the bar icon.
 /// When both CPU and RAM are elevated, shows a diagonal split icon.
-fn sysinfo_icon_view(sysinfo: &SysInfo) -> Element<'_, Message> {
+fn sysinfo_icon_view(sysinfo: &SysInfo) -> Element<'static, Message> {
     let cpu_high = sysinfo.cpu_percent >= ELEVATED_THRESHOLD;
     let gpu_high = sysinfo.gpu_percent >= ELEVATED_THRESHOLD;
     let ram_high = sysinfo.ram_percent >= ELEVATED_THRESHOLD;
@@ -169,14 +169,14 @@ fn sysinfo_icon_view(sysinfo: &SysInfo) -> Element<'_, Message> {
     single_icon(style::ICON_CHECK_CIRCLE, style::M3_SECONDARY)
 }
 
-pub fn view<'a>(
+pub fn view(
     battery: &BatteryInfo,
     network: &NetworkInfo,
     audio: &AudioInfo,
     bluetooth: &BluetoothInfo,
-    sysinfo: &'a SysInfo,
+    sysinfo: &SysInfo,
     monitor: Option<&str>,
-) -> Element<'a, Message> {
+) -> Element<'static, Message> {
     let mut icons = column![]
         .spacing(style::SPACING_SMALLER / 2.0)
         .align_x(Alignment::Center);

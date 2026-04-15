@@ -102,7 +102,7 @@ fn render_rotated_text(font: &FontArc, text: &str, font_size: f32) -> image::Han
     image::Handle::from_rgba(rot_w, rot_h, rgba)
 }
 
-pub fn view<'a>(window: Option<&WindowInfo>, font: Option<&FontArc>) -> Element<'a, Message> {
+pub fn view(window: Option<&WindowInfo>, font: Option<&FontArc>) -> Element<'static, Message> {
     let title = window.map_or_else(
         || "Desktop".into(),
         |w| {

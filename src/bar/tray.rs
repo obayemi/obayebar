@@ -4,7 +4,7 @@ use crate::Message;
 use iced::widget::{button, column, container, text, Space};
 use iced::{Alignment, Element, Length};
 
-pub fn view(items: &[TrayItemInfo]) -> Element<'_, Message> {
+pub fn view(items: &[TrayItemInfo]) -> Element<'static, Message> {
     if items.is_empty() {
         return Space::new().width(0.0).height(0.0).into();
     }

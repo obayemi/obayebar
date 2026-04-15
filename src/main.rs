@@ -251,27 +251,39 @@ impl App {
                 Task::none()
             }
             Message::Battery(info) => {
-                self.battery = info;
+                if self.battery != info {
+                    self.battery = info;
+                }
                 Task::none()
             }
             Message::Network(info) => {
-                self.network = info;
+                if self.network != info {
+                    self.network = info;
+                }
                 Task::none()
             }
             Message::Audio(info) => {
-                self.audio = info;
+                if self.audio != info {
+                    self.audio = info;
+                }
                 Task::none()
             }
             Message::Bluetooth(info) => {
-                self.bluetooth = info;
+                if self.bluetooth != info {
+                    self.bluetooth = info;
+                }
                 Task::none()
             }
             Message::SysInfo(info) => {
-                self.sysinfo = info;
+                if self.sysinfo != info {
+                    self.sysinfo = info;
+                }
                 Task::none()
             }
             Message::TrayItems(items) => {
-                self.tray_items = items;
+                if self.tray_items != items {
+                    self.tray_items = items;
+                }
                 Task::none()
             }
             Message::TrayClick(id) => {

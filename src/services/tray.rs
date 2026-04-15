@@ -1,7 +1,7 @@
 use futures_util::stream::StreamExt;
 use futures_util::Stream;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TrayItemInfo {
     pub id: String,
     pub title: String,

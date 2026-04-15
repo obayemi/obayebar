@@ -1,14 +1,14 @@
 use futures_util::stream::StreamExt;
 use futures_util::Stream;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AccessPointInfo {
     pub ssid: String,
     pub strength: u8,
     pub icon_name: &'static str,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct NetworkInfo {
     pub connected: bool,
     pub wifi: bool,
@@ -290,8 +290,8 @@ async fn run_network_loop(
         .map_err(|_| ())?;
 
     // Emit initial state
-    let info = read_network_dbus_with(conn).await;
-    tx.send(info).map_err(|_| ())?;
+    let mut last = read_network_dbus_with(conn).await;
+    tx.send(last.clone()).map_err(|_| ())?;
 
     loop {
         tokio::select! {
@@ -305,6 +305,9 @@ async fn run_network_loop(
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         let info = read_network_dbus_with(conn).await;
-        tx.send(info).map_err(|_| ())?;
+        if info != last {
+            last = info.clone();
+            tx.send(info).map_err(|_| ())?;
+        }
     }
 }

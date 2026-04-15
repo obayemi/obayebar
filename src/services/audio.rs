@@ -26,7 +26,7 @@ pub struct SinkInfo {
     pub description: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AudioInfo {
     pub volume: f32,
     pub muted: bool,
@@ -152,6 +152,7 @@ struct PwState {
     sink_volumes: HashMap<String, (f32, bool, usize)>,
     sinks: Vec<SinkInfo>,
     default_sink_name: Option<String>,
+    last_sent: Option<AudioInfo>,
 }
 
 impl PwState {
@@ -160,6 +161,7 @@ impl PwState {
             sink_volumes: HashMap::new(),
             sinks: Vec::new(),
             default_sink_name: None,
+            last_sent: None,
         }
     }
 
@@ -185,6 +187,15 @@ impl PwState {
             icon_name: volume_icon(volume, muted),
             sinks: self.sinks.clone(),
             default_sink_name: self.default_sink_name.clone(),
+        }
+    }
+
+    /// Build audio info and send only if it differs from last sent value.
+    fn send_if_changed(&mut self, tx: &tokio::sync::mpsc::UnboundedSender<AudioInfo>) {
+        let info = self.to_audio_info();
+        if self.last_sent.as_ref() != Some(&info) {
+            self.last_sent = Some(info.clone());
+            let _ = tx.send(info);
         }
     }
 }
@@ -243,7 +254,7 @@ fn bind_sink_node(
             let mut s = state2.borrow_mut();
             s.sink_volumes
                 .insert(node_name.clone(), (volume, muted, channels));
-            let _ = tx2.send(s.to_audio_info());
+            s.send_if_changed(&tx2);
         })
         .register();
     let proxies_weak = Rc::downgrade(proxies);
@@ -284,7 +295,7 @@ fn bind_metadata(
                 .and_then(|j| j.get("name").and_then(|n| n.as_str()).map(String::from));
             let mut s = state2.borrow_mut();
             s.default_sink_name.clone_from(&new_name);
-            let _ = tx2.send(s.to_audio_info());
+            s.send_if_changed(&tx2);
             drop(s);
             // Re-subscribe the new default sink's params so we get a fresh
             // volume update now that default_sink_name is set
@@ -458,7 +469,7 @@ fn run_pipewire_monitor(
                                 name: name.clone(),
                                 description,
                             });
-                            let _ = tx.send(s.to_audio_info());
+                            s.send_if_changed(&tx);
                         }
 
                         let Ok(node): Result<Node, _> = registry.bind(obj) else {
@@ -493,7 +504,7 @@ fn run_pipewire_monitor(
                     let name = s.sinks.remove(pos).name;
                     s.sink_volumes.remove(&name);
                     proxies.borrow_mut().remove_sink(&name);
-                    let _ = tx.send(s.to_audio_info());
+                    s.send_if_changed(&tx);
                 }
             }
         })

@@ -3,7 +3,7 @@ use crate::Message;
 use iced::widget::{container, text};
 use iced::{Alignment, Element, Length};
 
-pub fn view<'a>() -> Element<'a, Message> {
+pub fn view() -> Element<'static, Message> {
     let icon = text(style::ICON_DEPLOYED_CODE)
         .font(style::ICON_FONT)
         .size(style::FONT_SIZE_LARGE * 1.2)

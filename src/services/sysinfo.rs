@@ -1,6 +1,6 @@
 use futures_util::Stream;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SysInfo {
     pub cpu_percent: f32,
     pub cpu_temp_c: Option<f32>,
@@ -288,6 +288,7 @@ pub fn stream() -> impl Stream<Item = SysInfo> {
         let mut prev_cpu_total: u64 = 0;
         let mut prev_net_rx: u64 = 0;
         let mut prev_net_tx: u64 = 0;
+        let mut last = SysInfo::default();
 
         loop {
             // CPU
@@ -342,8 +343,11 @@ pub fn stream() -> impl Stream<Item = SysInfo> {
                 net_tx_rate: tx_rate,
             };
 
-            if tx.send(info).is_err() {
-                break;
+            if info != last {
+                last = info.clone();
+                if tx.send(info).is_err() {
+                    break;
+                }
             }
 
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Deserialize)]
 pub struct WorkspaceInfo {
     pub id: i32,
     #[serde(default)]
@@ -16,7 +16,7 @@ pub struct WorkspaceInfo {
     pub monitor: String,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Deserialize)]
 pub struct WindowInfo {
     pub class: String,
     pub title: String,

@@ -10,13 +10,13 @@ fn refresh_notify() -> &'static Notify {
     REFRESH_NOTIFY.get_or_init(Notify::new)
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PowerProfileInfo {
     pub available_profiles: Vec<String>,
     pub active_profile: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BatteryInfo {
     pub present: bool,
     pub percentage: f64,
@@ -238,8 +238,8 @@ async fn run_battery_loop(
     .await;
 
     // Emit initial state
-    let info = read_full_state(&upower_proxy, conn).await;
-    tx.send(info).map_err(|_| ())?;
+    let mut last = read_full_state(&upower_proxy, conn).await;
+    tx.send(last.clone()).map_err(|_| ())?;
 
     loop {
         tokio::select! {
@@ -258,6 +258,9 @@ async fn run_battery_loop(
         }
 
         let info = read_full_state(&upower_proxy, conn).await;
-        tx.send(info).map_err(|_| ())?;
+        if info != last {
+            last = info.clone();
+            tx.send(info).map_err(|_| ())?;
+        }
     }
 }
