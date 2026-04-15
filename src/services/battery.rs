@@ -1,4 +1,13 @@
+use std::sync::OnceLock;
+
 use futures_util::Stream;
+use tokio::sync::Notify;
+
+static REFRESH_NOTIFY: OnceLock<Notify> = OnceLock::new();
+
+fn refresh_notify() -> &'static Notify {
+    REFRESH_NOTIFY.get_or_init(Notify::new)
+}
 
 #[derive(Debug, Clone)]
 pub struct PowerProfileInfo {
@@ -119,7 +128,9 @@ pub fn set_power_profile(profile: &str) {
             return;
         };
         if let Ok(proxy) = proxy.build().await {
-            let _ = proxy.set_property("ActiveProfile", &profile).await;
+            if proxy.set_property("ActiveProfile", &profile).await.is_ok() {
+                refresh_notify().notify_one();
+            }
         }
     });
 }
@@ -165,7 +176,13 @@ pub fn stream() -> impl Stream<Item = BatteryInfo> {
         (None, false),
         |(conn, should_sleep): (Option<zbus::Connection>, bool)| async move {
             if should_sleep {
-                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                tokio::select! {
+                    () = tokio::time::sleep(std::time::Duration::from_secs(30)) => {}
+                    () = refresh_notify().notified() => {
+                        // Small delay to let D-Bus property propagate
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    }
+                }
             }
             let connection = if let Some(c) = conn {
                 c
