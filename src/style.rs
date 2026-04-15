@@ -116,6 +116,7 @@ pub const ICON_MEMORY: &str = "\u{E322}";
 pub const ICON_BLUETOOTH: &str = "\u{E1A7}";
 pub const ICON_BLUETOOTH_CONNECTED: &str = "\u{E1A8}";
 pub const ICON_BLUETOOTH_DISABLED: &str = "\u{E1A9}";
+pub const ICON_CHECK_CIRCLE: &str = "\u{E86C}";
 pub const ICON_LANGUAGE: &str = "\u{E894}";
 pub const ICON_DESKTOP: &str = "\u{E30C}";
 pub const ICON_NOTIFICATIONS_NONE: &str = "\u{E7F5}";

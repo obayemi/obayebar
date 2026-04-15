@@ -171,17 +171,12 @@ async fn read_battery_dbus(proxy: &zbus::Proxy<'_>) -> Option<BatteryInfo> {
     })
 }
 
-async fn read_full_state(
-    upower_proxy: &zbus::Proxy<'_>,
-    conn: &zbus::Connection,
-) -> BatteryInfo {
+async fn read_full_state(upower_proxy: &zbus::Proxy<'_>, conn: &zbus::Connection) -> BatteryInfo {
     let mut info = read_battery_dbus(upower_proxy).await.unwrap_or_default();
-    info.power_profiles = tokio::time::timeout(
-        std::time::Duration::from_secs(2),
-        read_power_profiles(conn),
-    )
-    .await
-    .unwrap_or(None);
+    info.power_profiles =
+        tokio::time::timeout(std::time::Duration::from_secs(2), read_power_profiles(conn))
+            .await
+            .unwrap_or(None);
     info
 }
 

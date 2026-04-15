@@ -16,12 +16,13 @@ use iced_layershell::reexport::{
 };
 use iced_layershell::settings::{LayerShellSettings, Settings};
 use iced_layershell::to_layer_message;
-use services::notifications::{NotifEvent, NotificationData};
 use services::audio::{AudioCommand, AudioInfo};
 use services::battery::BatteryInfo;
 use services::bluetooth::BluetoothInfo;
 use services::hyprland::{HyprEvent, HyprState, WindowInfo, WorkspaceInfo};
 use services::network::NetworkInfo;
+use services::notifications::{NotifEvent, NotificationData};
+use services::sysinfo::SysInfo;
 use services::tray::TrayItemInfo;
 
 /// A logger wrapper that exits the process on fatal Wayland protocol errors,
@@ -124,6 +125,7 @@ pub struct App {
     pub network: NetworkInfo,
     pub audio: AudioInfo,
     pub bluetooth: BluetoothInfo,
+    pub sysinfo: SysInfo,
     pub tray_items: Vec<TrayItemInfo>,
     pub popup_notifications: Vec<NotificationData>,
 }
@@ -137,6 +139,7 @@ pub enum Message {
     WorkspaceClick(i32),
     Battery(BatteryInfo),
     Network(NetworkInfo),
+    SysInfo(SysInfo),
     Audio(AudioInfo),
     TrayItems(Vec<TrayItemInfo>),
     TrayClick(String),
@@ -180,6 +183,7 @@ impl App {
                 network: NetworkInfo::default(),
                 audio: AudioInfo::default(),
                 bluetooth: BluetoothInfo::default(),
+                sysinfo: SysInfo::default(),
                 tray_items: Vec::new(),
                 popup_notifications: Vec::new(),
             },
@@ -259,6 +263,10 @@ impl App {
                 self.bluetooth = info;
                 Task::none()
             }
+            Message::SysInfo(info) => {
+                self.sysinfo = info;
+                Task::none()
+            }
             Message::TrayItems(items) => {
                 self.tray_items = items;
                 Task::none()
@@ -285,27 +293,35 @@ impl App {
             Message::AudioPanelOpen(monitor) => {
                 let close = self.close_all_panels();
                 let height = style::audio_panel_height(self.audio.sinks.len());
-                let open = self.audio_panel.open(style::AUDIO_PANEL_WIDTH, height, monitor);
+                let open = self
+                    .audio_panel
+                    .open(style::AUDIO_PANEL_WIDTH, height, monitor);
                 Task::batch([close, open])
             }
             Message::NetworkPanelOpen(monitor) => {
                 let close = self.close_all_panels();
                 let ap_count = self.network.access_points.len().clamp(1, 8);
                 let height = style::network_panel_height(ap_count);
-                let open = self.network_panel.open(style::NETWORK_PANEL_WIDTH, height, monitor);
+                let open = self
+                    .network_panel
+                    .open(style::NETWORK_PANEL_WIDTH, height, monitor);
                 Task::batch([close, open])
             }
             Message::BatteryPanelOpen(monitor) => {
                 let close = self.close_all_panels();
                 let height = style::battery_panel_height(self.battery.power_profiles.is_some());
-                let open = self.battery_panel.open(style::BATTERY_PANEL_WIDTH, height, monitor);
+                let open = self
+                    .battery_panel
+                    .open(style::BATTERY_PANEL_WIDTH, height, monitor);
                 Task::batch([close, open])
             }
             Message::BluetoothPanelOpen(monitor) => {
                 let close = self.close_all_panels();
                 let device_count = self.bluetooth.devices.len().clamp(1, 8);
                 let height = style::bluetooth_panel_height(device_count);
-                let open = self.bluetooth_panel.open(style::BLUETOOTH_PANEL_WIDTH, height, monitor);
+                let open = self
+                    .bluetooth_panel
+                    .open(style::BLUETOOTH_PANEL_WIDTH, height, monitor);
                 Task::batch([close, open])
             }
             Message::BluetoothToggleDevice { path, connected } => {
@@ -439,6 +455,7 @@ impl App {
             Subscription::run(services::audio::stream).map(Message::Audio),
             Subscription::run(services::tray::stream).map(Message::TrayItems),
             Subscription::run(services::bluetooth::stream).map(Message::Bluetooth),
+            Subscription::run(services::sysinfo::stream).map(Message::SysInfo),
             Subscription::run(services::notifications::stream).map(Message::Notif),
         ];
 

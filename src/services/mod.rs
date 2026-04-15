@@ -4,4 +4,5 @@ pub mod bluetooth;
 pub mod hyprland;
 pub mod network;
 pub mod notifications;
+pub mod sysinfo;
 pub mod tray;

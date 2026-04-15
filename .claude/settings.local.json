@@ -51,7 +51,8 @@
       "Bash(busctl introspect:*)",
       "Bash(busctl get-property:*)",
       "Bash(busctl tree:*)",
-      "Bash(busctl call:*)"
+      "Bash(busctl call:*)",
+      "Bash(cargo test:*)"
     ]
   }
 }

@@ -43,6 +43,7 @@ pub fn view<'a>(app: &'a App, monitor: Option<&'a str>) -> Element<'a, Message> 
             &app.network,
             &app.audio,
             &app.bluetooth,
+            &app.sysinfo,
             monitor
         ),
     ]
