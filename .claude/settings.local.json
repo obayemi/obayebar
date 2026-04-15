@@ -56,7 +56,12 @@
       "WebFetch(domain:deepwiki.com)",
       "WebFetch(domain:www.tenotes.com)",
       "Read(//sys/class/drm/**)",
-      "Read(//sys/class/net/**)"
+      "Read(//sys/class/net/**)",
+      "Bash(cargo upgrade:*)",
+      "Bash(cargo outdated:*)",
+      "Bash(cargo update:*)",
+      "Bash(curl -s 'https://crates.io/api/v1/crates/iced_layershell')",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(d['crate']['max_version']\\)\")"
     ]
   }
 }

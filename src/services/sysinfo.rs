@@ -92,15 +92,30 @@ fn compute_cpu_percent(prev_idle: u64, prev_total: u64, idle: u64, total: u64) -
 }
 
 /// GPU backend detection result.
-#[derive(Debug)]
 enum GpuBackend {
     /// AMD/Intel via sysfs `gpu_busy_percent` + optional hwmon temp path
     Sysfs {
         busy_path: String,
         temp_path: Option<String>,
     },
-    /// NVIDIA via `nvidia-smi`
-    NvidiaSmi,
+    /// NVIDIA via NVML library
+    Nvml(Box<nvml_wrapper::Nvml>),
+}
+
+impl std::fmt::Debug for GpuBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Sysfs {
+                busy_path,
+                temp_path,
+            } => f
+                .debug_struct("Sysfs")
+                .field("busy_path", busy_path)
+                .field("temp_path", temp_path)
+                .finish(),
+            Self::Nvml(_) => f.debug_tuple("Nvml").finish(),
+        }
+    }
 }
 
 /// Detect available GPU monitoring backend.
@@ -124,15 +139,11 @@ async fn detect_gpu_backend() -> Option<GpuBackend> {
         }
     }
 
-    // Try NVIDIA nvidia-smi
-    if tokio::process::Command::new("nvidia-smi")
-        .arg("--query-gpu=utilization.gpu")
-        .arg("--format=csv,noheader,nounits")
-        .output()
-        .await
-        .is_ok_and(|o| o.status.success())
-    {
-        return Some(GpuBackend::NvidiaSmi);
+    // Try NVIDIA via NVML library
+    if let Ok(nvml) = nvml_wrapper::Nvml::init() {
+        if nvml.device_count().unwrap_or(0) > 0 {
+            return Some(GpuBackend::Nvml(Box::new(nvml)));
+        }
     }
 
     None
@@ -164,20 +175,17 @@ async fn read_gpu_info(backend: &GpuBackend) -> (f32, Option<f32>) {
             };
             (percent, temp)
         }
-        GpuBackend::NvidiaSmi => {
-            let output = tokio::process::Command::new("nvidia-smi")
-                .arg("--query-gpu=utilization.gpu,temperature.gpu")
-                .arg("--format=csv,noheader,nounits")
-                .output()
-                .await
-                .ok();
-            let (mut percent, mut temp) = (0.0, None);
-            if let Some(o) = output {
-                let text = String::from_utf8_lossy(&o.stdout);
-                let parts: Vec<&str> = text.trim().split(", ").collect();
-                percent = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0.0);
-                temp = parts.get(1).and_then(|s| s.parse().ok());
-            }
+        GpuBackend::Nvml(nvml) => {
+            let Ok(device) = nvml.device_by_index(0) else {
+                return (0.0, None);
+            };
+            #[allow(clippy::cast_precision_loss)]
+            let percent = device.utilization_rates().map_or(0.0, |u| u.gpu as f32);
+            #[allow(clippy::cast_precision_loss)]
+            let temp = device
+                .temperature(nvml_wrapper::enum_wrappers::device::TemperatureSensor::Gpu)
+                .ok()
+                .map(|t| t as f32);
             (percent, temp)
         }
     }
