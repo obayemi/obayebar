@@ -1,9 +1,11 @@
 use crate::services::battery::BatteryInfo;
 use crate::style;
 use crate::Message;
-use iced::widget::canvas::{self, Frame, Geometry, Path, Stroke};
+use iced::widget::canvas::{self, path::Arc, Frame, Geometry, Path, Stroke};
 use iced::widget::{button, column, container, mouse_area, row, text, Space, Stack};
-use iced::{Alignment, Border, Element, Length, Padding, Point, Rectangle, Renderer, Theme};
+use iced::{
+    Alignment, Border, Element, Length, Padding, Point, Radians, Rectangle, Renderer, Theme,
+};
 
 const GAUGE_SIZE: f32 = 140.0;
 const ARC_WIDTH: f32 = 10.0;
@@ -67,23 +69,13 @@ impl canvas::Program<Message> for GaugeProgram {
 
 fn arc_path(center: Point, radius: f32, start_offset: f32, sweep: f32) -> Path {
     Path::new(|builder| {
-        let start = ARC_START + start_offset;
-        let steps = 64;
-        #[allow(clippy::cast_precision_loss)]
-        let step_angle = sweep / steps as f32;
-        let first = Point::new(
-            radius.mul_add(start.cos(), center.x),
-            radius.mul_add(start.sin(), center.y),
-        );
-        builder.move_to(first);
-        for i in 1..=steps {
-            #[allow(clippy::cast_precision_loss)]
-            let angle = step_angle.mul_add(i as f32, start);
-            builder.line_to(Point::new(
-                radius.mul_add(angle.cos(), center.x),
-                radius.mul_add(angle.sin(), center.y),
-            ));
-        }
+        let start_angle = ARC_START + start_offset;
+        builder.arc(Arc {
+            center,
+            radius,
+            start_angle: Radians(start_angle),
+            end_angle: Radians(start_angle + sweep),
+        });
     })
 }
 
