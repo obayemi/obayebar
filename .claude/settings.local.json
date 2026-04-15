@@ -52,7 +52,11 @@
       "Bash(busctl get-property:*)",
       "Bash(busctl tree:*)",
       "Bash(busctl call:*)",
-      "Bash(cargo test:*)"
+      "Bash(cargo test:*)",
+      "WebFetch(domain:deepwiki.com)",
+      "WebFetch(domain:www.tenotes.com)",
+      "Read(//sys/class/drm/**)",
+      "Read(//sys/class/net/**)"
     ]
   }
 }

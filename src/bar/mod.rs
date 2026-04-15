@@ -6,6 +6,7 @@ mod clock;
 mod logo;
 pub mod network_panel;
 mod status;
+pub mod sysinfo_panel;
 mod tray;
 pub mod workspaces;
 

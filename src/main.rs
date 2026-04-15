@@ -115,6 +115,7 @@ pub struct App {
     network_panel: panel::Panel,
     battery_panel: panel::Panel,
     bluetooth_panel: panel::Panel,
+    sysinfo_panel: panel::Panel,
 
     pub workspaces: Vec<WorkspaceInfo>,
     /// Per-monitor active workspace: `monitor_name` -> `active_workspace_id`
@@ -149,6 +150,7 @@ pub enum Message {
     NetworkPanelOpen(Option<String>),
     BatteryPanelOpen(Option<String>),
     BluetoothPanelOpen(Option<String>),
+    SysinfoPanelOpen(Option<String>),
     Bluetooth(BluetoothInfo),
     BluetoothToggleDevice { path: String, connected: bool },
     CloseAllPanels,
@@ -175,6 +177,7 @@ impl App {
                 network_panel: panel::Panel::new(),
                 battery_panel: panel::Panel::new(),
                 bluetooth_panel: panel::Panel::new(),
+                sysinfo_panel: panel::Panel::new(),
                 workspaces: Vec::new(),
                 active_workspaces: HashMap::new(),
                 active_window: None,
@@ -324,6 +327,14 @@ impl App {
                     .open(style::BLUETOOTH_PANEL_WIDTH, height, monitor);
                 Task::batch([close, open])
             }
+            Message::SysinfoPanelOpen(monitor) => {
+                let close = self.close_all_panels();
+                let height = style::sysinfo_panel_height();
+                let open = self
+                    .sysinfo_panel
+                    .open(style::SYSINFO_PANEL_WIDTH, height, monitor);
+                Task::batch([close, open])
+            }
             Message::BluetoothToggleDevice { path, connected } => {
                 services::bluetooth::toggle_device_connection(&path, connected);
                 Task::none()
@@ -438,6 +449,8 @@ impl App {
             bar::battery_panel::view(&self.battery)
         } else if self.bluetooth_panel.is_window(id) {
             bar::bluetooth_panel::view(&self.bluetooth)
+        } else if self.sysinfo_panel.is_window(id) {
+            bar::sysinfo_panel::view(&self.sysinfo)
         } else {
             let monitor = self.monitor_for_bar(id);
             bar::view(self, monitor)
@@ -474,6 +487,7 @@ impl App {
             self.network_panel.close(),
             self.battery_panel.close(),
             self.bluetooth_panel.close(),
+            self.sysinfo_panel.close(),
         ])
     }
 
