@@ -14,6 +14,7 @@ pub struct BluetoothDevice {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct BluetoothInfo {
     pub powered: bool,
+    pub discovering: bool,
     pub icon_name: &'static str,
     pub devices: Vec<BluetoothDevice>,
 }
@@ -22,6 +23,7 @@ impl Default for BluetoothInfo {
     fn default() -> Self {
         Self {
             powered: false,
+            discovering: false,
             icon_name: crate::style::ICON_BLUETOOTH_DISABLED,
             devices: Vec::new(),
         }
@@ -65,16 +67,19 @@ async fn read_bluetooth_dbus(conn: &zbus::Connection) -> BluetoothInfo {
     if !powered {
         return BluetoothInfo {
             powered: false,
+            discovering: false,
             icon_name: crate::style::ICON_BLUETOOTH_DISABLED,
             devices: Vec::new(),
         };
     }
 
-    let devices = enumerate_devices(conn).await;
+    let discovering: bool = adapter.get_property("Discovering").await.unwrap_or(false);
+    let devices = enumerate_devices(conn, discovering).await;
     let has_connected = devices.iter().any(|d| d.connected);
 
     BluetoothInfo {
         powered: true,
+        discovering,
         icon_name: bt_icon(true, has_connected),
         devices,
     }
@@ -88,7 +93,10 @@ type ManagedObjects = std::collections::HashMap<
     >,
 >;
 
-async fn enumerate_devices(conn: &zbus::Connection) -> Vec<BluetoothDevice> {
+async fn enumerate_devices(
+    conn: &zbus::Connection,
+    include_unpaired: bool,
+) -> Vec<BluetoothDevice> {
     let Some(om_proxy) = build_proxy(conn, "/", "org.freedesktop.DBus.ObjectManager").await else {
         return Vec::new();
     };
@@ -127,7 +135,7 @@ async fn enumerate_devices(conn: &zbus::Connection) -> Vec<BluetoothDevice> {
             .and_then(|v| <bool as TryFrom<_>>::try_from(v.clone()).ok())
             .unwrap_or(false);
 
-        if !paired {
+        if !paired && !include_unpaired {
             continue;
         }
 
@@ -165,6 +173,51 @@ pub fn toggle_device_connection(path: &str, currently_connected: bool) {
             "Connect"
         };
         let _ = proxy.call_noreply(method, &()).await;
+    });
+}
+
+pub fn set_adapter_powered(powered: bool) {
+    tokio::spawn(async move {
+        let Ok(conn) = zbus::Connection::system().await else {
+            return;
+        };
+        let Some(proxy) = build_proxy(&conn, "/org/bluez/hci0", "org.bluez.Adapter1").await else {
+            return;
+        };
+        let _ = proxy.set_property("Powered", powered).await;
+    });
+}
+
+pub fn set_discovery(active: bool) {
+    tokio::spawn(async move {
+        let Ok(conn) = zbus::Connection::system().await else {
+            return;
+        };
+        let Some(proxy) = build_proxy(&conn, "/org/bluez/hci0", "org.bluez.Adapter1").await else {
+            return;
+        };
+        let method = if active {
+            "StartDiscovery"
+        } else {
+            "StopDiscovery"
+        };
+        let _ = proxy.call_noreply(method, &()).await;
+    });
+}
+
+pub fn remove_device(device_path: &str) {
+    let device_path = device_path.to_string();
+    tokio::spawn(async move {
+        let Ok(conn) = zbus::Connection::system().await else {
+            return;
+        };
+        let Some(proxy) = build_proxy(&conn, "/org/bluez/hci0", "org.bluez.Adapter1").await else {
+            return;
+        };
+        let obj_path = zbus::zvariant::ObjectPath::try_from(device_path.as_str()).ok();
+        if let Some(path) = obj_path {
+            let _ = proxy.call_noreply("RemoveDevice", &(path,)).await;
+        }
     });
 }
 

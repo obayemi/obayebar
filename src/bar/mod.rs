@@ -103,7 +103,14 @@ pub fn view<'a>(app: &'a App, monitor: Option<&'a str>) -> Element<'a, Message> 
         lazy(clock_key, move |_| { clock::view(&time) }),
         lazy(status_key, move |_| {
             let monitor_ref = monitor_owned.as_deref();
-            status::view(&battery, &network, &audio, &bluetooth, &sysinfo, monitor_ref)
+            status::view(
+                &battery,
+                &network,
+                &audio,
+                &bluetooth,
+                &sysinfo,
+                monitor_ref,
+            )
         }),
     ]
     .spacing(style::SPACING_NORMAL)

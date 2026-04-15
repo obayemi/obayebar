@@ -153,6 +153,9 @@ pub enum Message {
     SysinfoPanelOpen(Option<String>),
     Bluetooth(BluetoothInfo),
     BluetoothToggleDevice { path: String, connected: bool },
+    BluetoothSetPowered(bool),
+    BluetoothSetDiscovery(bool),
+    BluetoothForgetDevice(String),
     CloseAllPanels,
     AudioSetVolume(f32),
     AudioSetMute(bool),
@@ -332,8 +335,26 @@ impl App {
             }
             Message::BluetoothPanelOpen(monitor) => {
                 let close = self.close_all_panels();
-                let device_count = self.bluetooth.devices.len().clamp(1, 8);
-                let height = style::bluetooth_panel_height(device_count);
+                let paired = self
+                    .bluetooth
+                    .devices
+                    .iter()
+                    .filter(|d| d.paired)
+                    .count()
+                    .clamp(1, 8);
+                let nearby = self
+                    .bluetooth
+                    .devices
+                    .iter()
+                    .filter(|d| !d.paired)
+                    .count()
+                    .min(8);
+                let height = style::bluetooth_panel_height(
+                    paired,
+                    nearby,
+                    self.bluetooth.powered,
+                    self.bluetooth.discovering,
+                );
                 let open = self
                     .bluetooth_panel
                     .open(style::BLUETOOTH_PANEL_WIDTH, height, monitor);
@@ -349,6 +370,18 @@ impl App {
             }
             Message::BluetoothToggleDevice { path, connected } => {
                 services::bluetooth::toggle_device_connection(&path, connected);
+                Task::none()
+            }
+            Message::BluetoothSetPowered(powered) => {
+                services::bluetooth::set_adapter_powered(powered);
+                Task::none()
+            }
+            Message::BluetoothSetDiscovery(active) => {
+                services::bluetooth::set_discovery(active);
+                Task::none()
+            }
+            Message::BluetoothForgetDevice(path) => {
+                services::bluetooth::remove_device(&path);
                 Task::none()
             }
             Message::CloseAllPanels => self.close_all_panels(),

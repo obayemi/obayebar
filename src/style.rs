@@ -116,6 +116,8 @@ pub const ICON_MEMORY: &str = "\u{E322}";
 pub const ICON_BLUETOOTH: &str = "\u{E1A7}";
 pub const ICON_BLUETOOTH_CONNECTED: &str = "\u{E1A8}";
 pub const ICON_BLUETOOTH_DISABLED: &str = "\u{E1A9}";
+pub const ICON_BLUETOOTH_SEARCHING: &str = "\u{E1AA}";
+pub const ICON_DELETE: &str = "\u{E872}";
 pub const ICON_CHECK_CIRCLE: &str = "\u{E86C}";
 pub const ICON_GPU: &str = "\u{E30D}";
 pub const ICON_ARROW_UPWARD: &str = "\u{E5D8}";
@@ -265,32 +267,67 @@ pub fn battery_panel_height(has_power_profiles: bool) -> u32 {
         .ceil() as u32
 }
 
-/// Compute the bluetooth panel window height for `device_count` paired devices.
+/// Compute the bluetooth panel window height.
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
     clippy::cast_precision_loss,
     clippy::as_conversions
 )]
-pub fn bluetooth_panel_height(device_count: usize) -> u32 {
+pub fn bluetooth_panel_height(
+    paired_count: usize,
+    nearby_count: usize,
+    powered: bool,
+    discovering: bool,
+) -> u32 {
     let container_padding = PADDING_LARGE * 2.0;
     let header = FONT_SIZE_LARGE * LINE_HEIGHT;
     let separator = 1.0;
-    // 2 gaps: header→separator, separator→list
-    let outer_spacing = SPACING_NORMAL * 2.0;
 
-    // "Devices" label + N device entries (or 1 fallback line)
-    let label = FONT_SIZE_SMALLER * LINE_HEIGHT;
-    let n = device_count.max(1) as f32;
-    // Each device: icon row + optional battery sub-line, with padding
+    if !powered {
+        // Just header + separator + "Bluetooth is off" text
+        let off_text = FONT_SIZE_NORMAL * LINE_HEIGHT;
+        let spacing = SPACING_NORMAL * 2.0;
+        let safety = 20.0;
+        return (container_padding + header + separator + spacing + off_text + safety).ceil()
+            as u32;
+    }
+
+    // Discovery toggle button row
+    let discovery_btn = PADDING_SMALL.mul_add(2.0, FONT_SIZE_NORMAL * LINE_HEIGHT);
+
+    // Each device entry height
     let per_entry = PADDING_SMALL.mul_add(
         2.0,
         FONT_SIZE_SMALL.mul_add(LINE_HEIGHT, FONT_SIZE_NORMAL * LINE_HEIGHT),
     );
+
+    // Paired devices section
+    let label = FONT_SIZE_SMALLER * LINE_HEIGHT;
+    let n = paired_count.max(1) as f32;
     let device_list = label + (n - 1.0).max(0.0).mul_add(2.0, n * per_entry);
 
+    // Nearby section (only when discovering with unpaired devices)
+    let nearby_section = if discovering && nearby_count > 0 {
+        let nearby_label = FONT_SIZE_SMALLER * LINE_HEIGHT;
+        let m = nearby_count as f32;
+        SPACING_NORMAL + nearby_label + (m - 1.0).max(0.0).mul_add(2.0, m * per_entry)
+    } else {
+        0.0
+    };
+
+    // 4 gaps: header→separator, separator→discovery, discovery→separator2, separator2→list
+    let outer_spacing = SPACING_NORMAL * 4.0;
     let safety = 20.0;
-    (container_padding + header + separator + outer_spacing + device_list + safety).ceil() as u32
+    (container_padding
+        + header
+        + separator * 2.0
+        + outer_spacing
+        + discovery_btn
+        + device_list
+        + nearby_section
+        + safety)
+        .ceil() as u32
 }
 
 /// Compute the sysinfo panel window height (2x2 grid: CPU, GPU, RAM, Network).
