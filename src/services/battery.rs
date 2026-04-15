@@ -1,5 +1,6 @@
 use std::sync::OnceLock;
 
+use futures_util::stream::StreamExt;
 use futures_util::Stream;
 use tokio::sync::Notify;
 
@@ -91,7 +92,6 @@ async fn read_power_profiles(conn: &zbus::Connection) -> Option<PowerProfileInfo
 
     let active: String = proxy.get_property("ActiveProfile").await.ok()?;
 
-    // Profiles is aa{sv} — array of dicts, each with a "Profile" string key
     let profiles_raw: Vec<std::collections::HashMap<String, zbus::zvariant::OwnedValue>> =
         proxy.get_property("Profiles").await.ok()?;
 
@@ -171,41 +171,100 @@ async fn read_battery_dbus(proxy: &zbus::Proxy<'_>) -> Option<BatteryInfo> {
     })
 }
 
+async fn read_full_state(
+    upower_proxy: &zbus::Proxy<'_>,
+    conn: &zbus::Connection,
+) -> BatteryInfo {
+    let mut info = read_battery_dbus(upower_proxy).await.unwrap_or_default();
+    info.power_profiles = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        read_power_profiles(conn),
+    )
+    .await
+    .unwrap_or(None);
+    info
+}
+
 pub fn stream() -> impl Stream<Item = BatteryInfo> {
-    futures_util::stream::unfold(
-        (None, false),
-        |(conn, should_sleep): (Option<zbus::Connection>, bool)| async move {
-            if should_sleep {
-                tokio::select! {
-                    () = tokio::time::sleep(std::time::Duration::from_secs(30)) => {}
-                    () = refresh_notify().notified() => {
-                        // Small delay to let D-Bus property propagate
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+
+    tokio::spawn(async move {
+        loop {
+            let conn = loop {
+                match zbus::Connection::system().await {
+                    Ok(c) => break c,
+                    Err(_) => {
+                        log::warn!("battery: failed to connect to system D-Bus, retrying");
+                        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
                     }
                 }
+            };
+
+            if run_battery_loop(&conn, &tx).await.is_err() {
+                log::warn!("battery: signal loop ended, reconnecting");
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
             }
-            let connection = if let Some(c) = conn {
-                c
-            } else if let Ok(c) = zbus::Connection::system().await {
-                c
-            } else {
-                log::warn!("battery: failed to connect to system D-Bus");
-                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-                return Some((BatteryInfo::default(), (None, true)));
-            };
-            let mut info = if let Some(proxy) = build_upower_proxy(&connection).await {
-                read_battery_dbus(&proxy).await.unwrap_or_default()
-            } else {
-                log::debug!("battery: UPower proxy unavailable");
-                BatteryInfo::default()
-            };
-            info.power_profiles = tokio::time::timeout(
-                std::time::Duration::from_secs(2),
-                read_power_profiles(&connection),
-            )
+        }
+    });
+
+    tokio_stream::wrappers::UnboundedReceiverStream::new(rx)
+}
+
+async fn run_battery_loop(
+    conn: &zbus::Connection,
+    tx: &tokio::sync::mpsc::UnboundedSender<BatteryInfo>,
+) -> Result<(), ()> {
+    let upower_proxy = build_upower_proxy(conn).await.ok_or(())?;
+
+    // Subscribe to PropertiesChanged on UPower device
+    let upower_props_proxy = zbus::fdo::PropertiesProxy::builder(conn)
+        .destination("org.freedesktop.UPower")
+        .map_err(|_| ())?
+        .path("/org/freedesktop/UPower/devices/DisplayDevice")
+        .map_err(|_| ())?
+        .build()
+        .await
+        .map_err(|_| ())?;
+    let mut upower_signals = upower_props_proxy
+        .receive_properties_changed()
+        .await
+        .map_err(|_| ())?;
+
+    // Subscribe to PropertiesChanged on PowerProfiles (optional)
+    let mut pp_signals = async {
+        let proxy = zbus::fdo::PropertiesProxy::builder(conn)
+            .destination("net.hadess.PowerProfiles")
+            .ok()?
+            .path("/net/hadess/PowerProfiles")
+            .ok()?
+            .build()
             .await
-            .unwrap_or(None);
-            Some((info, (Some(connection), true)))
-        },
-    )
+            .ok()?;
+        proxy.receive_properties_changed().await.ok()
+    }
+    .await;
+
+    // Emit initial state
+    let info = read_full_state(&upower_proxy, conn).await;
+    tx.send(info).map_err(|_| ())?;
+
+    loop {
+        tokio::select! {
+            Some(_) = upower_signals.next() => {}
+            Some(_) = async {
+                match pp_signals.as_mut() {
+                    Some(s) => s.next().await,
+                    None => std::future::pending().await,
+                }
+            } => {}
+            () = refresh_notify().notified() => {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+            // Fallback refresh every 5 minutes in case signals are missed
+            () = tokio::time::sleep(std::time::Duration::from_secs(300)) => {}
+        }
+
+        let info = read_full_state(&upower_proxy, conn).await;
+        tx.send(info).map_err(|_| ())?;
+    }
 }

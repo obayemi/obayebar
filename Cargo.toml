@@ -27,6 +27,7 @@ async-channel = "2.5.0"
 ab_glyph = "0.2"
 pipewire = "0.8"
 wayland-backend = { version = "0.3", features = ["log"] }
+tokio-stream = "0.1.18"
 
 [lints.rust]
 unsafe_code = "forbid"
