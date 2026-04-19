@@ -5,6 +5,7 @@
   pkg-config,
   clang,
   llvmPackages,
+  mold,
   wayland,
   libxkbcommon,
   vulkan-loader,
@@ -25,6 +26,7 @@ let
     pkg-config
     clang
     llvmPackages.libclang
+    mold
     makeWrapper
   ];
 in
