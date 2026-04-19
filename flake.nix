@@ -9,11 +9,19 @@
   };
 
   outputs = { self, nixpkgs, naersk, flake-utils, rust-overlay }:
-    flake-utils.lib.eachDefaultSystem (system:
+    {
+      overlays.default = import ./nix/overlay.nix { inherit naersk; };
+
+      homeManagerModules.default = import ./nix/hm-module.nix self;
+    }
+    // flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs {
           inherit system;
-          overlays = [ rust-overlay.overlays.default ];
+          overlays = [
+            rust-overlay.overlays.default
+            self.overlays.default
+          ];
         };
 
         rustNightly = pkgs.rust-bin.selectLatestNightlyWith (toolchain:
@@ -21,11 +29,6 @@
             extensions = [ "rust-src" "clippy" "rustfmt" "rust-analyzer" "rustc-codegen-cranelift-preview" ];
           }
         );
-
-        naersk' = pkgs.callPackage naersk {
-          cargo = rustNightly;
-          rustc = rustNightly;
-        };
 
         buildInputs = with pkgs; [
           wayland
@@ -40,24 +43,8 @@
           clang
           llvmPackages.libclang
         ];
-
-        runtimeDeps = with pkgs; [
-          material-symbols
-        ];
       in {
-        packages.default = naersk'.buildPackage {
-          src = ./.;
-          inherit buildInputs nativeBuildInputs;
-
-          LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath buildInputs;
-          LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
-
-          # Wrap binary to include font paths
-          postInstall = ''
-            wrapProgram $out/bin/obayebar \
-              --set OBAYEBAR_FONT_DIR "${pkgs.material-symbols}/share/fonts/TTF"
-          '';
-        };
+        packages.default = pkgs.obayebar;
 
         devShells.default = pkgs.mkShell {
           inherit buildInputs;
