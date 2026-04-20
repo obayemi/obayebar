@@ -6,6 +6,7 @@ pub struct AccessPointInfo {
     pub ssid: String,
     pub strength: u8,
     pub icon_name: &'static str,
+    pub known: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -83,6 +84,64 @@ async fn read_ap_info(conn: &zbus::Connection, ap_path: &str) -> Option<(String,
     Some((ssid, strength))
 }
 
+type NmConnSettings = std::collections::HashMap<
+    String,
+    std::collections::HashMap<String, zbus::zvariant::OwnedValue>,
+>;
+
+/// Collect all saved wifi SSIDs from NM settings.
+async fn saved_wifi_ssids(conn: &zbus::Connection) -> std::collections::HashSet<String> {
+    let mut ssids = std::collections::HashSet::new();
+
+    let Some(settings_proxy) = build_proxy(
+        conn,
+        "org.freedesktop.NetworkManager",
+        "/org/freedesktop/NetworkManager/Settings",
+        "org.freedesktop.NetworkManager.Settings",
+    )
+    .await
+    else {
+        return ssids;
+    };
+
+    let saved_connections: Vec<zbus::zvariant::OwnedObjectPath> = settings_proxy
+        .get_property("Connections")
+        .await
+        .unwrap_or_default();
+
+    for sc_path in &saved_connections {
+        let Some(sc_proxy) = build_proxy(
+            conn,
+            "org.freedesktop.NetworkManager",
+            sc_path.as_str(),
+            "org.freedesktop.NetworkManager.Settings.Connection",
+        )
+        .await
+        else {
+            continue;
+        };
+
+        let Ok(settings) = sc_proxy
+            .call::<_, _, NmConnSettings>("GetSettings", &())
+            .await
+        else {
+            continue;
+        };
+
+        if let Some(wifi_settings) = settings.get("802-11-wireless") {
+            if let Some(ssid_val) = wifi_settings.get("ssid") {
+                if let Ok(ssid_bytes) = <Vec<u8> as TryFrom<_>>::try_from(ssid_val.clone()) {
+                    let saved_ssid = String::from_utf8_lossy(&ssid_bytes).into_owned();
+                    if !saved_ssid.is_empty() {
+                        ssids.insert(saved_ssid);
+                    }
+                }
+            }
+        }
+    }
+    ssids
+}
+
 async fn scan_access_points(
     conn: &zbus::Connection,
     nm_proxy: &zbus::Proxy<'_>,
@@ -91,6 +150,8 @@ async fn scan_access_points(
         .get_property("AllDevices")
         .await
         .unwrap_or_default();
+
+    let known_ssids = saved_wifi_ssids(conn).await;
 
     let mut seen = std::collections::HashSet::new();
     let mut aps = Vec::new();
@@ -117,6 +178,7 @@ async fn scan_access_points(
                 if seen.insert(ssid.clone()) {
                     aps.push(AccessPointInfo {
                         icon_name: wifi_icon(strength),
+                        known: known_ssids.contains(&ssid),
                         ssid,
                         strength,
                     });
@@ -130,7 +192,8 @@ async fn scan_access_points(
         }
     }
 
-    aps.sort_by_key(|a| std::cmp::Reverse(a.strength));
+    // Sort: known networks first, then by signal strength
+    aps.sort_by(|a, b| b.known.cmp(&a.known).then(b.strength.cmp(&a.strength)));
     aps
 }
 
@@ -260,7 +323,9 @@ pub fn set_wifi_enabled(enabled: bool) {
         else {
             return;
         };
-        let _ = proxy.set_property("WirelessEnabled", enabled).await;
+        if let Err(e) = proxy.set_property("WirelessEnabled", enabled).await {
+            log::warn!("network: failed to set WirelessEnabled: {e}");
+        }
     });
 }
 
@@ -298,22 +363,22 @@ pub fn disconnect_wifi() {
             };
             let conn_type: String = ac_proxy.get_property("Type").await.unwrap_or_default();
             if conn_type == "802-11-wireless" {
-                let obj_path = zbus::zvariant::ObjectPath::try_from(conn_path.as_str()).ok();
-                if let Some(path) = obj_path {
-                    let _ = nm_proxy
-                        .call_noreply("DeactivateConnection", &(path,))
-                        .await;
+                let Some(obj_path) = zbus::zvariant::ObjectPath::try_from(conn_path.as_str()).ok()
+                else {
+                    break;
+                };
+                match nm_proxy
+                    .call::<_, _, ()>("DeactivateConnection", &(obj_path,))
+                    .await
+                {
+                    Ok(()) => log::info!("network: disconnected wifi"),
+                    Err(e) => log::warn!("network: DeactivateConnection failed: {e}"),
                 }
                 break;
             }
         }
     });
 }
-
-type ConnSettings = std::collections::HashMap<
-    String,
-    std::collections::HashMap<String, zbus::zvariant::OwnedValue>,
->;
 
 async fn find_wifi_device_and_ap(
     conn: &zbus::Connection,
@@ -383,7 +448,7 @@ async fn find_saved_connection(conn: &zbus::Connection, ssid: &str) -> Option<St
         };
 
         let Ok(settings) = sc_proxy
-            .call::<_, _, ConnSettings>("GetSettings", &())
+            .call::<_, _, NmConnSettings>("GetSettings", &())
             .await
         else {
             continue;
@@ -421,6 +486,7 @@ pub fn connect_network(ssid: String) {
 
         let Some((dev_path, ap_path)) = find_wifi_device_and_ap(&conn, &nm_proxy, &ssid).await
         else {
+            log::warn!("network: no wifi device found for connect");
             return;
         };
 
@@ -437,22 +503,38 @@ pub fn connect_network(ssid: String) {
             else {
                 return;
             };
-            let _ = nm_proxy
-                .call_noreply("ActivateConnection", &(conn_obj, dev_obj, ap_obj))
-                .await;
+            log::info!("network: activating saved connection for {ssid}");
+            match nm_proxy
+                .call::<_, _, zbus::zvariant::OwnedObjectPath>(
+                    "ActivateConnection",
+                    &(conn_obj, dev_obj, ap_obj),
+                )
+                .await
+            {
+                Ok(_) => log::info!("network: activated connection for {ssid}"),
+                Err(e) => log::warn!("network: ActivateConnection failed: {e}"),
+            }
         } else {
             // No saved connection — use AddAndActivateConnection with empty settings.
             // NetworkManager's secret agent (e.g. nm-applet) will prompt for password.
+            log::info!("network: adding new connection for {ssid}");
             let empty_settings: std::collections::HashMap<
                 &str,
                 std::collections::HashMap<&str, zbus::zvariant::Value<'_>>,
             > = std::collections::HashMap::new();
-            let _ = nm_proxy
-                .call_noreply(
+            match nm_proxy
+                .call::<_, _, (
+                    zbus::zvariant::OwnedObjectPath,
+                    zbus::zvariant::OwnedObjectPath,
+                )>(
                     "AddAndActivateConnection",
                     &(empty_settings, dev_obj, ap_obj),
                 )
-                .await;
+                .await
+            {
+                Ok(_) => log::info!("network: added+activated connection for {ssid}"),
+                Err(e) => log::warn!("network: AddAndActivateConnection failed: {e}"),
+            }
         }
     });
 }
