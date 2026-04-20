@@ -9,9 +9,11 @@ pub struct AccessPointInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct NetworkInfo {
     pub connected: bool,
     pub wifi: bool,
+    pub wifi_enabled: bool,
     pub wifi_strength: u8,
     pub wifi_ssid: Option<String>,
     pub ethernet: bool,
@@ -24,6 +26,7 @@ impl Default for NetworkInfo {
         Self {
             connected: false,
             wifi: false,
+            wifi_enabled: false,
             wifi_strength: 0,
             wifi_ssid: None,
             ethernet: false,
@@ -145,6 +148,10 @@ async fn read_network_dbus_with(conn: &zbus::Connection) -> NetworkInfo {
 
     let connectivity: u32 = nm_proxy.get_property("Connectivity").await.unwrap_or(0);
     let connected = connectivity >= 2;
+    let wifi_enabled: bool = nm_proxy
+        .get_property("WirelessEnabled")
+        .await
+        .unwrap_or(false);
 
     let active_connections: Vec<zbus::zvariant::OwnedObjectPath> = nm_proxy
         .get_property("ActiveConnections")
@@ -220,17 +227,234 @@ async fn read_network_dbus_with(conn: &zbus::Connection) -> NetworkInfo {
         crate::style::ICON_WIFI_OFF
     };
 
-    let access_points = scan_access_points(conn, &nm_proxy).await;
+    let access_points = if wifi_enabled {
+        scan_access_points(conn, &nm_proxy).await
+    } else {
+        Vec::new()
+    };
 
     NetworkInfo {
         connected,
         wifi,
+        wifi_enabled,
         wifi_strength,
         wifi_ssid,
         ethernet,
         icon_name,
         access_points,
     }
+}
+
+pub fn set_wifi_enabled(enabled: bool) {
+    tokio::spawn(async move {
+        let Ok(conn) = zbus::Connection::system().await else {
+            return;
+        };
+        let Some(proxy) = build_proxy(
+            &conn,
+            "org.freedesktop.NetworkManager",
+            "/org/freedesktop/NetworkManager",
+            "org.freedesktop.NetworkManager",
+        )
+        .await
+        else {
+            return;
+        };
+        let _ = proxy.set_property("WirelessEnabled", enabled).await;
+    });
+}
+
+pub fn disconnect_wifi() {
+    tokio::spawn(async move {
+        let Ok(conn) = zbus::Connection::system().await else {
+            return;
+        };
+        let Some(nm_proxy) = build_proxy(
+            &conn,
+            "org.freedesktop.NetworkManager",
+            "/org/freedesktop/NetworkManager",
+            "org.freedesktop.NetworkManager",
+        )
+        .await
+        else {
+            return;
+        };
+
+        let active_connections: Vec<zbus::zvariant::OwnedObjectPath> = nm_proxy
+            .get_property("ActiveConnections")
+            .await
+            .unwrap_or_default();
+
+        for conn_path in &active_connections {
+            let Some(ac_proxy) = build_proxy(
+                &conn,
+                "org.freedesktop.NetworkManager",
+                conn_path.as_str(),
+                "org.freedesktop.NetworkManager.Connection.Active",
+            )
+            .await
+            else {
+                continue;
+            };
+            let conn_type: String = ac_proxy.get_property("Type").await.unwrap_or_default();
+            if conn_type == "802-11-wireless" {
+                let obj_path = zbus::zvariant::ObjectPath::try_from(conn_path.as_str()).ok();
+                if let Some(path) = obj_path {
+                    let _ = nm_proxy
+                        .call_noreply("DeactivateConnection", &(path,))
+                        .await;
+                }
+                break;
+            }
+        }
+    });
+}
+
+type ConnSettings = std::collections::HashMap<
+    String,
+    std::collections::HashMap<String, zbus::zvariant::OwnedValue>,
+>;
+
+async fn find_wifi_device_and_ap(
+    conn: &zbus::Connection,
+    nm_proxy: &zbus::Proxy<'_>,
+    ssid: &str,
+) -> Option<(String, String)> {
+    let devices: Vec<zbus::zvariant::OwnedObjectPath> = nm_proxy
+        .get_property("AllDevices")
+        .await
+        .unwrap_or_default();
+
+    for dev_path in &devices {
+        let Some(wifi_proxy) = build_proxy(
+            conn,
+            "org.freedesktop.NetworkManager",
+            dev_path.as_str(),
+            "org.freedesktop.NetworkManager.Device.Wireless",
+        )
+        .await
+        else {
+            continue;
+        };
+
+        let ap_paths: Vec<zbus::zvariant::OwnedObjectPath> = wifi_proxy
+            .get_property("AccessPoints")
+            .await
+            .unwrap_or_default();
+
+        for ap_path in &ap_paths {
+            if let Some((ap_ssid, _)) = read_ap_info(conn, ap_path.as_str()).await {
+                if ap_ssid == ssid {
+                    return Some((dev_path.to_string(), ap_path.to_string()));
+                }
+            }
+        }
+
+        // Found a WiFi device but no matching AP — still use this device
+        return Some((dev_path.to_string(), "/".to_string()));
+    }
+    None
+}
+
+async fn find_saved_connection(conn: &zbus::Connection, ssid: &str) -> Option<String> {
+    let settings_proxy = build_proxy(
+        conn,
+        "org.freedesktop.NetworkManager",
+        "/org/freedesktop/NetworkManager/Settings",
+        "org.freedesktop.NetworkManager.Settings",
+    )
+    .await?;
+
+    let saved_connections: Vec<zbus::zvariant::OwnedObjectPath> = settings_proxy
+        .get_property("Connections")
+        .await
+        .unwrap_or_default();
+
+    for sc_path in &saved_connections {
+        let Some(sc_proxy) = build_proxy(
+            conn,
+            "org.freedesktop.NetworkManager",
+            sc_path.as_str(),
+            "org.freedesktop.NetworkManager.Settings.Connection",
+        )
+        .await
+        else {
+            continue;
+        };
+
+        let Ok(settings) = sc_proxy
+            .call::<_, _, ConnSettings>("GetSettings", &())
+            .await
+        else {
+            continue;
+        };
+
+        if let Some(wifi_settings) = settings.get("802-11-wireless") {
+            if let Some(ssid_val) = wifi_settings.get("ssid") {
+                if let Ok(ssid_bytes) = <Vec<u8> as TryFrom<_>>::try_from(ssid_val.clone()) {
+                    let saved_ssid = String::from_utf8_lossy(&ssid_bytes);
+                    if saved_ssid == ssid {
+                        return Some(sc_path.to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+pub fn connect_network(ssid: String) {
+    tokio::spawn(async move {
+        let Ok(conn) = zbus::Connection::system().await else {
+            return;
+        };
+        let Some(nm_proxy) = build_proxy(
+            &conn,
+            "org.freedesktop.NetworkManager",
+            "/org/freedesktop/NetworkManager",
+            "org.freedesktop.NetworkManager",
+        )
+        .await
+        else {
+            return;
+        };
+
+        let Some((dev_path, ap_path)) = find_wifi_device_and_ap(&conn, &nm_proxy, &ssid).await
+        else {
+            return;
+        };
+
+        let Some(dev_obj) = zbus::zvariant::ObjectPath::try_from(dev_path.as_str()).ok() else {
+            return;
+        };
+        let Some(ap_obj) = zbus::zvariant::ObjectPath::try_from(ap_path.as_str()).ok() else {
+            return;
+        };
+
+        if let Some(conn_path) = find_saved_connection(&conn, &ssid).await {
+            // Activate existing saved connection
+            let Some(conn_obj) = zbus::zvariant::ObjectPath::try_from(conn_path.as_str()).ok()
+            else {
+                return;
+            };
+            let _ = nm_proxy
+                .call_noreply("ActivateConnection", &(conn_obj, dev_obj, ap_obj))
+                .await;
+        } else {
+            // No saved connection — use AddAndActivateConnection with empty settings.
+            // NetworkManager's secret agent (e.g. nm-applet) will prompt for password.
+            let empty_settings: std::collections::HashMap<
+                &str,
+                std::collections::HashMap<&str, zbus::zvariant::Value<'_>>,
+            > = std::collections::HashMap::new();
+            let _ = nm_proxy
+                .call_noreply(
+                    "AddAndActivateConnection",
+                    &(empty_settings, dev_obj, ap_obj),
+                )
+                .await;
+        }
+    });
 }
 
 pub fn stream() -> impl Stream<Item = NetworkInfo> {

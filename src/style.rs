@@ -213,18 +213,27 @@ pub fn notif_popup_height(notif_count: usize) -> u32 {
     clippy::cast_precision_loss,
     clippy::as_conversions
 )]
-pub fn network_panel_height(ap_count: usize) -> u32 {
+pub fn network_panel_height(ap_count: usize, wifi_enabled: bool) -> u32 {
     let container_padding = PADDING_LARGE * 2.0;
 
-    // Header: icon + "Network"
+    // Header: icon + "Network" + toggle
     let header = FONT_SIZE_LARGE * LINE_HEIGHT;
     // Separator
     let separator = 1.0;
 
+    if !wifi_enabled {
+        // Just header + separator + "Wi-Fi is off" text
+        let off_text = FONT_SIZE_NORMAL * LINE_HEIGHT;
+        let spacing = SPACING_NORMAL * 2.0;
+        let safety = 20.0;
+        return (container_padding + header + separator + spacing + off_text + safety).ceil()
+            as u32;
+    }
+
     // 2 gaps between header, separator, network_list
     let outer_spacing = SPACING_NORMAL * 2.0;
 
-    // "Wi-Fi networks" label + N entries
+    // "Wi-Fi networks" label + N entries (each entry now includes an action button)
     let label = FONT_SIZE_SMALLER * LINE_HEIGHT;
     let n = ap_count.max(1) as f32;
     let per_entry = PADDING_SMALL.mul_add(2.0, FONT_SIZE_NORMAL * LINE_HEIGHT);

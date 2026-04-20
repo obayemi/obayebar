@@ -63,7 +63,8 @@
       "Bash(curl -s 'https://crates.io/api/v1/crates/iced_layershell')",
       "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(d['crate']['max_version']\\)\")",
       "Bash(git add:*)",
-      "Bash(nix flake:*)"
+      "Bash(nix flake:*)",
+      "Bash(wc:*)"
     ]
   }
 }

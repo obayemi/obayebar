@@ -156,6 +156,9 @@ pub enum Message {
     BluetoothSetPowered(bool),
     BluetoothSetDiscovery(bool),
     BluetoothForgetDevice(String),
+    NetworkSetWifiEnabled(bool),
+    NetworkConnect(String),
+    NetworkDisconnect,
     CloseAllPanels,
     AudioSetVolume(f32),
     AudioSetMute(bool),
@@ -319,7 +322,7 @@ impl App {
             Message::NetworkPanelOpen(monitor) => {
                 let close = self.close_all_panels();
                 let ap_count = self.network.access_points.len().clamp(1, 8);
-                let height = style::network_panel_height(ap_count);
+                let height = style::network_panel_height(ap_count, self.network.wifi_enabled);
                 let open = self
                     .network_panel
                     .open(style::NETWORK_PANEL_WIDTH, height, monitor);
@@ -382,6 +385,22 @@ impl App {
             }
             Message::BluetoothForgetDevice(path) => {
                 services::bluetooth::remove_device(&path);
+                Task::none()
+            }
+            Message::NetworkSetWifiEnabled(enabled) => {
+                self.network.wifi_enabled = enabled;
+                if !enabled {
+                    self.network.icon_name = crate::style::ICON_WIFI_OFF;
+                }
+                services::network::set_wifi_enabled(enabled);
+                Task::none()
+            }
+            Message::NetworkConnect(ssid) => {
+                services::network::connect_network(ssid);
+                Task::none()
+            }
+            Message::NetworkDisconnect => {
+                services::network::disconnect_wifi();
                 Task::none()
             }
             Message::CloseAllPanels => self.close_all_panels(),
