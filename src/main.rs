@@ -322,7 +322,11 @@ impl App {
             Message::NetworkPanelOpen(monitor) => {
                 let close = self.close_all_panels();
                 let ap_count = self.network.access_points.len().clamp(1, 8);
-                let height = style::network_panel_height(ap_count, self.network.wifi_enabled);
+                let height = style::network_panel_height(
+                    ap_count,
+                    self.network.active_connections.len(),
+                    self.network.wifi_enabled,
+                );
                 let open = self
                     .network_panel
                     .open(style::NETWORK_PANEL_WIDTH, height, monitor);

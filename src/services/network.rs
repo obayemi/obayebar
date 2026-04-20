@@ -9,6 +9,14 @@ pub struct AccessPointInfo {
     pub known: bool,
 }
 
+/// An active non-WiFi connection (ethernet, wireguard, VPN, etc.)
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ActiveConnectionInfo {
+    pub name: String,
+    pub conn_type: String,
+    pub icon_name: &'static str,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct NetworkInfo {
@@ -20,6 +28,7 @@ pub struct NetworkInfo {
     pub ethernet: bool,
     pub icon_name: &'static str,
     pub access_points: Vec<AccessPointInfo>,
+    pub active_connections: Vec<ActiveConnectionInfo>,
 }
 
 impl Default for NetworkInfo {
@@ -33,7 +42,17 @@ impl Default for NetworkInfo {
             ethernet: false,
             icon_name: crate::style::ICON_WIFI_OFF,
             access_points: Vec::new(),
+            active_connections: Vec::new(),
         }
+    }
+}
+
+fn connection_icon(conn_type: &str) -> &'static str {
+    use crate::style;
+    match conn_type {
+        "802-3-ethernet" => style::ICON_CABLE,
+        "wireguard" | "vpn" => style::ICON_VPN,
+        _ => style::ICON_LANGUAGE,
     }
 }
 
@@ -197,6 +216,7 @@ async fn scan_access_points(
     aps
 }
 
+#[allow(clippy::too_many_lines)]
 async fn read_network_dbus_with(conn: &zbus::Connection) -> NetworkInfo {
     let Some(nm_proxy) = build_proxy(
         conn,
@@ -225,6 +245,7 @@ async fn read_network_dbus_with(conn: &zbus::Connection) -> NetworkInfo {
     let mut ethernet = false;
     let mut wifi_strength: u8 = 0;
     let mut wifi_ssid: Option<String> = None;
+    let mut active_conns = Vec::new();
 
     for conn_path in &active_connections {
         let Some(ac_proxy) = build_proxy(
@@ -239,6 +260,7 @@ async fn read_network_dbus_with(conn: &zbus::Connection) -> NetworkInfo {
         };
 
         let conn_type: String = ac_proxy.get_property("Type").await.unwrap_or_default();
+        let conn_id: String = ac_proxy.get_property("Id").await.unwrap_or_default();
 
         match conn_type.as_str() {
             "802-11-wireless" => {
@@ -275,8 +297,21 @@ async fn read_network_dbus_with(conn: &zbus::Connection) -> NetworkInfo {
             }
             "802-3-ethernet" => {
                 ethernet = true;
+                active_conns.push(ActiveConnectionInfo {
+                    name: conn_id,
+                    icon_name: connection_icon(&conn_type),
+                    conn_type,
+                });
             }
-            _ => {}
+            // Skip loopback and other internal types
+            "loopback" => {}
+            _ => {
+                active_conns.push(ActiveConnectionInfo {
+                    name: conn_id,
+                    icon_name: connection_icon(&conn_type),
+                    conn_type,
+                });
+            }
         }
     }
 
@@ -305,6 +340,7 @@ async fn read_network_dbus_with(conn: &zbus::Connection) -> NetworkInfo {
         ethernet,
         icon_name,
         access_points,
+        active_connections: active_conns,
     }
 }
 

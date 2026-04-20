@@ -87,6 +87,39 @@ fn network_entry<'a>(ssid: &'a str, icon_name: &'a str, is_active: bool) -> Elem
         .into()
 }
 
+fn active_connection_entry<'a>(name: &'a str, icon_name: &'a str) -> Element<'a, Message> {
+    let icon = text(icon_name)
+        .font(style::ICON_FONT)
+        .size(style::FONT_SIZE_NORMAL)
+        .color(style::M3_PRIMARY);
+
+    let label = text(name)
+        .size(style::FONT_SIZE_NORMAL)
+        .color(style::M3_PRIMARY)
+        .width(Length::Fill);
+
+    let content = row![icon, label]
+        .spacing(style::SPACING_SMALLER)
+        .align_y(Alignment::Center)
+        .width(Length::Fill);
+
+    container(content)
+        .padding([style::PADDING_SMALL, style::PADDING_NORMAL])
+        .width(Length::Fill)
+        .style(|_theme| container::Style {
+            background: Some(iced::Background::Color(style::with_alpha(
+                style::M3_PRIMARY,
+                0.15,
+            ))),
+            border: Border {
+                radius: style::ROUNDING_SMALL.into(),
+                ..Border::default()
+            },
+            ..container::Style::default()
+        })
+        .into()
+}
+
 fn separator<'a>() -> Element<'a, Message> {
     container(Space::new().width(Length::Fill).height(1.0))
         .style(|_theme| container::Style {
@@ -162,6 +195,22 @@ pub fn view(network: &NetworkInfo) -> Element<'_, Message> {
     let mut content = column![header, separator()]
         .spacing(style::SPACING_NORMAL)
         .width(Length::Fill);
+
+    // Active wired / VPN / wireguard connections
+    if !network.active_connections.is_empty() {
+        let mut conn_list = column![text("Connections")
+            .size(style::FONT_SIZE_SMALLER)
+            .color(style::M3_ON_SURFACE_VARIANT)]
+        .spacing(2.0)
+        .width(Length::Fill);
+
+        for ac in &network.active_connections {
+            conn_list = conn_list.push(active_connection_entry(&ac.name, ac.icon_name));
+        }
+
+        content = content.push(conn_list);
+        content = content.push(separator());
+    }
 
     if network.wifi_enabled {
         // WiFi network list

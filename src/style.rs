@@ -106,6 +106,7 @@ pub const ICON_WIFI_1: &str = "\u{EBE4}";
 pub const ICON_WIFI_0: &str = "\u{F0B0}";
 pub const ICON_WIFI_OFF: &str = "\u{E648}";
 pub const ICON_CABLE: &str = "\u{EFE6}";
+pub const ICON_VPN: &str = "\u{E32A}";
 pub const ICON_DEPLOYED_CODE: &str = "\u{F720}";
 pub const ICON_NOTIFICATIONS: &str = "\u{E7F5}";
 pub const ICON_CLOSE: &str = "\u{E5CD}";
@@ -213,7 +214,7 @@ pub fn notif_popup_height(notif_count: usize) -> u32 {
     clippy::cast_precision_loss,
     clippy::as_conversions
 )]
-pub fn network_panel_height(ap_count: usize, wifi_enabled: bool) -> u32 {
+pub fn network_panel_height(ap_count: usize, active_conn_count: usize, wifi_enabled: bool) -> u32 {
     let container_padding = PADDING_LARGE * 2.0;
 
     // Header: icon + "Network" + toggle
@@ -221,26 +222,51 @@ pub fn network_panel_height(ap_count: usize, wifi_enabled: bool) -> u32 {
     // Separator
     let separator = 1.0;
 
+    let per_entry = PADDING_SMALL.mul_add(2.0, FONT_SIZE_NORMAL * LINE_HEIGHT);
+
+    // Active wired/VPN connections section
+    let active_section = if active_conn_count > 0 {
+        let label = FONT_SIZE_SMALLER * LINE_HEIGHT;
+        let ac = active_conn_count as f32;
+        let list = label + (ac - 1.0).max(0.0).mul_add(2.0, ac * per_entry);
+        // separator + spacing before wifi section
+        list + separator + SPACING_NORMAL
+    } else {
+        0.0
+    };
+
     if !wifi_enabled {
-        // Just header + separator + "Wi-Fi is off" text
+        // Header + separator + active connections + "Wi-Fi is off" text
         let off_text = FONT_SIZE_NORMAL * LINE_HEIGHT;
         let spacing = SPACING_NORMAL * 2.0;
         let safety = 20.0;
-        return (container_padding + header + separator + spacing + off_text + safety).ceil()
-            as u32;
+        return (container_padding
+            + header
+            + separator
+            + spacing
+            + active_section
+            + off_text
+            + safety)
+            .ceil() as u32;
     }
 
     // 2 gaps between header, separator, network_list
     let outer_spacing = SPACING_NORMAL * 2.0;
 
-    // "Wi-Fi networks" label + N entries (each entry now includes an action button)
+    // "Wi-Fi networks" label + N entries
     let label = FONT_SIZE_SMALLER * LINE_HEIGHT;
     let n = ap_count.max(1) as f32;
-    let per_entry = PADDING_SMALL.mul_add(2.0, FONT_SIZE_NORMAL * LINE_HEIGHT);
     let network_list = label + (n - 1.0).max(0.0).mul_add(2.0, n * per_entry);
 
     let safety = 20.0;
-    (container_padding + header + separator + outer_spacing + network_list + safety).ceil() as u32
+    (container_padding
+        + header
+        + separator
+        + outer_spacing
+        + active_section
+        + network_list
+        + safety)
+        .ceil() as u32
 }
 
 /// Compute the battery panel window height.
