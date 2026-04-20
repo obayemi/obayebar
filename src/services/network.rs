@@ -391,6 +391,22 @@ async fn find_wifi_device_and_ap(
         .unwrap_or_default();
 
     for dev_path in &devices {
+        // Check DeviceType == 2 (WiFi) to skip non-wireless devices
+        let Some(dev_proxy) = build_proxy(
+            conn,
+            "org.freedesktop.NetworkManager",
+            dev_path.as_str(),
+            "org.freedesktop.NetworkManager.Device",
+        )
+        .await
+        else {
+            continue;
+        };
+        let dev_type: u32 = dev_proxy.get_property("DeviceType").await.unwrap_or(0);
+        if dev_type != 2 {
+            continue;
+        }
+
         let Some(wifi_proxy) = build_proxy(
             conn,
             "org.freedesktop.NetworkManager",
@@ -415,7 +431,7 @@ async fn find_wifi_device_and_ap(
             }
         }
 
-        // Found a WiFi device but no matching AP — still use this device
+        // Confirmed WiFi device but no matching AP — still use this device
         return Some((dev_path.to_string(), "/".to_string()));
     }
     None
