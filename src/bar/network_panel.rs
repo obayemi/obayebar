@@ -6,12 +6,23 @@ use iced::{Alignment, Border, Element, Length};
 
 const MAX_VISIBLE_NETWORKS: usize = 8;
 
-fn network_entry<'a>(ssid: &'a str, icon_name: &'a str, is_active: bool) -> Element<'a, Message> {
+fn network_entry<'a>(
+    ssid: &'a str,
+    icon_name: &'a str,
+    is_active: bool,
+    is_connecting: bool,
+) -> Element<'a, Message> {
     let (bg, text_color, icon_color) = if is_active {
         (
             style::with_alpha(style::M3_PRIMARY, 0.15),
             style::M3_PRIMARY,
             style::M3_PRIMARY,
+        )
+    } else if is_connecting {
+        (
+            style::with_alpha(style::M3_TERTIARY, 0.10),
+            style::M3_TERTIARY,
+            style::M3_TERTIARY,
         )
     } else {
         (
@@ -26,49 +37,64 @@ fn network_entry<'a>(ssid: &'a str, icon_name: &'a str, is_active: bool) -> Elem
         .size(style::FONT_SIZE_NORMAL)
         .color(icon_color);
 
-    let label = text(ssid)
-        .size(style::FONT_SIZE_NORMAL)
-        .color(text_color)
+    let mut label_row = row![text(ssid).size(style::FONT_SIZE_NORMAL).color(text_color)]
+        .spacing(style::SPACING_SMALLER)
+        .align_y(Alignment::Center)
         .width(Length::Fill);
 
-    let (action_icon, action_msg) = if is_active {
-        (style::ICON_CLOSE, Message::NetworkDisconnect)
+    if is_connecting {
+        label_row = label_row.push(
+            text(style::ICON_AUTORENEW)
+                .font(style::ICON_FONT)
+                .size(style::FONT_SIZE_SMALL)
+                .color(style::M3_TERTIARY),
+        );
+    }
+
+    let action: Element<'a, Message> = if is_connecting {
+        // No action button while connecting
+        Space::new().width(0.0).into()
     } else {
-        (
-            style::ICON_WIFI_4,
-            Message::NetworkConnect(ssid.to_string()),
+        let (action_icon, action_msg) = if is_active {
+            (style::ICON_CLOSE, Message::NetworkDisconnect)
+        } else {
+            (
+                style::ICON_WIFI_4,
+                Message::NetworkConnect(ssid.to_string()),
+            )
+        };
+        let action_color = style::M3_ON_SURFACE_VARIANT;
+
+        button(
+            text(action_icon)
+                .font(style::ICON_FONT)
+                .size(style::FONT_SIZE_NORMAL)
+                .color(action_color)
+                .align_x(Alignment::Center),
         )
+        .on_press(action_msg)
+        .style(move |_theme, status| {
+            let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
+            button::Style {
+                background: Some(iced::Background::Color(if hover {
+                    style::with_alpha(style::M3_ON_SURFACE, 0.08)
+                } else {
+                    iced::Color::TRANSPARENT
+                })),
+                text_color: action_color,
+                border: Border {
+                    radius: style::ROUNDING_SMALL.into(),
+                    ..Border::default()
+                },
+                shadow: iced::Shadow::default(),
+                snap: false,
+            }
+        })
+        .padding(style::PADDING_SMALL)
+        .into()
     };
-    let action_color = style::M3_ON_SURFACE_VARIANT;
 
-    let action_btn = button(
-        text(action_icon)
-            .font(style::ICON_FONT)
-            .size(style::FONT_SIZE_NORMAL)
-            .color(action_color)
-            .align_x(Alignment::Center),
-    )
-    .on_press(action_msg)
-    .style(move |_theme, status| {
-        let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
-        button::Style {
-            background: Some(iced::Background::Color(if hover {
-                style::with_alpha(style::M3_ON_SURFACE, 0.08)
-            } else {
-                iced::Color::TRANSPARENT
-            })),
-            text_color: action_color,
-            border: Border {
-                radius: style::ROUNDING_SMALL.into(),
-                ..Border::default()
-            },
-            shadow: iced::Shadow::default(),
-            snap: false,
-        }
-    })
-    .padding(style::PADDING_SMALL);
-
-    let content = row![wifi_icon, label, action_btn]
+    let content = row![wifi_icon, label_row, action]
         .spacing(style::SPACING_SMALLER)
         .align_y(Alignment::Center)
         .width(Length::Fill);
@@ -183,7 +209,10 @@ fn connection_type_label(conn_type: &str) -> &'static str {
 }
 
 #[allow(clippy::too_many_lines)]
-pub fn view(network: &NetworkInfo) -> Element<'_, Message> {
+pub fn view<'a>(
+    network: &'a NetworkInfo,
+    connecting_ssid: Option<&'a str>,
+) -> Element<'a, Message> {
     let header_icon = if network.ethernet {
         style::ICON_CABLE
     } else {
@@ -254,14 +283,29 @@ pub fn view(network: &NetworkInfo) -> Element<'_, Message> {
 
             let active_ssid = network.wifi_ssid.as_deref();
 
-            // Show active network first, then others sorted by strength (already sorted by service)
+            // Show connecting network first, then active, then others
             let mut shown = 0;
+
+            // Connecting network at top (if not already active)
+            if let Some(c_ssid) = connecting_ssid {
+                if active_ssid != Some(c_ssid) {
+                    if let Some(ap) = network.access_points.iter().find(|a| a.ssid == c_ssid) {
+                        network_list =
+                            network_list.push(network_entry(&ap.ssid, ap.icon_name, false, true));
+                        shown += 1;
+                    }
+                }
+            }
+
+            // Active network
             if let Some(ssid) = active_ssid {
                 if let Some(ap) = network.access_points.iter().find(|a| a.ssid == ssid) {
-                    network_list = network_list.push(network_entry(&ap.ssid, ap.icon_name, true));
+                    network_list =
+                        network_list.push(network_entry(&ap.ssid, ap.icon_name, true, false));
                     shown += 1;
                 }
             }
+
             for ap in &network.access_points {
                 if shown >= MAX_VISIBLE_NETWORKS {
                     break;
@@ -269,7 +313,11 @@ pub fn view(network: &NetworkInfo) -> Element<'_, Message> {
                 if active_ssid == Some(ap.ssid.as_str()) {
                     continue;
                 }
-                network_list = network_list.push(network_entry(&ap.ssid, ap.icon_name, false));
+                if connecting_ssid == Some(ap.ssid.as_str()) {
+                    continue;
+                }
+                network_list =
+                    network_list.push(network_entry(&ap.ssid, ap.icon_name, false, false));
                 shown += 1;
             }
 

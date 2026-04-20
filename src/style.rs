@@ -128,6 +128,7 @@ pub const ICON_LANGUAGE: &str = "\u{E894}";
 pub const ICON_DESKTOP: &str = "\u{E30C}";
 pub const ICON_NOTIFICATIONS_NONE: &str = "\u{E7F5}";
 pub const ICON_SETTINGS: &str = "\u{E8B8}";
+pub const ICON_AUTORENEW: &str = "\u{E863}";
 
 pub const AUDIO_PANEL_WIDTH: u32 = 320;
 pub const NETWORK_PANEL_WIDTH: u32 = 300;

@@ -124,6 +124,7 @@ pub struct App {
     pub time: chrono::DateTime<chrono::Local>,
     pub battery: BatteryInfo,
     pub network: NetworkInfo,
+    pub connecting_ssid: Option<String>,
     pub audio: AudioInfo,
     pub bluetooth: BluetoothInfo,
     pub sysinfo: SysInfo,
@@ -190,6 +191,7 @@ impl App {
                 time: chrono::Local::now(),
                 battery: BatteryInfo::default(),
                 network: NetworkInfo::default(),
+                connecting_ssid: None,
                 audio: AudioInfo::default(),
                 bluetooth: BluetoothInfo::default(),
                 sysinfo: SysInfo::default(),
@@ -263,6 +265,12 @@ impl App {
                 Task::none()
             }
             Message::Network(info) => {
+                // Clear connecting state when connection changes
+                if let Some(ref ssid) = self.connecting_ssid {
+                    if info.wifi_ssid.as_deref() == Some(ssid) || !info.wifi {
+                        self.connecting_ssid = None;
+                    }
+                }
                 if self.network != info {
                     self.network = info;
                 }
@@ -398,10 +406,12 @@ impl App {
                 Task::none()
             }
             Message::NetworkConnect(ssid) => {
+                self.connecting_ssid = Some(ssid.clone());
                 services::network::connect_network(ssid);
                 Task::none()
             }
             Message::NetworkDisconnect => {
+                self.connecting_ssid = None;
                 services::network::disconnect_wifi();
                 Task::none()
             }
@@ -515,7 +525,7 @@ impl App {
         } else if self.audio_panel.is_window(id) {
             bar::audio_panel::view(&self.audio)
         } else if self.network_panel.is_window(id) {
-            bar::network_panel::view(&self.network)
+            bar::network_panel::view(&self.network, self.connecting_ssid.as_deref())
         } else if self.battery_panel.is_window(id) {
             bar::battery_panel::view(&self.battery)
         } else if self.bluetooth_panel.is_window(id) {
