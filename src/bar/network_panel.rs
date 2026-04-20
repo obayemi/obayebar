@@ -171,6 +171,18 @@ fn wifi_toggle(enabled: bool) -> Element<'static, Message> {
         .into()
 }
 
+fn connection_type_label(conn_type: &str) -> &'static str {
+    match conn_type {
+        "802-3-ethernet" => "Ethernet",
+        "wireguard" => "Wireguard",
+        "vpn" => "VPN",
+        "bridge" => "Bridge",
+        "bond" => "Bond",
+        _ => "Other",
+    }
+}
+
+#[allow(clippy::too_many_lines)]
 pub fn view(network: &NetworkInfo) -> Element<'_, Message> {
     let header_icon = if network.ethernet {
         style::ICON_CABLE
@@ -196,19 +208,32 @@ pub fn view(network: &NetworkInfo) -> Element<'_, Message> {
         .spacing(style::SPACING_NORMAL)
         .width(Length::Fill);
 
-    // Active wired / VPN / wireguard connections
+    // Active wired / VPN / wireguard connections, grouped by type
     if !network.active_connections.is_empty() {
-        let mut conn_list = column![text("Connections")
-            .size(style::FONT_SIZE_SMALLER)
-            .color(style::M3_ON_SURFACE_VARIANT)]
-        .spacing(2.0)
-        .width(Length::Fill);
-
+        let mut groups: Vec<(&str, Vec<&crate::services::network::ActiveConnectionInfo>)> =
+            Vec::new();
         for ac in &network.active_connections {
-            conn_list = conn_list.push(active_connection_entry(&ac.name, ac.icon_name));
+            if let Some(group) = groups.iter_mut().find(|(t, _)| *t == ac.conn_type) {
+                group.1.push(ac);
+            } else {
+                groups.push((&ac.conn_type, vec![ac]));
+            }
         }
 
-        content = content.push(conn_list);
+        for (conn_type, conns) in &groups {
+            let label = connection_type_label(conn_type);
+            let mut section = column![text(label)
+                .size(style::FONT_SIZE_SMALLER)
+                .color(style::M3_ON_SURFACE_VARIANT)]
+            .spacing(2.0)
+            .width(Length::Fill);
+
+            for ac in conns {
+                section = section.push(active_connection_entry(&ac.name, ac.icon_name));
+            }
+
+            content = content.push(section);
+        }
         content = content.push(separator());
     }
 

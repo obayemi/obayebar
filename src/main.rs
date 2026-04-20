@@ -322,11 +322,9 @@ impl App {
             Message::NetworkPanelOpen(monitor) => {
                 let close = self.close_all_panels();
                 let ap_count = self.network.access_points.len().clamp(1, 8);
-                let height = style::network_panel_height(
-                    ap_count,
-                    self.network.active_connections.len(),
-                    self.network.wifi_enabled,
-                );
+                let conn_groups = connection_type_groups(&self.network.active_connections);
+                let height =
+                    style::network_panel_height(ap_count, &conn_groups, self.network.wifi_enabled);
                 let open = self
                     .network_panel
                     .open(style::NETWORK_PANEL_WIDTH, height, monitor);
@@ -609,6 +607,19 @@ impl App {
         // Resize to fit remaining notifications
         self.ensure_popup_window()
     }
+}
+
+/// Count connections per type group (preserving insertion order).
+fn connection_type_groups(conns: &[services::network::ActiveConnectionInfo]) -> Vec<usize> {
+    let mut groups: Vec<(&str, usize)> = Vec::new();
+    for ac in conns {
+        if let Some(g) = groups.iter_mut().find(|(t, _)| *t == ac.conn_type) {
+            g.1 += 1;
+        } else {
+            groups.push((&ac.conn_type, 1));
+        }
+    }
+    groups.into_iter().map(|(_, c)| c).collect()
 }
 
 fn theme_fn(_app: &App, _id: window::Id) -> Theme {

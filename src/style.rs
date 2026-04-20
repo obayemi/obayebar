@@ -214,7 +214,12 @@ pub fn notif_popup_height(notif_count: usize) -> u32 {
     clippy::cast_precision_loss,
     clippy::as_conversions
 )]
-pub fn network_panel_height(ap_count: usize, active_conn_count: usize, wifi_enabled: bool) -> u32 {
+/// Compute the network panel height. Each entry in `conn_type_groups` is a per-type count.
+pub fn network_panel_height(
+    ap_count: usize,
+    conn_type_groups: &[usize],
+    wifi_enabled: bool,
+) -> u32 {
     let container_padding = PADDING_LARGE * 2.0;
 
     // Header: icon + "Network" + toggle
@@ -223,16 +228,22 @@ pub fn network_panel_height(ap_count: usize, active_conn_count: usize, wifi_enab
     let separator = 1.0;
 
     let per_entry = PADDING_SMALL.mul_add(2.0, FONT_SIZE_NORMAL * LINE_HEIGHT);
+    let label_height = FONT_SIZE_SMALLER * LINE_HEIGHT;
 
-    // Active wired/VPN connections section
-    let active_section = if active_conn_count > 0 {
-        let label = FONT_SIZE_SMALLER * LINE_HEIGHT;
-        let ac = active_conn_count as f32;
-        let list = label + (ac - 1.0).max(0.0).mul_add(2.0, ac * per_entry);
-        // separator + spacing before wifi section
-        list + separator + SPACING_NORMAL
-    } else {
+    // Active connections: each type group has a label + entries, groups separated by spacing
+    let active_section = if conn_type_groups.is_empty() {
         0.0
+    } else {
+        let mut h = 0.0;
+        for (i, &count) in conn_type_groups.iter().enumerate() {
+            if i > 0 {
+                h += SPACING_NORMAL;
+            }
+            let n = count as f32;
+            h += label_height + (n - 1.0).max(0.0).mul_add(2.0, n * per_entry);
+        }
+        // separator + spacing after all groups
+        h + separator + SPACING_NORMAL
     };
 
     if !wifi_enabled {
