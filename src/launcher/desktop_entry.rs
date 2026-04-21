@@ -15,15 +15,12 @@ pub struct DesktopEntry {
     pub search_text: String,
 }
 
-/// Cached launcher data persisted across launches (single file).
+/// Cached launcher data (disposable, rebuilt from desktop entries on cache miss).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LauncherCache {
     pub entries: Vec<DesktopEntry>,
     /// Resolved icon filesystem paths keyed by `desktop_id`.
     pub icon_paths: HashMap<String, PathBuf>,
-    /// Launch frequency counts keyed by `desktop_id`.
-    #[serde(default)]
-    pub launch_counts: HashMap<String, u32>,
 }
 
 /// Discover and parse all visible `.desktop` application entries from XDG directories.
@@ -73,12 +70,24 @@ pub fn resolve_all_icon_paths(entries: &[DesktopEntry]) -> HashMap<String, PathB
     paths
 }
 
-// --- Cache persistence ---
+// --- Persistence ---
 
 fn cache_dir() -> Option<PathBuf> {
     let base = std::env::var("XDG_CACHE_HOME")
         .ok()
         .or_else(|| std::env::var("HOME").ok().map(|h| format!("{h}/.cache")))
+        .map(PathBuf::from)?;
+    Some(base.join("obayebar"))
+}
+
+fn data_dir() -> Option<PathBuf> {
+    let base = std::env::var("XDG_DATA_HOME")
+        .ok()
+        .or_else(|| {
+            std::env::var("HOME")
+                .ok()
+                .map(|h| format!("{h}/.local/share"))
+        })
         .map(PathBuf::from)?;
     Some(base.join("obayebar"))
 }
@@ -89,7 +98,7 @@ pub fn icon_cache_dir() -> Option<PathBuf> {
     cache_dir().map(|d| d.join("icons"))
 }
 
-/// Load cached launcher data from disk.
+/// Load cached launcher data from disk (disposable cache).
 #[must_use]
 pub fn load_cache() -> LauncherCache {
     let Some(dir) = cache_dir() else {
@@ -99,20 +108,7 @@ pub fn load_cache() -> LauncherCache {
     let Ok(data) = std::fs::read_to_string(&path) else {
         return LauncherCache::default();
     };
-    let mut cache: LauncherCache = serde_json::from_str(&data).unwrap_or_default();
-
-    // Migrate launch counts from old separate file
-    if cache.launch_counts.is_empty() {
-        let old_path = dir.join("launch-history.json");
-        if let Ok(old_data) = std::fs::read_to_string(&old_path) {
-            if let Ok(counts) = serde_json::from_str(&old_data) {
-                cache.launch_counts = counts;
-                std::fs::remove_file(&old_path).ok();
-            }
-        }
-    }
-
-    cache
+    serde_json::from_str(&data).unwrap_or_default()
 }
 
 /// Save launcher cache to disk.
@@ -129,6 +125,66 @@ pub fn save_cache(cache: &LauncherCache) {
     let path = dir.join("launcher.json");
     if let Err(err) = std::fs::write(&path, data) {
         log::warn!("Failed to write launcher cache: {err}");
+    }
+}
+
+/// Load launch frequency counts from XDG data directory (persistent user data).
+#[must_use]
+pub fn load_launch_counts() -> HashMap<String, u32> {
+    // Try XDG_DATA_HOME first
+    if let Some(dir) = data_dir() {
+        let path = dir.join("launch-counts.json");
+        if let Ok(data) = std::fs::read_to_string(&path) {
+            if let Ok(counts) = serde_json::from_str(&data) {
+                return counts;
+            }
+        }
+    }
+
+    // Migrate from old cache locations
+    if let Some(dir) = cache_dir() {
+        // Try old launch-history.json
+        let old_path = dir.join("launch-history.json");
+        if let Ok(data) = std::fs::read_to_string(&old_path) {
+            if let Ok(counts) = serde_json::from_str::<HashMap<String, u32>>(&data) {
+                std::fs::remove_file(&old_path).ok();
+                return counts;
+            }
+        }
+        // Try old launcher.json that had embedded launch_counts
+        let cache_path = dir.join("launcher.json");
+        if let Ok(data) = std::fs::read_to_string(&cache_path) {
+            #[derive(Deserialize)]
+            struct OldCache {
+                #[serde(default)]
+                launch_counts: HashMap<String, u32>,
+            }
+            if let Ok(old) = serde_json::from_str::<OldCache>(&data) {
+                if !old.launch_counts.is_empty() {
+                    return old.launch_counts;
+                }
+            }
+        }
+    }
+
+    HashMap::new()
+}
+
+/// Save launch frequency counts to XDG data directory.
+#[allow(clippy::implicit_hasher)]
+pub fn save_launch_counts(counts: &HashMap<String, u32>) {
+    let Some(dir) = data_dir() else {
+        return;
+    };
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let Ok(data) = serde_json::to_string(counts) else {
+        return;
+    };
+    let path = dir.join("launch-counts.json");
+    if let Err(err) = std::fs::write(&path, data) {
+        log::warn!("Failed to write launch counts: {err}");
     }
 }
 
@@ -439,20 +495,20 @@ mod tests {
                 search_text: "test".into(),
             }],
             icon_paths: HashMap::from([("test.desktop".into(), PathBuf::from("/icon.png"))]),
-            launch_counts: HashMap::from([("test.desktop".into(), 5)]),
         };
         let json = serde_json::to_string(&cache).unwrap_or_default();
         let loaded: LauncherCache = serde_json::from_str(&json).unwrap_or_default();
         assert_eq!(loaded.entries.len(), 1);
         assert_eq!(loaded.icon_paths.len(), 1);
-        assert_eq!(loaded.launch_counts.get("test.desktop").copied(), Some(5));
     }
 
     #[test]
-    fn cache_backwards_compatible_without_launch_counts() {
-        // Old cache format without launch_counts field should deserialize fine
-        let json = r#"{"entries":[],"icon_paths":{}}"#;
-        let loaded: LauncherCache = serde_json::from_str(json).unwrap_or_default();
-        assert!(loaded.launch_counts.is_empty());
+    fn launch_counts_round_trip() {
+        let counts: HashMap<String, u32> =
+            HashMap::from([("firefox.desktop".into(), 42), ("code.desktop".into(), 7)]);
+        let json = serde_json::to_string(&counts).unwrap_or_default();
+        let loaded: HashMap<String, u32> = serde_json::from_str(&json).unwrap_or_default();
+        assert_eq!(loaded.get("firefox.desktop").copied(), Some(42));
+        assert_eq!(loaded.get("code.desktop").copied(), Some(7));
     }
 }

@@ -148,11 +148,10 @@ impl Launcher {
                 self.update_filter();
                 self.selected = 0;
 
-                // Save updated cache (preserves launch_counts)
+                // Save updated cache
                 desktop_entry::save_cache(&desktop_entry::LauncherCache {
                     entries: self.entries.clone(),
                     icon_paths: self.icon_paths.clone(),
-                    launch_counts: self.launch_counts.clone(),
                 });
 
                 // Remove icons for entries that no longer exist
@@ -451,14 +450,10 @@ impl Launcher {
         let exec = entry.exec.clone();
         let name = entry.name.clone();
 
-        // Track launch frequency and persist full cache
+        // Track launch frequency
         let count = self.launch_counts.entry(desktop_id).or_insert(0);
         *count = count.saturating_add(1);
-        desktop_entry::save_cache(&desktop_entry::LauncherCache {
-            entries: self.entries.clone(),
-            icon_paths: self.icon_paths.clone(),
-            launch_counts: self.launch_counts.clone(),
-        });
+        desktop_entry::save_launch_counts(&self.launch_counts);
 
         if let Err(err) = desktop_entry::launch(&exec) {
             log::error!("Failed to launch {name}: {err}");
