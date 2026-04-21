@@ -1,7 +1,7 @@
 use crate::services::notifications::{NotificationData, Urgency};
 use crate::style;
 use crate::Message;
-use iced::widget::{button, column, container, row, text, Space};
+use iced::widget::{button, column, container, mouse_area, row, text, Space};
 use iced::{Alignment, Border, Element, Length};
 
 /// Icon strip width matches the two-line card height so it renders as a square.
@@ -97,9 +97,15 @@ fn notification_card(notif: &NotificationData) -> Element<'_, Message> {
         .width(Length::Fill)
         .height(Length::Shrink);
 
-    container(card_row)
+    let card = container(card_row)
         .width(Length::Fill)
-        .style(container_style)
+        .style(container_style);
+
+    mouse_area(card)
+        .on_press(Message::NotifFocusApp {
+            id: notif_id,
+            app_name: notif.app_name.clone(),
+        })
         .into()
 }
 

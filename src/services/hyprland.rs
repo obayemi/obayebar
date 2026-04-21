@@ -116,6 +116,20 @@ pub fn switch_workspace(id: i32) {
     });
 }
 
+pub fn focus_window(app_name: &str) {
+    let app_name = app_name.to_lowercase();
+    tokio::spawn(async move {
+        let Some(dir) = socket_dir() else {
+            return;
+        };
+        let sock_path = dir.join(".socket.sock");
+        if let Ok(mut stream) = UnixStream::connect(&sock_path).await {
+            let cmd = format!("dispatch focuswindow {app_name}");
+            let _ = stream.write_all(cmd.as_bytes()).await;
+        }
+    });
+}
+
 enum State {
     Starting,
     Streaming(BufReader<UnixStream>),

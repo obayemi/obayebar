@@ -147,6 +147,7 @@ pub enum Message {
     TrayClick(String),
     Notif(NotifEvent),
     NotifDismiss(u32),
+    NotifFocusApp { id: u32, app_name: String },
     AudioPanelOpen(Option<String>),
     NetworkPanelOpen(Option<String>),
     BatteryPanelOpen(Option<String>),
@@ -317,6 +318,11 @@ impl App {
             },
             Message::NotifDismiss(id) => {
                 self.popup_notifications.retain(|n| n.id != id);
+                self.maybe_close_popup_window()
+            }
+            Message::NotifFocusApp { id, app_name } => {
+                self.popup_notifications.retain(|n| n.id != id);
+                services::hyprland::focus_window(&app_name);
                 self.maybe_close_popup_window()
             }
             Message::AudioPanelOpen(monitor) => {
