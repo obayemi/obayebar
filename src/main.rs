@@ -321,15 +321,16 @@ impl App {
                 self.maybe_close_popup_window()
             }
             Message::NotifActivate(id) => {
-                // Find the default action key, falling back to "default"
-                let action_key = self
-                    .popup_notifications
-                    .iter()
-                    .find(|n| n.id == id)
+                let notif = self.popup_notifications.iter().find(|n| n.id == id);
+                let action_key = notif
                     .and_then(|n| n.actions.first())
                     .map_or_else(|| "default".to_string(), |(key, _)| key.clone());
+                let app_name = notif.map(|n| n.app_name.clone());
                 self.popup_notifications.retain(|n| n.id != id);
                 services::notifications::invoke_action(id, action_key);
+                if let Some(name) = app_name {
+                    services::hyprland::focus_window(&name);
+                }
                 self.maybe_close_popup_window()
             }
             Message::AudioPanelOpen(monitor) => {
