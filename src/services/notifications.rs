@@ -1,7 +1,7 @@
 use futures_util::Stream;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use zbus::object_server::SignalEmitter;
 
 #[derive(Debug, Clone)]
@@ -30,6 +30,9 @@ pub enum NotifEvent {
     Received(NotificationData),
     Closed(u32),
 }
+
+/// Stored D-Bus connection for emitting signals from outside the server handler.
+static NOTIF_CONN: OnceLock<zbus::Connection> = OnceLock::new();
 
 struct NotificationServer {
     sender: async_channel::Sender<NotifEvent>,
@@ -143,6 +146,32 @@ impl NotificationServer {
     ) -> zbus::Result<()>;
 }
 
+/// Emit `ActionInvoked` signal for the "default" action, then close the notification.
+pub fn invoke_action(id: u32, action_key: String) {
+    tokio::spawn(async move {
+        let Some(conn) = NOTIF_CONN.get() else {
+            log::warn!("notifications: no D-Bus connection for ActionInvoked");
+            return;
+        };
+        let iface_ref = conn
+            .object_server()
+            .interface::<_, NotificationServer>("/org/freedesktop/Notifications")
+            .await;
+        let Ok(iface_ref) = iface_ref else {
+            log::warn!("notifications: could not get interface ref for signals");
+            return;
+        };
+        let emitter = iface_ref.signal_emitter();
+        if let Err(e) = NotificationServer::action_invoked(emitter, id, &action_key).await {
+            log::warn!("notifications: ActionInvoked signal failed: {e}");
+        }
+        // Reason 2 = dismissed by user
+        if let Err(e) = NotificationServer::notification_closed(emitter, id, 2).await {
+            log::warn!("notifications: NotificationClosed signal failed: {e}");
+        }
+    });
+}
+
 async fn run_server(sender: async_channel::Sender<NotifEvent>) {
     let server = NotificationServer {
         sender,
@@ -168,6 +197,8 @@ async fn run_server(sender: async_channel::Sender<NotifEvent>) {
     };
 
     log::info!("Notification daemon running on D-Bus");
+
+    let _ = NOTIF_CONN.set(conn.clone());
 
     let _conn = conn;
     std::future::pending::<()>().await;

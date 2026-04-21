@@ -147,7 +147,7 @@ pub enum Message {
     TrayClick(String),
     Notif(NotifEvent),
     NotifDismiss(u32),
-    NotifFocusApp { id: u32, app_name: String },
+    NotifActivate(u32),
     AudioPanelOpen(Option<String>),
     NetworkPanelOpen(Option<String>),
     BatteryPanelOpen(Option<String>),
@@ -320,9 +320,16 @@ impl App {
                 self.popup_notifications.retain(|n| n.id != id);
                 self.maybe_close_popup_window()
             }
-            Message::NotifFocusApp { id, app_name } => {
+            Message::NotifActivate(id) => {
+                // Find the default action key, falling back to "default"
+                let action_key = self
+                    .popup_notifications
+                    .iter()
+                    .find(|n| n.id == id)
+                    .and_then(|n| n.actions.first())
+                    .map_or_else(|| "default".to_string(), |(key, _)| key.clone());
                 self.popup_notifications.retain(|n| n.id != id);
-                services::hyprland::focus_window(&app_name);
+                services::notifications::invoke_action(id, action_key);
                 self.maybe_close_popup_window()
             }
             Message::AudioPanelOpen(monitor) => {

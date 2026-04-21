@@ -102,10 +102,7 @@ fn notification_card(notif: &NotificationData) -> Element<'_, Message> {
         .style(container_style);
 
     mouse_area(card)
-        .on_press(Message::NotifFocusApp {
-            id: notif_id,
-            app_name: notif.app_name.clone(),
-        })
+        .on_press(Message::NotifActivate(notif_id))
         .into()
 }
 
