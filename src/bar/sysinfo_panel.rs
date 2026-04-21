@@ -1,9 +1,9 @@
 use crate::services::sysinfo::{self, SysInfo};
-use crate::style;
 use crate::Message;
 use iced::widget::canvas::{self, path::Arc, Frame, Geometry, LineCap, Path, Stroke};
 use iced::widget::{column, container, mouse_area, row, text, Stack};
 use iced::{Alignment, Element, Length, Padding, Point, Radians, Rectangle, Renderer, Theme};
+use obayebar::style;
 
 const GAUGE_SIZE: f32 = 90.0;
 const ARC_WIDTH: f32 = 7.0;

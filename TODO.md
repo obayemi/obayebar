@@ -1,4 +1,4 @@
-- [ ] app launcher
+- [x] app launcher
 - [ ] iddle inhibitor thing
 - [ ] 
 - [.] clic on notif focuses the app

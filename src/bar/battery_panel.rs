@@ -1,11 +1,11 @@
 use crate::services::battery::BatteryInfo;
-use crate::style;
 use crate::Message;
 use iced::widget::canvas::{self, path::Arc, Frame, Geometry, Path, Stroke};
 use iced::widget::{button, column, container, mouse_area, row, text, Space, Stack};
 use iced::{
     Alignment, Border, Element, Length, Padding, Point, Radians, Rectangle, Renderer, Theme,
 };
+use obayebar::style;
 
 const GAUGE_SIZE: f32 = 140.0;
 const ARC_WIDTH: f32 = 10.0;

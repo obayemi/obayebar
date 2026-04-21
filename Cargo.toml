@@ -11,6 +11,18 @@ readme = "README.md"
 keywords = ["wayland", "bar", "status-bar", "hyprland"]
 categories = ["gui"]
 
+[lib]
+name = "obayebar"
+path = "src/lib.rs"
+
+[[bin]]
+name = "obayebar"
+path = "src/main.rs"
+
+[[bin]]
+name = "obayebar-launcher"
+path = "src/bin/launcher.rs"
+
 [dependencies]
 iced = { version = "0.14.0", default-features = false, features = ["wgpu", "crisp", "linux-theme-detection", "wayland", "tokio", "canvas", "image-without-codecs", "lazy"] }
 iced_layershell = "0.17.1"
@@ -30,6 +42,7 @@ wayland-backend = { version = "0.3", features = ["log"] }
 tokio-stream = "0.1.18"
 nvml-wrapper = "0.12.1"
 fontdb = "0.23.0"
+fuzzy-matcher = "0.3"
 
 [lints.rust]
 unsafe_code = "forbid"

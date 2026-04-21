@@ -40,7 +40,7 @@ impl Default for AudioInfo {
         Self {
             volume: 0.0,
             muted: false,
-            icon_name: crate::style::ICON_VOLUME_OFF,
+            icon_name: obayebar::style::ICON_VOLUME_OFF,
             sinks: Vec::new(),
             default_sink_name: None,
         }
@@ -56,17 +56,17 @@ pub enum AudioCommand {
 
 pub fn volume_icon(volume: f32, muted: bool) -> &'static str {
     if muted {
-        return crate::style::ICON_VOLUME_OFF;
+        return obayebar::style::ICON_VOLUME_OFF;
     }
     let pct = volume * 100.0;
     if pct >= 66.0 {
-        crate::style::ICON_VOLUME_UP
+        obayebar::style::ICON_VOLUME_UP
     } else if pct >= 33.0 {
-        crate::style::ICON_VOLUME_DOWN
+        obayebar::style::ICON_VOLUME_DOWN
     } else if pct >= 1.0 {
-        crate::style::ICON_VOLUME_MUTE
+        obayebar::style::ICON_VOLUME_MUTE
     } else {
-        crate::style::ICON_VOLUME_OFF
+        obayebar::style::ICON_VOLUME_OFF
     }
 }
 

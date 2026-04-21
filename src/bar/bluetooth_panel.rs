@@ -1,8 +1,8 @@
 use crate::services::bluetooth::BluetoothInfo;
-use crate::style;
 use crate::Message;
 use iced::widget::{button, column, container, mouse_area, row, text, toggler, Space};
 use iced::{Alignment, Border, Element, Length, Padding};
+use obayebar::style;
 
 fn separator<'a>() -> Element<'a, Message> {
     container(Space::new().width(Length::Fill).height(1.0))

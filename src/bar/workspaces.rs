@@ -1,10 +1,10 @@
 use crate::services::hyprland::WorkspaceInfo;
-use crate::style;
 use crate::Message;
 use iced::mouse;
 use iced::widget::canvas::{self, Cache, Frame, Geometry, Path};
 use iced::widget::container;
 use iced::{alignment, Element, Length, Point, Rectangle, Renderer, Size, Theme};
+use obayebar::style;
 
 /// Spring-based animation state for the workspace indicator
 #[derive(Debug, Clone)]

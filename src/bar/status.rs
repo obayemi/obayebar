@@ -3,11 +3,11 @@ use crate::services::battery::BatteryInfo;
 use crate::services::bluetooth::BluetoothInfo;
 use crate::services::network::NetworkInfo;
 use crate::services::sysinfo::SysInfo;
-use crate::style;
 use crate::Message;
 use iced::widget::canvas::{self, Frame, Geometry, Path, Stroke};
 use iced::widget::{column, container, mouse_area, text};
 use iced::{Alignment, Color, Element, Length, Pixels, Point, Rectangle, Renderer, Theme};
+use obayebar::style;
 
 /// Threshold above which usage is considered elevated.
 const ELEVATED_THRESHOLD: f32 = 70.0;

@@ -1,7 +1,7 @@
-use crate::style;
 use crate::Message;
 use iced::widget::{container, text};
 use iced::{Alignment, Element, Length};
+use obayebar::style;
 
 pub fn view() -> Element<'static, Message> {
     let icon = text(style::ICON_DEPLOYED_CODE)

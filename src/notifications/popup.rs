@@ -1,8 +1,8 @@
 use crate::services::notifications::{NotificationData, Urgency};
-use crate::style;
 use crate::Message;
 use iced::widget::{button, column, container, mouse_area, row, text, Space};
 use iced::{Alignment, Border, Element, Length};
+use obayebar::style;
 
 /// Icon strip width matches the two-line card height so it renders as a square.
 /// summary (13*1.3) + spacing (2) + body (11*1.3) + padding (10*2) ≈ 53

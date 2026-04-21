@@ -1,8 +1,8 @@
 use crate::services::network::NetworkInfo;
-use crate::style;
 use crate::Message;
 use iced::widget::{button, column, container, mouse_area, row, text, toggler, Space};
 use iced::{Alignment, Border, Element, Length};
+use obayebar::style;
 
 const MAX_VISIBLE_NETWORKS: usize = 8;
 

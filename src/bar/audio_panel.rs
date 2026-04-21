@@ -1,8 +1,8 @@
 use crate::services::audio::AudioInfo;
-use crate::style;
 use crate::Message;
 use iced::widget::{button, column, container, mouse_area, row, slider, text, Space};
 use iced::{Alignment, Border, Element, Length};
+use obayebar::style;
 
 fn separator<'a>() -> Element<'a, Message> {
     container(Space::new().width(Length::Fill).height(1.0))

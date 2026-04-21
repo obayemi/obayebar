@@ -1,8 +1,8 @@
-use crate::style;
 use crate::Message;
 use chrono::{DateTime, Local, Timelike};
 use iced::widget::{column, container, text, Space};
 use iced::{Alignment, Background, Element, Length};
+use obayebar::style;
 
 pub fn view(time: &DateTime<Local>) -> Element<'static, Message> {
     let day_abbr = time.format("%a").to_string();

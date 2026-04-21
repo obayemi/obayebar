@@ -3,8 +3,8 @@ use iced_layershell::reexport::{
     Anchor, KeyboardInteractivity, Layer, NewLayerShellSettings, OutputOption,
 };
 
-use crate::style;
 use crate::Message;
+use obayebar::style;
 
 #[derive(Debug)]
 pub struct Panel {

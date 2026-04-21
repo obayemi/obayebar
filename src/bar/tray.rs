@@ -1,8 +1,8 @@
 use crate::services::tray::TrayItemInfo;
-use crate::style;
 use crate::Message;
 use iced::widget::{button, column, container, text, Space};
 use iced::{Alignment, Element, Length};
+use obayebar::style;
 
 pub fn view(items: &[TrayItemInfo]) -> Element<'static, Message> {
     if items.is_empty() {

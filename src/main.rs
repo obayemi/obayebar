@@ -2,7 +2,8 @@ mod bar;
 mod notifications;
 mod panel;
 mod services;
-mod style;
+
+use obayebar::style;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -414,7 +415,7 @@ impl App {
             Message::NetworkSetWifiEnabled(enabled) => {
                 self.network.wifi_enabled = enabled;
                 if !enabled {
-                    self.network.icon_name = crate::style::ICON_WIFI_OFF;
+                    self.network.icon_name = obayebar::style::ICON_WIFI_OFF;
                 }
                 services::network::set_wifi_enabled(enabled);
                 Task::none()

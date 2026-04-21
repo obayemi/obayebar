@@ -1,4 +1,7 @@
 #![allow(dead_code)]
+// Style functions are typically passed as arguments to iced widget builders;
+// #[must_use] adds no value and clutters every function signature.
+#![allow(clippy::must_use_candidate)]
 
 use iced::widget::container;
 use iced::{Background, Border, Color, Font};

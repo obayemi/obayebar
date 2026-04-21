@@ -24,14 +24,14 @@ impl Default for BluetoothInfo {
         Self {
             powered: false,
             discovering: false,
-            icon_name: crate::style::ICON_BLUETOOTH_DISABLED,
+            icon_name: obayebar::style::ICON_BLUETOOTH_DISABLED,
             devices: Vec::new(),
         }
     }
 }
 
 const fn bt_icon(powered: bool, has_connected: bool) -> &'static str {
-    use crate::style;
+    use obayebar::style;
     if !powered {
         style::ICON_BLUETOOTH_DISABLED
     } else if has_connected {
@@ -68,7 +68,7 @@ async fn read_bluetooth_dbus(conn: &zbus::Connection) -> BluetoothInfo {
         return BluetoothInfo {
             powered: false,
             discovering: false,
-            icon_name: crate::style::ICON_BLUETOOTH_DISABLED,
+            icon_name: obayebar::style::ICON_BLUETOOTH_DISABLED,
             devices: Vec::new(),
         };
     }

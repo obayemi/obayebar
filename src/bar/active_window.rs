@@ -1,9 +1,9 @@
 use crate::services::hyprland::WindowInfo;
-use crate::style;
 use crate::Message;
 use ab_glyph::{Font, FontArc, ScaleFont};
 use iced::widget::{container, image};
 use iced::{Alignment, Element, Length};
+use obayebar::style;
 
 /// Truncate a string to fit within `max_chars`, adding ellipsis
 fn truncate_with_ellipsis(s: &str, max_chars: usize) -> String {
