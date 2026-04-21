@@ -148,6 +148,75 @@ fn parse_desktop_file(path: &Path) -> Option<DesktopEntry> {
     })
 }
 
+/// Resolve an icon name to an actual file path by searching XDG icon directories.
+///
+/// Supports absolute paths, and searches hicolor theme directories and pixmaps
+/// for PNG files at standard sizes.
+#[must_use]
+pub fn resolve_icon_path(icon_name: &str) -> Option<PathBuf> {
+    // Absolute path: use directly if it exists
+    if icon_name.starts_with('/') {
+        let path = PathBuf::from(icon_name);
+        return path.exists().then_some(path);
+    }
+
+    let sizes = [
+        "48x48", "64x64", "32x32", "128x128", "256x256", "24x24", "96x96", "512x512",
+    ];
+    let extensions = ["png"];
+
+    for dir in &icon_theme_dirs() {
+        for size in &sizes {
+            for ext in &extensions {
+                let path = dir.join(size).join("apps").join(format!("{icon_name}.{ext}"));
+                if path.exists() {
+                    return Some(path);
+                }
+            }
+        }
+    }
+
+    // Check pixmaps directories
+    let pixmap_dirs = [
+        PathBuf::from("/usr/share/pixmaps"),
+        PathBuf::from("/run/current-system/sw/share/pixmaps"),
+    ];
+    for dir in &pixmap_dirs {
+        for ext in &extensions {
+            let path = dir.join(format!("{icon_name}.{ext}"));
+            if path.exists() {
+                return Some(path);
+            }
+        }
+    }
+
+    None
+}
+
+/// Collect icon theme directories (hicolor) from standard XDG locations.
+fn icon_theme_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+
+    if let Ok(home) = std::env::var("HOME") {
+        dirs.push(PathBuf::from(format!("{home}/.local/share/icons/hicolor")));
+        dirs.push(PathBuf::from(format!("{home}/.icons/hicolor")));
+    }
+
+    let xdg_dirs = std::env::var("XDG_DATA_DIRS")
+        .unwrap_or_else(|_| "/usr/local/share:/usr/share".to_string());
+    for dir in xdg_dirs.split(':') {
+        if !dir.is_empty() {
+            dirs.push(PathBuf::from(format!("{dir}/icons/hicolor")));
+        }
+    }
+
+    dirs.push(PathBuf::from(
+        "/run/current-system/sw/share/icons/hicolor",
+    ));
+
+    dirs
+}
+
 /// Strip XDG field codes (%f, %F, %u, %U, etc.) from an Exec value.
 fn sanitize_exec(exec: &str) -> String {
     exec.split_whitespace()

@@ -1,6 +1,7 @@
 pub mod desktop_entry;
 
 use std::cmp::Reverse;
+use std::collections::HashMap;
 
 use crate::style;
 use desktop_entry::DesktopEntry;
@@ -8,13 +9,25 @@ use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
 use iced::event::{self, Event};
 use iced::keyboard::{key::Named, Key};
-use iced::widget::{button, column, container, scrollable, text, text_input, Column, Space};
+use iced::widget::{
+    button, column, container, image, mouse_area, row, scrollable, text, text_input, Column, Id,
+    Space,
+};
 use iced::{Alignment, Border, Color, Element, Length, Subscription, Task, Theme};
 use iced_layershell::to_layer_message;
 
 const LAUNCHER_WIDTH: u32 = 600;
 const LAUNCHER_HEIGHT: u32 = 500;
 const MAX_VISIBLE_ENTRIES: usize = 50;
+const ICON_SIZE: u32 = 24;
+
+const fn search_input_id() -> Id {
+    Id::new("launcher-search")
+}
+
+fn focus_search() -> Task<Message> {
+    iced::widget::operation::focus(search_input_id())
+}
 
 pub struct Launcher {
     query: String,
@@ -24,6 +37,8 @@ pub struct Launcher {
     /// Index into `filtered` for the currently selected entry.
     selected: usize,
     matcher: SkimMatcherV2,
+    /// Pre-loaded icon handles keyed by entry index.
+    icons: HashMap<usize, image::Handle>,
 }
 
 impl std::fmt::Debug for Launcher {
@@ -33,6 +48,7 @@ impl std::fmt::Debug for Launcher {
             .field("entries", &self.entries.len())
             .field("filtered", &self.filtered.len())
             .field("selected", &self.selected)
+            .field("icons", &self.icons.len())
             .finish_non_exhaustive()
     }
 }
@@ -42,12 +58,14 @@ impl std::fmt::Debug for Launcher {
 pub enum Message {
     SearchChanged(String),
     Launch(usize),
+    Close,
     IcedEvent(Event),
 }
 
 impl Launcher {
     pub fn new(entries: Vec<DesktopEntry>) -> (Self, Task<Message>) {
         let filtered: Vec<usize> = (0..entries.len()).collect();
+        let icons = load_icons(&entries);
         (
             Self {
                 query: String::new(),
@@ -55,8 +73,9 @@ impl Launcher {
                 filtered,
                 selected: 0,
                 matcher: SkimMatcherV2::default(),
+                icons,
             },
-            iced::widget::operation::focus_next(),
+            focus_search(),
         )
     }
 
@@ -71,11 +90,14 @@ impl Launcher {
                 self.query = query;
                 self.update_filter();
                 self.selected = 0;
-                Task::none()
+                focus_search()
             }
             Message::Launch(index) => {
                 self.launch_entry(index);
                 Task::none()
+            }
+            Message::Close => {
+                std::process::exit(0);
             }
             Message::IcedEvent(event) => self.handle_event(event),
             _ => Task::none(),
@@ -84,6 +106,7 @@ impl Launcher {
 
     pub fn view(&self) -> Element<'_, Message> {
         let search = text_input("Search applications...", &self.query)
+            .id(search_input_id())
             .on_input(Message::SearchChanged)
             .size(style::FONT_SIZE_LARGE)
             .padding(style::PADDING_NORMAL);
@@ -119,29 +142,37 @@ impl Launcher {
                     0.95,
                 ))),
                 border: Border {
-                    radius: style::ROUNDING_NORMAL.into(),
+                    radius: style::ROUNDING_EXTRA_SMALL.into(),
                     ..Border::default()
                 },
                 ..container::Style::default()
             });
 
-        container(card)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center_x(Length::Fill)
-            .center_y(Length::Fill)
-            .style(|_theme| container::Style {
-                background: Some(iced::Background::Color(Color {
-                    a: 0.3,
-                    ..Color::BLACK
-                })),
-                ..container::Style::default()
-            })
-            .into()
+        mouse_area(
+            container(card)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .center_x(Length::Fill)
+                .center_y(Length::Fill)
+                .style(|_theme| container::Style {
+                    background: Some(iced::Background::Color(Color {
+                        a: 0.3,
+                        ..Color::BLACK
+                    })),
+                    ..container::Style::default()
+                }),
+        )
+        .on_press(Message::Close)
+        .into()
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        event::listen().map(Message::IcedEvent)
+        // Use listen_with to receive keyboard events even when captured by the
+        // focused text_input (Escape, arrows, Enter would otherwise be swallowed).
+        event::listen_with(|event, _status, _id| match event {
+            Event::Keyboard(_) | Event::Window(_) => Some(Message::IcedEvent(event)),
+            _ => None,
+        })
     }
 
     fn entry_button(&self, entry_idx: usize, is_selected: bool) -> Element<'_, Message> {
@@ -165,17 +196,29 @@ impl Launcher {
             .size(style::FONT_SIZE_NORMAL)
             .color(text_color);
 
-        let mut row = iced::widget::row![name].spacing(style::SPACING_SMALL);
+        let mut entry_row = row![].spacing(style::SPACING_SMALL).align_y(Alignment::Center);
+
+        // Add icon if available
+        if let Some(handle) = self.icons.get(&entry_idx) {
+            entry_row = entry_row.push(
+                image(handle.clone())
+                    .width(Length::Fixed(f32::from(u16::try_from(ICON_SIZE).unwrap_or(24))))
+                    .height(Length::Fixed(f32::from(u16::try_from(ICON_SIZE).unwrap_or(24))))
+                    .content_fit(iced::ContentFit::Contain),
+            );
+        }
+
+        entry_row = entry_row.push(name);
 
         if let Some(ref comment) = entry.comment {
-            row = row.push(
+            entry_row = entry_row.push(
                 text(comment)
                     .size(style::FONT_SIZE_SMALL)
                     .color(style::M3_ON_SURFACE_VARIANT),
             );
         }
 
-        button(row.align_y(Alignment::Center).width(Length::Fill))
+        button(entry_row.width(Length::Fill))
             .on_press(Message::Launch(entry_idx))
             .style(move |_theme, status| {
                 let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
@@ -188,7 +231,7 @@ impl Launcher {
                     background: Some(iced::Background::Color(bg_color)),
                     text_color,
                     border: Border {
-                        radius: style::ROUNDING_SMALL.into(),
+                        radius: style::ROUNDING_EXTRA_SMALL.into(),
                         ..Border::default()
                     },
                     shadow: iced::Shadow::default(),
@@ -222,27 +265,31 @@ impl Launcher {
     }
 
     fn handle_event(&mut self, event: Event) -> Task<Message> {
-        let Event::Keyboard(iced::keyboard::Event::KeyPressed { key, .. }) = event else {
-            return Task::none();
-        };
-        match key {
-            Key::Named(Named::Escape) => {
+        match event {
+            Event::Window(iced::window::Event::Unfocused) => {
                 std::process::exit(0);
             }
-            Key::Named(Named::ArrowDown) if !self.filtered.is_empty() => {
-                self.selected = (self.selected + 1).min(self.filtered.len() - 1);
-            }
-            Key::Named(Named::ArrowUp) => {
-                self.selected = self.selected.saturating_sub(1);
-            }
-            Key::Named(Named::Enter) => {
-                if let Some(&entry_idx) = self.filtered.get(self.selected) {
-                    self.launch_entry(entry_idx);
+            Event::Keyboard(iced::keyboard::Event::KeyPressed { key, .. }) => match key {
+                Key::Named(Named::Escape) => {
+                    std::process::exit(0);
                 }
-            }
+                Key::Named(Named::ArrowDown) if !self.filtered.is_empty() => {
+                    self.selected = (self.selected + 1).min(self.filtered.len() - 1);
+                }
+                Key::Named(Named::ArrowUp) => {
+                    self.selected = self.selected.saturating_sub(1);
+                }
+                Key::Named(Named::Enter) => {
+                    if let Some(&entry_idx) = self.filtered.get(self.selected) {
+                        self.launch_entry(entry_idx);
+                    }
+                }
+                _ => {}
+            },
             _ => {}
         }
-        Task::none()
+        // Always keep focus on the search bar
+        focus_search()
     }
 
     fn launch_entry(&self, entry_idx: usize) {
@@ -254,6 +301,36 @@ impl Launcher {
         }
         std::process::exit(0);
     }
+}
+
+/// Pre-load icons for all entries that have a resolvable icon path.
+fn load_icons(entries: &[DesktopEntry]) -> HashMap<usize, image::Handle> {
+    let mut icons = HashMap::new();
+    for (idx, entry) in entries.iter().enumerate() {
+        let Some(ref icon_name) = entry.icon else {
+            continue;
+        };
+        let Some(path) = desktop_entry::resolve_icon_path(icon_name) else {
+            continue;
+        };
+        let Ok(data) = std::fs::read(&path) else {
+            continue;
+        };
+        let Ok(img) = ::image::load_from_memory(&data) else {
+            log::warn!("Failed to decode icon: {}", path.display());
+            continue;
+        };
+        let resized = img.resize_exact(
+            ICON_SIZE,
+            ICON_SIZE,
+            ::image::imageops::FilterType::Lanczos3,
+        );
+        let rgba = resized.to_rgba8();
+        let (w, h) = (rgba.width(), rgba.height());
+        icons.insert(idx, image::Handle::from_rgba(w, h, rgba.into_raw()));
+    }
+    log::info!("Loaded {} app icons", icons.len());
+    icons
 }
 
 pub fn theme(_launcher: &Launcher, theme: &Theme) -> iced::theme::Style {

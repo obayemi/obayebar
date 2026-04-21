@@ -1,6 +1,6 @@
 use crate::services::notifications::{NotificationData, Urgency};
 use crate::Message;
-use iced::widget::{button, column, container, mouse_area, row, text, Space};
+use iced::widget::{button, column, container, image, mouse_area, row, text, Space};
 use iced::{Alignment, Border, Element, Length};
 use obayebar::style;
 
@@ -15,6 +15,23 @@ fn notification_card(notif: &NotificationData) -> Element<'_, Message> {
         style::notification_container
     };
 
+    let icon_strip = build_icon_strip(notif);
+    let notif_id = notif.id;
+
+    let card = container(
+        row![icon_strip, build_right_content(notif)]
+            .width(Length::Fill)
+            .height(Length::Shrink),
+    )
+    .width(Length::Fill)
+    .style(container_style);
+
+    mouse_area(card)
+        .on_press(Message::NotifActivate(notif_id))
+        .into()
+}
+
+fn build_icon_strip(notif: &NotificationData) -> Element<'_, Message> {
     let icon_color = match notif.urgency {
         Urgency::Critical => style::M3_ON_ERROR,
         Urgency::Low => style::M3_ON_SURFACE_VARIANT,
@@ -27,32 +44,60 @@ fn notification_card(notif: &NotificationData) -> Element<'_, Message> {
         Urgency::Normal => style::M3_SECONDARY_CONTAINER,
     };
 
-    // Full-height icon strip on the left
-    let icon_strip = container(
-        text(style::ICON_NOTIFICATIONS)
-            .font(style::ICON_FONT)
-            .size(style::FONT_SIZE_LARGE)
-            .color(icon_color)
-            .align_x(Alignment::Center),
-    )
-    .width(ICON_STRIP_SIZE)
-    .height(Length::Fill)
-    .align_x(Alignment::Center)
-    .align_y(Alignment::Center)
-    .style(move |_theme| container::Style {
-        background: Some(iced::Background::Color(icon_bg)),
-        border: Border {
-            radius: iced::border::Radius {
-                top_left: style::ROUNDING_EXTRA_SMALL,
-                top_right: 0.0,
-                bottom_right: 0.0,
-                bottom_left: style::ROUNDING_EXTRA_SMALL,
-            },
-            ..Border::default()
-        },
-        ..container::Style::default()
-    });
+    let left_rounded = iced::border::Radius {
+        top_left: style::ROUNDING_EXTRA_SMALL,
+        top_right: 0.0,
+        bottom_right: 0.0,
+        bottom_left: style::ROUNDING_EXTRA_SMALL,
+    };
 
+    notif.image.as_ref().map_or_else(
+        || {
+            container(
+                text(style::ICON_NOTIFICATIONS)
+                    .font(style::ICON_FONT)
+                    .size(style::FONT_SIZE_LARGE)
+                    .color(icon_color)
+                    .align_x(Alignment::Center),
+            )
+            .width(ICON_STRIP_SIZE)
+            .height(Length::Fill)
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center)
+            .style(move |_theme| container::Style {
+                background: Some(iced::Background::Color(icon_bg)),
+                border: Border {
+                    radius: left_rounded,
+                    ..Border::default()
+                },
+                ..container::Style::default()
+            })
+            .into()
+        },
+        |img| {
+            let handle = image::Handle::from_rgba(img.width, img.height, img.rgba.clone());
+            container(
+                image(handle)
+                    .width(ICON_STRIP_SIZE)
+                    .height(Length::Fill)
+                    .content_fit(iced::ContentFit::Cover),
+            )
+            .width(ICON_STRIP_SIZE)
+            .height(Length::Fill)
+            .clip(true)
+            .style(move |_theme| container::Style {
+                border: Border {
+                    radius: left_rounded,
+                    ..Border::default()
+                },
+                ..container::Style::default()
+            })
+            .into()
+        },
+    )
+}
+
+fn build_right_content(notif: &NotificationData) -> Element<'_, Message> {
     let summary = text(&notif.summary).size(13.0).color(style::M3_ON_SURFACE);
 
     let time_str = notif.time.format("%H:%M").to_string();
@@ -87,22 +132,11 @@ fn notification_card(notif: &NotificationData) -> Element<'_, Message> {
     .style(style::transparent_button)
     .padding(2.0);
 
-    let right_content = row![text_content, dismiss_btn]
+    row![text_content, dismiss_btn]
         .spacing(4.0)
         .padding([style::PADDING_NORMAL, style::PADDING_NORMAL])
         .align_y(Alignment::Start)
-        .width(Length::Fill);
-
-    let card_row = row![icon_strip, right_content]
         .width(Length::Fill)
-        .height(Length::Shrink);
-
-    let card = container(card_row)
-        .width(Length::Fill)
-        .style(container_style);
-
-    mouse_area(card)
-        .on_press(Message::NotifActivate(notif_id))
         .into()
 }
 
