@@ -193,7 +193,8 @@ async fn parse_event(line: &str) -> HyprEvent {
             let win: Option<WindowInfo> = query_json("j/activewindow").await;
             HyprEvent::ActiveWindow(win.filter(|w| !w.class.is_empty()))
         }
-        // All workspace/monitor events trigger a full state refresh
+        // All workspace/monitor events (including monitoraddedv2/monitorremoved)
+        // trigger a full state refresh so bars are created/removed dynamically.
         _ => HyprEvent::State(fetch_full_state().await),
     }
 }

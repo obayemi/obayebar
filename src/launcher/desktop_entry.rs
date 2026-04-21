@@ -168,7 +168,10 @@ pub fn resolve_icon_path(icon_name: &str) -> Option<PathBuf> {
     for dir in &icon_theme_dirs() {
         for size in &sizes {
             for ext in &extensions {
-                let path = dir.join(size).join("apps").join(format!("{icon_name}.{ext}"));
+                let path = dir
+                    .join(size)
+                    .join("apps")
+                    .join(format!("{icon_name}.{ext}"));
                 if path.exists() {
                     return Some(path);
                 }
@@ -210,9 +213,7 @@ fn icon_theme_dirs() -> Vec<PathBuf> {
         }
     }
 
-    dirs.push(PathBuf::from(
-        "/run/current-system/sw/share/icons/hicolor",
-    ));
+    dirs.push(PathBuf::from("/run/current-system/sw/share/icons/hicolor"));
 
     dirs
 }

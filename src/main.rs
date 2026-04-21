@@ -507,8 +507,37 @@ impl App {
             self.monitors_with_bars.push(state.focused_monitor);
         }
 
-        // Create bars for any monitors we haven't seen yet
         let mut tasks = Vec::new();
+
+        // Close bars for monitors that are no longer connected
+        let removed: Vec<String> = self
+            .monitors_with_bars
+            .iter()
+            .filter(|m| !state.monitors.contains(m))
+            .cloned()
+            .collect();
+        for monitor in &removed {
+            // Close extra bar windows for removed monitors
+            let ids_to_remove: Vec<window::Id> = self
+                .extra_bar_windows
+                .iter()
+                .filter(|(_, m)| *m == monitor)
+                .map(|(id, _)| *id)
+                .collect();
+            for id in ids_to_remove {
+                self.extra_bar_windows.remove(&id);
+                tasks.push(close_window(id));
+            }
+            // If the initial monitor was removed, reassign to a remaining monitor
+            if self.initial_monitor.as_deref() == Some(monitor) {
+                self.initial_monitor = state.monitors.first().cloned();
+            }
+            self.ws_spring.remove(monitor);
+            self.ws_cache.remove(monitor);
+        }
+        self.monitors_with_bars.retain(|m| !removed.contains(m));
+
+        // Create bars for any monitors we haven't seen yet
         for monitor in state.monitors {
             if self.monitors_with_bars.contains(&monitor) {
                 continue;

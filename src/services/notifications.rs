@@ -246,10 +246,7 @@ fn parse_image_data(value: &zbus::zvariant::OwnedValue) -> Option<NotificationIm
     let _bits_per_sample = i32::try_from(fields.get(4)?).ok()?;
     let channels = i32::try_from(fields.get(5)?).ok()? as u32;
     let data: Vec<u8> = match fields.get(6)? {
-        Value::Array(arr) => arr
-            .iter()
-            .filter_map(|v| u8::try_from(v).ok())
-            .collect(),
+        Value::Array(arr) => arr.iter().filter_map(|v| u8::try_from(v).ok()).collect(),
         _ => return None,
     };
 
@@ -287,10 +284,7 @@ fn parse_image_data(value: &zbus::zvariant::OwnedValue) -> Option<NotificationIm
 
 /// Load an image from a file path and convert to RGBA.
 fn load_image_from_path(path: &str) -> Option<NotificationImage> {
-    let path = path
-        .strip_prefix("file://")
-        .unwrap_or(path)
-        .to_string();
+    let path = path.strip_prefix("file://").unwrap_or(path).to_string();
 
     let img = image::open(&path).ok()?.into_rgba8();
     let width = img.width();

@@ -196,14 +196,20 @@ impl Launcher {
             .size(style::FONT_SIZE_NORMAL)
             .color(text_color);
 
-        let mut entry_row = row![].spacing(style::SPACING_SMALL).align_y(Alignment::Center);
+        let mut entry_row = row![]
+            .spacing(style::SPACING_SMALL)
+            .align_y(Alignment::Center);
 
         // Add icon if available
         if let Some(handle) = self.icons.get(&entry_idx) {
             entry_row = entry_row.push(
                 image(handle.clone())
-                    .width(Length::Fixed(f32::from(u16::try_from(ICON_SIZE).unwrap_or(24))))
-                    .height(Length::Fixed(f32::from(u16::try_from(ICON_SIZE).unwrap_or(24))))
+                    .width(Length::Fixed(f32::from(
+                        u16::try_from(ICON_SIZE).unwrap_or(24),
+                    )))
+                    .height(Length::Fixed(f32::from(
+                        u16::try_from(ICON_SIZE).unwrap_or(24),
+                    )))
                     .content_fit(iced::ContentFit::Contain),
             );
         }
