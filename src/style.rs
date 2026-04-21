@@ -60,7 +60,7 @@ pub const PADDING_LARGER: f32 = 12.0;
 pub const PADDING_LARGE: f32 = 15.0;
 
 // Rounding (from AppearanceConfig)
-pub const ROUNDING_EXTRA_SMALL: f32 = 8.0;
+pub const ROUNDING_EXTRA_SMALL: f32 = 5.0;
 pub const ROUNDING_SMALL: f32 = 12.0;
 pub const ROUNDING_NORMAL: f32 = 17.0;
 pub const ROUNDING_LARGE: f32 = 25.0;
