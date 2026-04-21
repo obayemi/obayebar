@@ -37,6 +37,17 @@ fn focus_search() -> Task<Message> {
     iced::widget::operation::focus(search_input_id())
 }
 
+/// Approximate visible height of the scrollable entry list area.
+#[allow(clippy::cast_precision_loss)]
+const SCROLL_VIEWPORT_HEIGHT: f32 = LAUNCHER_HEIGHT as f32
+    - style::PADDING_LARGE * 2.0
+    - style::FONT_SIZE_LARGE
+    - 20.0
+    - style::SPACING_NORMAL;
+
+/// Number of entries to keep visible as margin when scrolling at boundaries.
+const SCROLL_MARGIN_ENTRIES: usize = 2;
+
 pub struct Launcher {
     query: String,
     entries: Vec<DesktopEntry>,
@@ -53,6 +64,8 @@ pub struct Launcher {
     icon_paths: HashMap<String, PathBuf>,
     /// Launch frequency counts keyed by `desktop_id`.
     launch_counts: HashMap<String, u32>,
+    /// Current vertical scroll offset (tracked for boundary-aware scrolling).
+    scroll_offset: f32,
 }
 
 impl std::fmt::Debug for Launcher {
@@ -77,6 +90,7 @@ pub enum Message {
     IcedEvent(Event),
     IconsLoaded(HashMap<String, image::Handle>),
     EntriesDiscovered(Vec<DesktopEntry>, HashMap<String, PathBuf>),
+    ScrollChanged(scrollable::Viewport),
 }
 
 impl Launcher {
@@ -96,6 +110,7 @@ impl Launcher {
             icons_requested: HashSet::new(),
             icon_paths,
             launch_counts,
+            scroll_offset: 0.0,
         };
         launcher.update_filter();
 
@@ -134,6 +149,7 @@ impl Launcher {
                 self.query = query;
                 self.update_filter();
                 self.selected = 0;
+                self.scroll_offset = 0.0;
                 let icons = self.load_visible_icons();
                 let scroll = self.scroll_to_selected();
                 Task::batch([focus_search(), icons, scroll])
@@ -148,6 +164,10 @@ impl Launcher {
             Message::IcedEvent(event) => self.handle_event(event),
             Message::IconsLoaded(new_icons) => {
                 self.icons.extend(new_icons);
+                Task::none()
+            }
+            Message::ScrollChanged(viewport) => {
+                self.scroll_offset = viewport.absolute_offset().y;
                 Task::none()
             }
             Message::EntriesDiscovered(entries, icon_paths) => {
@@ -213,17 +233,39 @@ impl Launcher {
         )
     }
 
-    /// Scroll the entry list so the selected entry is visible.
+    /// Scroll the entry list only when the selected entry is near or past a viewport edge.
     #[allow(clippy::cast_precision_loss)]
     fn scroll_to_selected(&self) -> Task<Message> {
-        let y = (self.selected as f32) * ENTRY_ROW_HEIGHT;
-        iced_runtime::widget::operation::scroll_to(
-            scrollable_id(),
-            iced_runtime::widget::operation::AbsoluteOffset {
-                x: Some(0.0),
-                y: Some(y),
-            },
-        )
+        let item_y = (self.selected as f32) * ENTRY_ROW_HEIGHT;
+        let margin = (SCROLL_MARGIN_ENTRIES as f32) * ENTRY_ROW_HEIGHT;
+        let viewport_top = self.scroll_offset;
+        let viewport_bottom = self.scroll_offset + SCROLL_VIEWPORT_HEIGHT;
+
+        // Scroll down: selected item is below viewport (minus margin)
+        if item_y + ENTRY_ROW_HEIGHT > viewport_bottom - margin {
+            let new_offset = item_y + ENTRY_ROW_HEIGHT + margin - SCROLL_VIEWPORT_HEIGHT;
+            return iced_runtime::widget::operation::scroll_to(
+                scrollable_id(),
+                iced_runtime::widget::operation::AbsoluteOffset {
+                    x: None,
+                    y: Some(new_offset.max(0.0)),
+                },
+            );
+        }
+
+        // Scroll up: selected item is above viewport (plus margin)
+        if item_y < viewport_top + margin {
+            let new_offset = item_y - margin;
+            return iced_runtime::widget::operation::scroll_to(
+                scrollable_id(),
+                iced_runtime::widget::operation::AbsoluteOffset {
+                    x: None,
+                    y: Some(new_offset.max(0.0)),
+                },
+            );
+        }
+
+        Task::none()
     }
 
     pub fn view(&self) -> Element<'_, Message> {
@@ -247,7 +289,10 @@ impl Launcher {
 
         let content = column![
             search,
-            scrollable(entries).id(scrollable_id()).height(Length::Fill),
+            scrollable(entries)
+                .id(scrollable_id())
+                .on_scroll(Message::ScrollChanged)
+                .height(Length::Fill),
         ]
         .spacing(style::SPACING_NORMAL)
         .padding(style::PADDING_LARGE)
