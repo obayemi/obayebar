@@ -10,6 +10,7 @@ repository = "https://github.com/obayemi/obayebar"
 readme = "README.md"
 keywords = ["wayland", "bar", "status-bar", "hyprland"]
 categories = ["gui"]
+default-run = "obayebar"
 
 [lib]
 name = "obayebar"
