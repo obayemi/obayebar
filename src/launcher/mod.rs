@@ -40,6 +40,8 @@ pub struct Launcher {
     matcher: SkimMatcherV2,
     /// Pre-loaded icon handles keyed by `desktop_id`.
     icons: HashMap<String, image::Handle>,
+    /// Desktop IDs for which icon loading has already been requested.
+    icons_requested: HashSet<String>,
     /// Resolved icon paths keyed by `desktop_id`, used for cache persistence.
     icon_paths: HashMap<String, PathBuf>,
     /// Launch frequency counts keyed by `desktop_id`.
@@ -75,6 +77,7 @@ impl Launcher {
         entries: Vec<DesktopEntry>,
         icon_paths: HashMap<String, PathBuf>,
         launch_counts: HashMap<String, u32>,
+        skip_background_discover: bool,
     ) -> (Self, Task<Message>) {
         let mut launcher = Self {
             query: String::new(),
@@ -83,40 +86,34 @@ impl Launcher {
             selected: 0,
             matcher: SkimMatcherV2::default(),
             icons: HashMap::new(),
+            icons_requested: HashSet::new(),
             icon_paths,
             launch_counts,
         };
         launcher.update_filter();
 
-        // Load icons in background from cached paths
-        let paths = launcher.icon_paths.clone();
-        let load_icons = Task::perform(
-            async move {
-                tokio::task::spawn_blocking(move || load_icons_from_paths(&paths))
-                    .await
-                    .unwrap_or_default()
-            },
-            Message::IconsLoaded,
-        );
+        let load_visible = launcher.load_visible_icons();
+
+        let mut tasks = vec![focus_search(), load_visible];
 
         // Re-discover entries in background to catch newly installed/removed apps
-        let discover = Task::perform(
-            async {
-                tokio::task::spawn_blocking(|| {
-                    let entries = desktop_entry::discover_entries();
-                    let icon_paths = desktop_entry::resolve_all_icon_paths(&entries);
-                    (entries, icon_paths)
-                })
-                .await
-                .unwrap_or_default()
-            },
-            |(entries, paths)| Message::EntriesDiscovered(entries, paths),
-        );
+        // (skip if we just did a fresh synchronous discovery)
+        if !skip_background_discover {
+            tasks.push(Task::perform(
+                async {
+                    tokio::task::spawn_blocking(|| {
+                        let entries = desktop_entry::discover_entries();
+                        let icon_paths = desktop_entry::resolve_all_icon_paths(&entries);
+                        (entries, icon_paths)
+                    })
+                    .await
+                    .unwrap_or_default()
+                },
+                |(entries, paths)| Message::EntriesDiscovered(entries, paths),
+            ));
+        }
 
-        (
-            launcher,
-            Task::batch([focus_search(), load_icons, discover]),
-        )
+        (launcher, Task::batch(tasks))
     }
 
     #[must_use]
@@ -130,7 +127,8 @@ impl Launcher {
                 self.query = query;
                 self.update_filter();
                 self.selected = 0;
-                focus_search()
+                let icons = self.load_visible_icons();
+                Task::batch([focus_search(), icons])
             }
             Message::Launch(index) => {
                 self.launch_entry(index);
@@ -160,30 +158,51 @@ impl Launcher {
                 let valid: HashSet<&str> =
                     self.entries.iter().map(|e| e.desktop_id.as_str()).collect();
                 self.icons.retain(|id, _| valid.contains(id.as_str()));
+                self.icons_requested
+                    .retain(|id| valid.contains(id.as_str()));
 
-                // Load icons for newly discovered entries
-                let new_paths: HashMap<String, PathBuf> = self
-                    .icon_paths
-                    .iter()
-                    .filter(|(id, _)| !self.icons.contains_key(id.as_str()))
-                    .map(|(id, path)| (id.clone(), path.clone()))
-                    .collect();
-
-                if new_paths.is_empty() {
-                    Task::none()
-                } else {
-                    Task::perform(
-                        async move {
-                            tokio::task::spawn_blocking(move || load_icons_from_paths(&new_paths))
-                                .await
-                                .unwrap_or_default()
-                        },
-                        Message::IconsLoaded,
-                    )
-                }
+                // Load icons for visible entries that need them
+                self.load_visible_icons()
             }
             _ => Task::none(),
         }
+    }
+
+    /// Load icons only for currently visible entries that haven't been loaded or requested yet.
+    fn load_visible_icons(&mut self) -> Task<Message> {
+        let needed: HashMap<String, PathBuf> = self
+            .filtered
+            .iter()
+            .take(MAX_VISIBLE_ENTRIES)
+            .filter_map(|&idx| self.entries.get(idx))
+            .filter(|e| {
+                !self.icons.contains_key(&e.desktop_id)
+                    && !self.icons_requested.contains(&e.desktop_id)
+            })
+            .filter_map(|e| {
+                self.icon_paths
+                    .get(&e.desktop_id)
+                    .map(|p| (e.desktop_id.clone(), p.clone()))
+            })
+            .collect();
+
+        if needed.is_empty() {
+            return Task::none();
+        }
+
+        // Mark as requested to avoid duplicate loads
+        for id in needed.keys() {
+            self.icons_requested.insert(id.clone());
+        }
+
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || load_icons_from_paths(&needed))
+                    .await
+                    .unwrap_or_default()
+            },
+            Message::IconsLoaded,
+        )
     }
 
     pub fn view(&self) -> Element<'_, Message> {
@@ -457,7 +476,7 @@ fn load_icons_from_paths(icon_paths: &HashMap<String, PathBuf>) -> HashMap<Strin
         let resized = img.resize_exact(
             ICON_SIZE,
             ICON_SIZE,
-            ::image::imageops::FilterType::Lanczos3,
+            ::image::imageops::FilterType::Triangle,
         );
         let rgba = resized.to_rgba8();
         let (w, h) = (rgba.width(), rgba.height());

@@ -12,6 +12,8 @@ struct LauncherInit {
     entries: Vec<DesktopEntry>,
     icon_paths: HashMap<String, PathBuf>,
     launch_counts: HashMap<String, u32>,
+    /// True when entries were discovered synchronously (no need for background refresh).
+    fresh: bool,
 }
 
 static INIT: OnceLock<LauncherInit> = OnceLock::new();
@@ -25,7 +27,7 @@ fn main() {
     let cache = desktop_entry::load_cache();
     let launch_counts = desktop_entry::load_launch_counts();
 
-    let (entries, icon_paths) = if cache.entries.is_empty() {
+    let (entries, icon_paths, fresh) = if cache.entries.is_empty() {
         // First launch: discover synchronously so UI isn't empty
         log::info!("No launcher cache, discovering entries...");
         let entries = desktop_entry::discover_entries();
@@ -35,32 +37,34 @@ fn main() {
             icon_paths: icon_paths.clone(),
         });
         log::info!("Discovered {} desktop entries", entries.len());
-        (entries, icon_paths)
+        (entries, icon_paths, true)
     } else {
         log::info!("Loaded {} entries from cache", cache.entries.len());
-        (cache.entries, cache.icon_paths)
+        (cache.entries, cache.icon_paths, false)
     };
 
     INIT.get_or_init(|| LauncherInit {
         entries,
         icon_paths,
         launch_counts,
+        fresh,
     });
 
     let result = iced_layershell::application(
         || {
             let init = INIT.get();
-            let (entries, icon_paths, launch_counts) = init.map_or_else(
-                || (Vec::new(), HashMap::new(), HashMap::new()),
+            let (entries, icon_paths, launch_counts, fresh) = init.map_or_else(
+                || (Vec::new(), HashMap::new(), HashMap::new(), false),
                 |i| {
                     (
                         i.entries.clone(),
                         i.icon_paths.clone(),
                         i.launch_counts.clone(),
+                        i.fresh,
                     )
                 },
             );
-            Launcher::new(entries, icon_paths, launch_counts)
+            Launcher::new(entries, icon_paths, launch_counts, fresh)
         },
         Launcher::namespace,
         Launcher::update,
