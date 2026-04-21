@@ -22,8 +22,15 @@ const LAUNCHER_HEIGHT: u32 = 500;
 const MAX_VISIBLE_ENTRIES: usize = 50;
 const ICON_SIZE: u32 = 24;
 
+/// Approximate height of one entry row (icon/text + vertical padding + spacing).
+const ENTRY_ROW_HEIGHT: f32 = 36.0;
+
 const fn search_input_id() -> Id {
     Id::new("launcher-search")
+}
+
+const fn scrollable_id() -> Id {
+    Id::new("launcher-entries")
 }
 
 fn focus_search() -> Task<Message> {
@@ -128,7 +135,8 @@ impl Launcher {
                 self.update_filter();
                 self.selected = 0;
                 let icons = self.load_visible_icons();
-                Task::batch([focus_search(), icons])
+                let scroll = self.scroll_to_selected();
+                Task::batch([focus_search(), icons, scroll])
             }
             Message::Launch(index) => {
                 self.launch_entry(index);
@@ -205,6 +213,19 @@ impl Launcher {
         )
     }
 
+    /// Scroll the entry list so the selected entry is visible.
+    #[allow(clippy::cast_precision_loss)]
+    fn scroll_to_selected(&self) -> Task<Message> {
+        let y = (self.selected as f32) * ENTRY_ROW_HEIGHT;
+        iced_runtime::widget::operation::scroll_to(
+            scrollable_id(),
+            iced_runtime::widget::operation::AbsoluteOffset {
+                x: Some(0.0),
+                y: Some(y),
+            },
+        )
+    }
+
     pub fn view(&self) -> Element<'_, Message> {
         let search = text_input("Search applications...", &self.query)
             .id(search_input_id())
@@ -224,11 +245,14 @@ impl Launcher {
                 },
             );
 
-        let content = column![search, scrollable(entries).height(Length::Fill),]
-            .spacing(style::SPACING_NORMAL)
-            .padding(style::PADDING_LARGE)
-            .width(Length::Fill)
-            .height(Length::Fill);
+        let content = column![
+            search,
+            scrollable(entries).id(scrollable_id()).height(Length::Fill),
+        ]
+        .spacing(style::SPACING_NORMAL)
+        .padding(style::PADDING_LARGE)
+        .width(Length::Fill)
+        .height(Length::Fill);
 
         let card = container(content)
             .width(Length::Fixed(f32::from(
@@ -419,15 +443,17 @@ impl Launcher {
                     std::process::exit(0);
                 }
                 Key::Named(Named::ArrowDown) if !self.filtered.is_empty() => {
-                    self.selected = (self.selected.saturating_add(1)).min(
-                        self.filtered
-                            .len()
-                            .saturating_sub(1)
-                            .min(MAX_VISIBLE_ENTRIES.saturating_sub(1)),
-                    );
+                    let max = self
+                        .filtered
+                        .len()
+                        .min(MAX_VISIBLE_ENTRIES)
+                        .saturating_sub(1);
+                    self.selected = (self.selected.saturating_add(1)).min(max);
+                    return Task::batch([focus_search(), self.scroll_to_selected()]);
                 }
                 Key::Named(Named::ArrowUp) => {
                     self.selected = self.selected.saturating_sub(1);
+                    return Task::batch([focus_search(), self.scroll_to_selected()]);
                 }
                 Key::Named(Named::Enter) => {
                     if let Some(&entry_idx) = self.filtered.get(self.selected) {
