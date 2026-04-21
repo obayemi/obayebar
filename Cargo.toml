@@ -26,9 +26,9 @@ path = "src/bin/launcher.rs"
 
 [dependencies]
 iced = { version = "0.14.0", default-features = false, features = ["wgpu", "crisp", "linux-theme-detection", "wayland", "tokio", "canvas", "image-without-codecs", "lazy"] }
-iced_layershell = "0.17.1"
+iced_layershell = "0.18.0-beta1"
 iced_runtime = "0.14.0"
-tokio = { version = "1.52.0", features = ["full"] }
+tokio = { version = "1.52.1", features = ["full"] }
 zbus = { version = "5.14.0", default-features = false, features = ["tokio"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
@@ -38,7 +38,7 @@ log = "0.4.29"
 env_logger = "0.11.10"
 async-channel = "2.5.0"
 ab_glyph = "0.2"
-pipewire = "0.8"
+pipewire = "0.9.2"
 wayland-backend = { version = "0.3", features = ["log"] }
 tokio-stream = "0.1.18"
 nvml-wrapper = "0.12.1"

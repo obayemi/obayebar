@@ -382,25 +382,24 @@ fn run_pipewire_monitor(
 ) {
     pw::init();
 
-    let Ok(main_loop) = pw::main_loop::MainLoop::new(None) else {
+    let Ok(main_loop) = pw::main_loop::MainLoopRc::new(None) else {
         log::error!("Failed to create PipeWire main loop");
         return;
     };
-    let Ok(context) = pw::context::Context::new(&main_loop) else {
+    let Ok(context) = pw::context::ContextRc::new(&main_loop, None) else {
         log::error!("Failed to create PipeWire context");
         return;
     };
-    let Ok(core) = context.connect(None) else {
+    let Ok(core) = context.connect_rc(None) else {
         log::error!("Failed to connect to PipeWire");
         return;
     };
 
-    let Ok(registry) = core.get_registry() else {
+    let Ok(registry) = core.get_registry_rc() else {
         log::error!("Failed to get PipeWire registry");
         return;
     };
-    let registry = Rc::new(registry);
-    let registry_weak = Rc::downgrade(&registry);
+    let registry_weak = registry.downgrade();
 
     let proxies = Rc::new(RefCell::new(PwProxies::new()));
     let state = Rc::new(RefCell::new(PwState::new()));

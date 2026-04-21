@@ -65,7 +65,9 @@
       "Bash(git add:*)",
       "Bash(nix flake:*)",
       "Bash(wc:*)",
-      "Bash(jj commit:*)"
+      "Bash(jj commit:*)",
+      "Bash(cargo search:*)",
+      "Bash(cargo info:*)"
     ]
   }
 }
