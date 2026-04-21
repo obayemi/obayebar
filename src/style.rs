@@ -487,7 +487,7 @@ pub fn notification_container(theme: &iced::Theme) -> container::Style {
     container::Style {
         background: Some(Background::Color(with_alpha(M3_SURFACE_CONTAINER, 0.95))),
         border: Border {
-            radius: ROUNDING_NORMAL.into(),
+            radius: ROUNDING_SMALL.into(),
             ..Border::default()
         },
         ..container::Style::default()
@@ -500,7 +500,7 @@ pub fn notification_critical_container(theme: &iced::Theme) -> container::Style 
     container::Style {
         background: Some(Background::Color(with_alpha(M3_SECONDARY_CONTAINER, 0.95))),
         border: Border {
-            radius: ROUNDING_NORMAL.into(),
+            radius: ROUNDING_SMALL.into(),
             ..Border::default()
         },
         ..container::Style::default()

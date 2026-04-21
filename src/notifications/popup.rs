@@ -4,6 +4,8 @@ use crate::Message;
 use iced::widget::{button, column, container, row, text, Space};
 use iced::{Alignment, Border, Element, Length};
 
+const ICON_STRIP_WIDTH: f32 = 40.0;
+
 fn notification_card(notif: &NotificationData) -> Element<'_, Message> {
     let container_style = if notif.urgency == Urgency::Critical {
         style::notification_critical_container as fn(&iced::Theme) -> container::Style
@@ -13,7 +15,7 @@ fn notification_card(notif: &NotificationData) -> Element<'_, Message> {
 
     let icon_color = match notif.urgency {
         Urgency::Critical => style::M3_ON_ERROR,
-        Urgency::Low => style::M3_ON_SURFACE,
+        Urgency::Low => style::M3_ON_SURFACE_VARIANT,
         Urgency::Normal => style::M3_ON_SECONDARY_CONTAINER,
     };
 
@@ -23,21 +25,27 @@ fn notification_card(notif: &NotificationData) -> Element<'_, Message> {
         Urgency::Normal => style::M3_SECONDARY_CONTAINER,
     };
 
-    let badge = container(
+    // Full-height icon strip on the left
+    let icon_strip = container(
         text(style::ICON_NOTIFICATIONS)
             .font(style::ICON_FONT)
-            .size(16.0)
+            .size(style::FONT_SIZE_LARGE)
             .color(icon_color)
             .align_x(Alignment::Center),
     )
-    .width(36.0)
-    .height(36.0)
+    .width(ICON_STRIP_WIDTH)
+    .height(Length::Fill)
     .align_x(Alignment::Center)
     .align_y(Alignment::Center)
     .style(move |_theme| container::Style {
         background: Some(iced::Background::Color(icon_bg)),
         border: Border {
-            radius: style::ROUNDING_FULL.into(),
+            radius: iced::border::Radius {
+                top_left: style::ROUNDING_SMALL,
+                top_right: 0.0,
+                bottom_right: 0.0,
+                bottom_left: style::ROUNDING_SMALL,
+            },
             ..Border::default()
         },
         ..container::Style::default()
@@ -62,13 +70,9 @@ fn notification_card(notif: &NotificationData) -> Element<'_, Message> {
         .size(11.0)
         .color(style::M3_ON_SURFACE_VARIANT);
 
-    let content = column![header, body_preview]
+    let text_content = column![header, body_preview]
         .spacing(2.0)
         .width(Length::Fill);
-
-    let card_content = row![badge, content]
-        .spacing(style::SPACING_SMALLER)
-        .align_y(Alignment::Start);
 
     let notif_id = notif.id;
     let dismiss_btn = button(
@@ -81,12 +85,17 @@ fn notification_card(notif: &NotificationData) -> Element<'_, Message> {
     .style(style::transparent_button)
     .padding(2.0);
 
-    let full_row = row![card_content, dismiss_btn]
+    let right_content = row![text_content, dismiss_btn]
         .spacing(4.0)
+        .padding([style::PADDING_NORMAL, style::PADDING_NORMAL])
+        .align_y(Alignment::Start)
         .width(Length::Fill);
 
-    container(full_row)
-        .padding(style::PADDING_NORMAL)
+    let card_row = row![icon_strip, right_content]
+        .width(Length::Fill)
+        .height(Length::Shrink);
+
+    container(card_row)
         .width(Length::Fill)
         .style(container_style)
         .into()
