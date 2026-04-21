@@ -533,8 +533,10 @@ impl Launcher {
     }
 }
 
-/// Load icons from binary RGBA cache, falling back to decode + resize from source PNGs.
+/// Load icons from binary RGBA cache, falling back to decode + resize from source files.
+/// Supports PNG, JPEG, GIF, BMP (via `image` crate) and SVG (via `resvg`).
 /// Decoded icons are saved to the binary cache for future launches.
+/// Cache is invalidated when the source path changes (e.g. after NixOS rebuild).
 fn load_icons_from_paths(icon_paths: &HashMap<String, PathBuf>) -> HashMap<String, image::Handle> {
     let rgba_cache_dir = desktop_entry::icon_cache_dir();
     let expected_len = (ICON_SIZE as usize)
@@ -543,40 +545,42 @@ fn load_icons_from_paths(icon_paths: &HashMap<String, PathBuf>) -> HashMap<Strin
     let mut icons = HashMap::new();
 
     for (desktop_id, source_path) in icon_paths {
-        // Try pre-resized RGBA cache first (no decode/resize needed)
+        // Try pre-resized RGBA cache first (no decode/resize needed).
+        // A companion .path file stores the source path used to generate the cache;
+        // if it doesn't match the current source, the cache is stale.
         if let Some(ref dir) = rgba_cache_dir {
             let cached = dir.join(format!("{desktop_id}.rgba"));
-            if let Ok(data) = std::fs::read(&cached) {
-                if data.len() == expected_len {
-                    icons.insert(
-                        desktop_id.clone(),
-                        image::Handle::from_rgba(ICON_SIZE, ICON_SIZE, data),
-                    );
-                    continue;
+            let path_file = dir.join(format!("{desktop_id}.path"));
+            let path_matches = std::fs::read_to_string(&path_file)
+                .ok()
+                .is_some_and(|p| p == source_path.to_string_lossy());
+            if path_matches {
+                if let Ok(data) = std::fs::read(&cached) {
+                    if data.len() == expected_len {
+                        icons.insert(
+                            desktop_id.clone(),
+                            image::Handle::from_rgba(ICON_SIZE, ICON_SIZE, data),
+                        );
+                        continue;
+                    }
                 }
             }
         }
 
-        // Fall back to decode + resize from source PNG
-        let Ok(data) = std::fs::read(source_path) else {
+        // Decode from source file
+        let Some(raw) = decode_icon(source_path) else {
             continue;
         };
-        let Ok(img) = ::image::load_from_memory(&data) else {
-            log::warn!("Failed to decode icon: {}", source_path.display());
-            continue;
-        };
-        let resized = img.resize_exact(
-            ICON_SIZE,
-            ICON_SIZE,
-            ::image::imageops::FilterType::Triangle,
-        );
-        let rgba = resized.to_rgba8();
-        let raw = rgba.into_raw();
 
         // Save to binary cache for next launch
         if let Some(ref dir) = rgba_cache_dir {
             std::fs::create_dir_all(dir).ok();
             std::fs::write(dir.join(format!("{desktop_id}.rgba")), &raw).ok();
+            std::fs::write(
+                dir.join(format!("{desktop_id}.path")),
+                source_path.to_string_lossy().as_bytes(),
+            )
+            .ok();
         }
 
         icons.insert(
@@ -586,6 +590,48 @@ fn load_icons_from_paths(icon_paths: &HashMap<String, PathBuf>) -> HashMap<Strin
     }
     log::info!("Loaded {} app icons", icons.len());
     icons
+}
+
+/// Decode an icon file to `ICON_SIZE`×`ICON_SIZE` RGBA bytes. Supports raster and SVG.
+fn decode_icon(path: &std::path::Path) -> Option<Vec<u8>> {
+    let data = std::fs::read(path).ok()?;
+    let is_svg = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("svg"));
+
+    if is_svg {
+        decode_svg(&data)
+    } else {
+        decode_raster(&data, path)
+    }
+}
+
+/// Rasterize an SVG to `ICON_SIZE`×`ICON_SIZE` RGBA bytes.
+fn decode_svg(data: &[u8]) -> Option<Vec<u8>> {
+    let tree = resvg::usvg::Tree::from_data(data, &resvg::usvg::Options::default()).ok()?;
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(ICON_SIZE, ICON_SIZE)?;
+    let size = tree.size();
+    let sx = f32::from(u16::try_from(ICON_SIZE).unwrap_or(24)) / size.width();
+    let sy = f32::from(u16::try_from(ICON_SIZE).unwrap_or(24)) / size.height();
+    let scale = sx.min(sy);
+    let transform = resvg::tiny_skia::Transform::from_scale(scale, scale);
+    resvg::render(&tree, transform, &mut pixmap.as_mut());
+    Some(pixmap.take())
+}
+
+/// Decode a raster image (PNG, JPEG, etc.) and resize to `ICON_SIZE`×`ICON_SIZE` RGBA bytes.
+fn decode_raster(data: &[u8], path: &std::path::Path) -> Option<Vec<u8>> {
+    let Ok(img) = ::image::load_from_memory(data) else {
+        log::warn!("Failed to decode icon: {}", path.display());
+        return None;
+    };
+    let resized = img.resize_exact(
+        ICON_SIZE,
+        ICON_SIZE,
+        ::image::imageops::FilterType::Triangle,
+    );
+    Some(resized.to_rgba8().into_raw())
 }
 
 pub fn theme(_launcher: &Launcher, theme: &Theme) -> iced::theme::Style {

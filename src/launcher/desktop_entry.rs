@@ -296,7 +296,7 @@ fn parse_desktop_file(path: &Path, desktop_id: &str) -> Option<DesktopEntry> {
 /// Resolve an icon name to an actual file path by searching XDG icon directories.
 ///
 /// Supports absolute paths, and searches hicolor theme directories and pixmaps
-/// for PNG files at standard sizes.
+/// for PNG and SVG files at standard sizes (including `scalable/`).
 #[must_use]
 pub fn resolve_icon_path(icon_name: &str) -> Option<PathBuf> {
     // Absolute path: use directly if it exists
@@ -305,14 +305,19 @@ pub fn resolve_icon_path(icon_name: &str) -> Option<PathBuf> {
         return path.exists().then_some(path);
     }
 
-    let sizes = [
+    // Prefer raster at larger sizes, then fall back to SVG (scalable)
+    let sized_dirs = [
         "48x48", "64x64", "32x32", "128x128", "256x256", "24x24", "96x96", "512x512",
     ];
-    let extensions = ["png"];
+    let raster_extensions = ["png"];
+    let svg_extensions = ["svg"];
 
-    for dir in &icon_theme_dirs() {
-        for size in &sizes {
-            for ext in &extensions {
+    let theme_dirs = icon_theme_dirs();
+
+    // Pass 1: raster icons at fixed sizes (fastest to decode)
+    for dir in &theme_dirs {
+        for size in &sized_dirs {
+            for ext in &raster_extensions {
                 let path = dir
                     .join(size)
                     .join("apps")
@@ -324,13 +329,41 @@ pub fn resolve_icon_path(icon_name: &str) -> Option<PathBuf> {
         }
     }
 
-    // Check pixmaps directories
+    // Pass 2: SVG icons in scalable/ directory
+    for dir in &theme_dirs {
+        for ext in &svg_extensions {
+            let path = dir
+                .join("scalable")
+                .join("apps")
+                .join(format!("{icon_name}.{ext}"));
+            if path.exists() {
+                return Some(path);
+            }
+        }
+    }
+
+    // Pass 3: SVG at fixed sizes (some themes put SVGs in sized dirs)
+    for dir in &theme_dirs {
+        for size in &sized_dirs {
+            for ext in &svg_extensions {
+                let path = dir
+                    .join(size)
+                    .join("apps")
+                    .join(format!("{icon_name}.{ext}"));
+                if path.exists() {
+                    return Some(path);
+                }
+            }
+        }
+    }
+
+    // Check pixmaps directories (both PNG and SVG)
     let pixmap_dirs = [
         PathBuf::from("/usr/share/pixmaps"),
         PathBuf::from("/run/current-system/sw/share/pixmaps"),
     ];
     for dir in &pixmap_dirs {
-        for ext in &extensions {
+        for ext in &["png", "svg"] {
             let path = dir.join(format!("{icon_name}.{ext}"));
             if path.exists() {
                 return Some(path);
