@@ -15,12 +15,15 @@ pub struct DesktopEntry {
     pub search_text: String,
 }
 
-/// Cached launcher data persisted across launches.
+/// Cached launcher data persisted across launches (single file).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LauncherCache {
     pub entries: Vec<DesktopEntry>,
     /// Resolved icon filesystem paths keyed by `desktop_id`.
     pub icon_paths: HashMap<String, PathBuf>,
+    /// Launch frequency counts keyed by `desktop_id`.
+    #[serde(default)]
+    pub launch_counts: HashMap<String, u32>,
 }
 
 /// Discover and parse all visible `.desktop` application entries from XDG directories.
@@ -80,6 +83,12 @@ fn cache_dir() -> Option<PathBuf> {
     Some(base.join("obayebar"))
 }
 
+/// Directory for pre-resized RGBA icon data.
+#[must_use]
+pub fn icon_cache_dir() -> Option<PathBuf> {
+    cache_dir().map(|d| d.join("icons"))
+}
+
 /// Load cached launcher data from disk.
 #[must_use]
 pub fn load_cache() -> LauncherCache {
@@ -90,7 +99,20 @@ pub fn load_cache() -> LauncherCache {
     let Ok(data) = std::fs::read_to_string(&path) else {
         return LauncherCache::default();
     };
-    serde_json::from_str(&data).unwrap_or_default()
+    let mut cache: LauncherCache = serde_json::from_str(&data).unwrap_or_default();
+
+    // Migrate launch counts from old separate file
+    if cache.launch_counts.is_empty() {
+        let old_path = dir.join("launch-history.json");
+        if let Ok(old_data) = std::fs::read_to_string(&old_path) {
+            if let Ok(counts) = serde_json::from_str(&old_data) {
+                cache.launch_counts = counts;
+                std::fs::remove_file(&old_path).ok();
+            }
+        }
+    }
+
+    cache
 }
 
 /// Save launcher cache to disk.
@@ -107,37 +129,6 @@ pub fn save_cache(cache: &LauncherCache) {
     let path = dir.join("launcher.json");
     if let Err(err) = std::fs::write(&path, data) {
         log::warn!("Failed to write launcher cache: {err}");
-    }
-}
-
-/// Load launch frequency counts from disk.
-#[must_use]
-pub fn load_launch_counts() -> HashMap<String, u32> {
-    let Some(dir) = cache_dir() else {
-        return HashMap::new();
-    };
-    let path = dir.join("launch-history.json");
-    let Ok(data) = std::fs::read_to_string(&path) else {
-        return HashMap::new();
-    };
-    serde_json::from_str(&data).unwrap_or_default()
-}
-
-/// Save launch frequency counts to disk.
-#[allow(clippy::implicit_hasher)]
-pub fn save_launch_counts(counts: &HashMap<String, u32>) {
-    let Some(dir) = cache_dir() else {
-        return;
-    };
-    if std::fs::create_dir_all(&dir).is_err() {
-        return;
-    }
-    let Ok(data) = serde_json::to_string(counts) else {
-        return;
-    };
-    let path = dir.join("launch-history.json");
-    if let Err(err) = std::fs::write(&path, data) {
-        log::warn!("Failed to write launch history: {err}");
     }
 }
 
@@ -448,20 +439,20 @@ mod tests {
                 search_text: "test".into(),
             }],
             icon_paths: HashMap::from([("test.desktop".into(), PathBuf::from("/icon.png"))]),
+            launch_counts: HashMap::from([("test.desktop".into(), 5)]),
         };
         let json = serde_json::to_string(&cache).unwrap_or_default();
         let loaded: LauncherCache = serde_json::from_str(&json).unwrap_or_default();
         assert_eq!(loaded.entries.len(), 1);
         assert_eq!(loaded.icon_paths.len(), 1);
+        assert_eq!(loaded.launch_counts.get("test.desktop").copied(), Some(5));
     }
 
     #[test]
-    fn launch_counts_round_trip() {
-        let counts: HashMap<String, u32> =
-            HashMap::from([("firefox.desktop".into(), 42), ("code.desktop".into(), 7)]);
-        let json = serde_json::to_string(&counts).unwrap_or_default();
-        let loaded: HashMap<String, u32> = serde_json::from_str(&json).unwrap_or_default();
-        assert_eq!(loaded.get("firefox.desktop").copied(), Some(42));
-        assert_eq!(loaded.get("code.desktop").copied(), Some(7));
+    fn cache_backwards_compatible_without_launch_counts() {
+        // Old cache format without launch_counts field should deserialize fine
+        let json = r#"{"entries":[],"icon_paths":{}}"#;
+        let loaded: LauncherCache = serde_json::from_str(json).unwrap_or_default();
+        assert!(loaded.launch_counts.is_empty());
     }
 }

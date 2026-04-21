@@ -1,4 +1,5 @@
 - [x] app launcher
 - [ ] iddle inhibitor thing
 - [x] clic on notif focuses the app
-- [ ] faster launcher run
+- [x] faster launcher run
+- [ ] launcher navigation with arrows scrolls the viewport

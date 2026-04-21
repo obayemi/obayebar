@@ -148,10 +148,11 @@ impl Launcher {
                 self.update_filter();
                 self.selected = 0;
 
-                // Save updated cache
+                // Save updated cache (preserves launch_counts)
                 desktop_entry::save_cache(&desktop_entry::LauncherCache {
                     entries: self.entries.clone(),
                     icon_paths: self.icon_paths.clone(),
+                    launch_counts: self.launch_counts.clone(),
                 });
 
                 // Remove icons for entries that no longer exist
@@ -450,10 +451,14 @@ impl Launcher {
         let exec = entry.exec.clone();
         let name = entry.name.clone();
 
-        // Track launch frequency
+        // Track launch frequency and persist full cache
         let count = self.launch_counts.entry(desktop_id).or_insert(0);
         *count = count.saturating_add(1);
-        desktop_entry::save_launch_counts(&self.launch_counts);
+        desktop_entry::save_cache(&desktop_entry::LauncherCache {
+            entries: self.entries.clone(),
+            icon_paths: self.icon_paths.clone(),
+            launch_counts: self.launch_counts.clone(),
+        });
 
         if let Err(err) = desktop_entry::launch(&exec) {
             log::error!("Failed to launch {name}: {err}");
@@ -462,15 +467,36 @@ impl Launcher {
     }
 }
 
-/// Load and resize icons from resolved filesystem paths.
+/// Load icons from binary RGBA cache, falling back to decode + resize from source PNGs.
+/// Decoded icons are saved to the binary cache for future launches.
 fn load_icons_from_paths(icon_paths: &HashMap<String, PathBuf>) -> HashMap<String, image::Handle> {
+    let rgba_cache_dir = desktop_entry::icon_cache_dir();
+    let expected_len = (ICON_SIZE as usize)
+        .saturating_mul(ICON_SIZE as usize)
+        .saturating_mul(4);
     let mut icons = HashMap::new();
-    for (desktop_id, path) in icon_paths {
-        let Ok(data) = std::fs::read(path) else {
+
+    for (desktop_id, source_path) in icon_paths {
+        // Try pre-resized RGBA cache first (no decode/resize needed)
+        if let Some(ref dir) = rgba_cache_dir {
+            let cached = dir.join(format!("{desktop_id}.rgba"));
+            if let Ok(data) = std::fs::read(&cached) {
+                if data.len() == expected_len {
+                    icons.insert(
+                        desktop_id.clone(),
+                        image::Handle::from_rgba(ICON_SIZE, ICON_SIZE, data),
+                    );
+                    continue;
+                }
+            }
+        }
+
+        // Fall back to decode + resize from source PNG
+        let Ok(data) = std::fs::read(source_path) else {
             continue;
         };
         let Ok(img) = ::image::load_from_memory(&data) else {
-            log::warn!("Failed to decode icon: {}", path.display());
+            log::warn!("Failed to decode icon: {}", source_path.display());
             continue;
         };
         let resized = img.resize_exact(
@@ -479,10 +505,17 @@ fn load_icons_from_paths(icon_paths: &HashMap<String, PathBuf>) -> HashMap<Strin
             ::image::imageops::FilterType::Triangle,
         );
         let rgba = resized.to_rgba8();
-        let (w, h) = (rgba.width(), rgba.height());
+        let raw = rgba.into_raw();
+
+        // Save to binary cache for next launch
+        if let Some(ref dir) = rgba_cache_dir {
+            std::fs::create_dir_all(dir).ok();
+            std::fs::write(dir.join(format!("{desktop_id}.rgba")), &raw).ok();
+        }
+
         icons.insert(
             desktop_id.clone(),
-            image::Handle::from_rgba(w, h, rgba.into_raw()),
+            image::Handle::from_rgba(ICON_SIZE, ICON_SIZE, raw),
         );
     }
     log::info!("Loaded {} app icons", icons.len());
