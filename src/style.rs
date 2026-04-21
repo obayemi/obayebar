@@ -60,6 +60,7 @@ pub const PADDING_LARGER: f32 = 12.0;
 pub const PADDING_LARGE: f32 = 15.0;
 
 // Rounding (from AppearanceConfig)
+pub const ROUNDING_EXTRA_SMALL: f32 = 8.0;
 pub const ROUNDING_SMALL: f32 = 12.0;
 pub const ROUNDING_NORMAL: f32 = 17.0;
 pub const ROUNDING_LARGE: f32 = 25.0;
@@ -195,11 +196,11 @@ pub fn notif_popup_height(notif_count: usize) -> u32 {
     let container_padding = PADDING_LARGE * 2.0;
     let n = notif_count.max(1) as f32;
 
-    // Each notification card: two text lines + badge height + padding
+    // Each notification card: two text lines + padding, at least icon strip size (53px)
     let summary_line = FONT_SIZE_NORMAL * LINE_HEIGHT;
     let body_line = FONT_SIZE_SMALL * LINE_HEIGHT;
     let card_inner = summary_line.mul_add(1.0, 2.0 + body_line);
-    let card_height = PADDING_NORMAL.mul_add(2.0, card_inner.max(36.0));
+    let card_height = PADDING_NORMAL.mul_add(2.0, card_inner).max(53.0);
 
     // N cards with SPACING_SMALLER gaps between them
     let cards = (n - 1.0).max(0.0).mul_add(SPACING_SMALLER, n * card_height);
@@ -487,7 +488,7 @@ pub fn notification_container(theme: &iced::Theme) -> container::Style {
     container::Style {
         background: Some(Background::Color(with_alpha(M3_SURFACE_CONTAINER, 0.95))),
         border: Border {
-            radius: ROUNDING_SMALL.into(),
+            radius: ROUNDING_EXTRA_SMALL.into(),
             ..Border::default()
         },
         ..container::Style::default()
@@ -500,7 +501,7 @@ pub fn notification_critical_container(theme: &iced::Theme) -> container::Style 
     container::Style {
         background: Some(Background::Color(with_alpha(M3_SECONDARY_CONTAINER, 0.95))),
         border: Border {
-            radius: ROUNDING_SMALL.into(),
+            radius: ROUNDING_EXTRA_SMALL.into(),
             ..Border::default()
         },
         ..container::Style::default()

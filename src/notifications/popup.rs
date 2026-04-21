@@ -4,7 +4,9 @@ use crate::Message;
 use iced::widget::{button, column, container, row, text, Space};
 use iced::{Alignment, Border, Element, Length};
 
-const ICON_STRIP_WIDTH: f32 = 40.0;
+/// Icon strip width matches the two-line card height so it renders as a square.
+/// summary (13*1.3) + spacing (2) + body (11*1.3) + padding (10*2) ≈ 53
+const ICON_STRIP_SIZE: f32 = 53.0;
 
 fn notification_card(notif: &NotificationData) -> Element<'_, Message> {
     let container_style = if notif.urgency == Urgency::Critical {
@@ -33,7 +35,7 @@ fn notification_card(notif: &NotificationData) -> Element<'_, Message> {
             .color(icon_color)
             .align_x(Alignment::Center),
     )
-    .width(ICON_STRIP_WIDTH)
+    .width(ICON_STRIP_SIZE)
     .height(Length::Fill)
     .align_x(Alignment::Center)
     .align_y(Alignment::Center)
@@ -41,10 +43,10 @@ fn notification_card(notif: &NotificationData) -> Element<'_, Message> {
         background: Some(iced::Background::Color(icon_bg)),
         border: Border {
             radius: iced::border::Radius {
-                top_left: style::ROUNDING_SMALL,
+                top_left: style::ROUNDING_EXTRA_SMALL,
                 top_right: 0.0,
                 bottom_right: 0.0,
-                bottom_left: style::ROUNDING_SMALL,
+                bottom_left: style::ROUNDING_EXTRA_SMALL,
             },
             ..Border::default()
         },
