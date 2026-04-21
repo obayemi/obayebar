@@ -1,7 +1,8 @@
 pub mod desktop_entry;
 
 use std::cmp::Reverse;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 
 use crate::style;
 use desktop_entry::DesktopEntry;
@@ -32,13 +33,17 @@ fn focus_search() -> Task<Message> {
 pub struct Launcher {
     query: String,
     entries: Vec<DesktopEntry>,
-    /// Indices into `entries`, sorted by match score.
+    /// Indices into `entries`, sorted by match score or frequency.
     filtered: Vec<usize>,
     /// Index into `filtered` for the currently selected entry.
     selected: usize,
     matcher: SkimMatcherV2,
-    /// Pre-loaded icon handles keyed by entry index.
-    icons: HashMap<usize, image::Handle>,
+    /// Pre-loaded icon handles keyed by `desktop_id`.
+    icons: HashMap<String, image::Handle>,
+    /// Resolved icon paths keyed by `desktop_id`, used for cache persistence.
+    icon_paths: HashMap<String, PathBuf>,
+    /// Launch frequency counts keyed by `desktop_id`.
+    launch_counts: HashMap<String, u32>,
 }
 
 impl std::fmt::Debug for Launcher {
@@ -49,6 +54,7 @@ impl std::fmt::Debug for Launcher {
             .field("filtered", &self.filtered.len())
             .field("selected", &self.selected)
             .field("icons", &self.icons.len())
+            .field("launch_counts", &self.launch_counts.len())
             .finish_non_exhaustive()
     }
 }
@@ -60,22 +66,56 @@ pub enum Message {
     Launch(usize),
     Close,
     IcedEvent(Event),
+    IconsLoaded(HashMap<String, image::Handle>),
+    EntriesDiscovered(Vec<DesktopEntry>, HashMap<String, PathBuf>),
 }
 
 impl Launcher {
-    pub fn new(entries: Vec<DesktopEntry>) -> (Self, Task<Message>) {
-        let filtered: Vec<usize> = (0..entries.len()).collect();
-        let icons = load_icons(&entries);
-        (
-            Self {
-                query: String::new(),
-                entries,
-                filtered,
-                selected: 0,
-                matcher: SkimMatcherV2::default(),
-                icons,
+    pub fn new(
+        entries: Vec<DesktopEntry>,
+        icon_paths: HashMap<String, PathBuf>,
+        launch_counts: HashMap<String, u32>,
+    ) -> (Self, Task<Message>) {
+        let mut launcher = Self {
+            query: String::new(),
+            entries,
+            filtered: Vec::new(),
+            selected: 0,
+            matcher: SkimMatcherV2::default(),
+            icons: HashMap::new(),
+            icon_paths,
+            launch_counts,
+        };
+        launcher.update_filter();
+
+        // Load icons in background from cached paths
+        let paths = launcher.icon_paths.clone();
+        let load_icons = Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || load_icons_from_paths(&paths))
+                    .await
+                    .unwrap_or_default()
             },
-            focus_search(),
+            Message::IconsLoaded,
+        );
+
+        // Re-discover entries in background to catch newly installed/removed apps
+        let discover = Task::perform(
+            async {
+                tokio::task::spawn_blocking(|| {
+                    let entries = desktop_entry::discover_entries();
+                    let icon_paths = desktop_entry::resolve_all_icon_paths(&entries);
+                    (entries, icon_paths)
+                })
+                .await
+                .unwrap_or_default()
+            },
+            |(entries, paths)| Message::EntriesDiscovered(entries, paths),
+        );
+
+        (
+            launcher,
+            Task::batch([focus_search(), load_icons, discover]),
         )
     }
 
@@ -100,6 +140,48 @@ impl Launcher {
                 std::process::exit(0);
             }
             Message::IcedEvent(event) => self.handle_event(event),
+            Message::IconsLoaded(new_icons) => {
+                self.icons.extend(new_icons);
+                Task::none()
+            }
+            Message::EntriesDiscovered(entries, icon_paths) => {
+                self.entries = entries;
+                self.icon_paths = icon_paths;
+                self.update_filter();
+                self.selected = 0;
+
+                // Save updated cache
+                desktop_entry::save_cache(&desktop_entry::LauncherCache {
+                    entries: self.entries.clone(),
+                    icon_paths: self.icon_paths.clone(),
+                });
+
+                // Remove icons for entries that no longer exist
+                let valid: HashSet<&str> =
+                    self.entries.iter().map(|e| e.desktop_id.as_str()).collect();
+                self.icons.retain(|id, _| valid.contains(id.as_str()));
+
+                // Load icons for newly discovered entries
+                let new_paths: HashMap<String, PathBuf> = self
+                    .icon_paths
+                    .iter()
+                    .filter(|(id, _)| !self.icons.contains_key(id.as_str()))
+                    .map(|(id, path)| (id.clone(), path.clone()))
+                    .collect();
+
+                if new_paths.is_empty() {
+                    Task::none()
+                } else {
+                    Task::perform(
+                        async move {
+                            tokio::task::spawn_blocking(move || load_icons_from_paths(&new_paths))
+                                .await
+                                .unwrap_or_default()
+                        },
+                        Message::IconsLoaded,
+                    )
+                }
+            }
             _ => Task::none(),
         }
     }
@@ -200,8 +282,8 @@ impl Launcher {
             .spacing(style::SPACING_SMALL)
             .align_y(Alignment::Center);
 
-        // Add icon if available
-        if let Some(handle) = self.icons.get(&entry_idx) {
+        // Add icon if available (keyed by desktop_id)
+        if let Some(handle) = self.icons.get(&entry.desktop_id) {
             entry_row = entry_row.push(
                 image(handle.clone())
                     .width(Length::Fixed(f32::from(
@@ -251,7 +333,34 @@ impl Launcher {
 
     fn update_filter(&mut self) {
         if self.query.is_empty() {
-            self.filtered = (0..self.entries.len()).collect();
+            // Sort by launch frequency (descending), then name (ascending)
+            let mut indices: Vec<usize> = (0..self.entries.len()).collect();
+            indices.sort_by(|&a, &b| {
+                let count_a = self
+                    .entries
+                    .get(a)
+                    .and_then(|e| self.launch_counts.get(&e.desktop_id))
+                    .copied()
+                    .unwrap_or(0);
+                let count_b = self
+                    .entries
+                    .get(b)
+                    .and_then(|e| self.launch_counts.get(&e.desktop_id))
+                    .copied()
+                    .unwrap_or(0);
+                count_b.cmp(&count_a).then_with(|| {
+                    let name_a = self
+                        .entries
+                        .get(a)
+                        .map_or_else(String::new, |e| e.name.to_lowercase());
+                    let name_b = self
+                        .entries
+                        .get(b)
+                        .map_or_else(String::new, |e| e.name.to_lowercase());
+                    name_a.cmp(&name_b)
+                })
+            });
+            self.filtered = indices;
             return;
         }
 
@@ -262,7 +371,18 @@ impl Launcher {
             .filter_map(|(idx, entry)| {
                 self.matcher
                     .fuzzy_match(&entry.search_text, &self.query)
-                    .map(|score| (idx, score))
+                    .map(|score| {
+                        // Boost frequently launched apps (capped to avoid dominating match quality)
+                        let freq_bonus = i64::from(
+                            self.launch_counts
+                                .get(&entry.desktop_id)
+                                .copied()
+                                .unwrap_or(0)
+                                .min(20),
+                        )
+                        .saturating_mul(5);
+                        (idx, score.saturating_add(freq_bonus))
+                    })
             })
             .collect();
 
@@ -280,7 +400,12 @@ impl Launcher {
                     std::process::exit(0);
                 }
                 Key::Named(Named::ArrowDown) if !self.filtered.is_empty() => {
-                    self.selected = (self.selected + 1).min(self.filtered.len() - 1);
+                    self.selected = (self.selected.saturating_add(1)).min(
+                        self.filtered
+                            .len()
+                            .saturating_sub(1)
+                            .min(MAX_VISIBLE_ENTRIES.saturating_sub(1)),
+                    );
                 }
                 Key::Named(Named::ArrowUp) => {
                     self.selected = self.selected.saturating_sub(1);
@@ -298,28 +423,31 @@ impl Launcher {
         focus_search()
     }
 
-    fn launch_entry(&self, entry_idx: usize) {
+    fn launch_entry(&mut self, entry_idx: usize) {
         let Some(entry) = self.entries.get(entry_idx) else {
             return;
         };
-        if let Err(err) = desktop_entry::launch(&entry.exec) {
-            log::error!("Failed to launch {}: {err}", entry.name);
+        let desktop_id = entry.desktop_id.clone();
+        let exec = entry.exec.clone();
+        let name = entry.name.clone();
+
+        // Track launch frequency
+        let count = self.launch_counts.entry(desktop_id).or_insert(0);
+        *count = count.saturating_add(1);
+        desktop_entry::save_launch_counts(&self.launch_counts);
+
+        if let Err(err) = desktop_entry::launch(&exec) {
+            log::error!("Failed to launch {name}: {err}");
         }
         std::process::exit(0);
     }
 }
 
-/// Pre-load icons for all entries that have a resolvable icon path.
-fn load_icons(entries: &[DesktopEntry]) -> HashMap<usize, image::Handle> {
+/// Load and resize icons from resolved filesystem paths.
+fn load_icons_from_paths(icon_paths: &HashMap<String, PathBuf>) -> HashMap<String, image::Handle> {
     let mut icons = HashMap::new();
-    for (idx, entry) in entries.iter().enumerate() {
-        let Some(ref icon_name) = entry.icon else {
-            continue;
-        };
-        let Some(path) = desktop_entry::resolve_icon_path(icon_name) else {
-            continue;
-        };
-        let Ok(data) = std::fs::read(&path) else {
+    for (desktop_id, path) in icon_paths {
+        let Ok(data) = std::fs::read(path) else {
             continue;
         };
         let Ok(img) = ::image::load_from_memory(&data) else {
@@ -333,7 +461,10 @@ fn load_icons(entries: &[DesktopEntry]) -> HashMap<usize, image::Handle> {
         );
         let rgba = resized.to_rgba8();
         let (w, h) = (rgba.width(), rgba.height());
-        icons.insert(idx, image::Handle::from_rgba(w, h, rgba.into_raw()));
+        icons.insert(
+            desktop_id.clone(),
+            image::Handle::from_rgba(w, h, rgba.into_raw()),
+        );
     }
     log::info!("Loaded {} app icons", icons.len());
     icons

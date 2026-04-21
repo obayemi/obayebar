@@ -1,14 +1,26 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DesktopEntry {
+    /// Unique identifier: the `.desktop` filename (e.g. "firefox.desktop").
+    pub desktop_id: String,
     pub name: String,
     pub exec: String,
     pub icon: Option<String>,
     pub comment: Option<String>,
     /// Pre-computed lowercase text for fuzzy matching (name + comment + keywords).
     pub search_text: String,
+}
+
+/// Cached launcher data persisted across launches.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct LauncherCache {
+    pub entries: Vec<DesktopEntry>,
+    /// Resolved icon filesystem paths keyed by `desktop_id`.
+    pub icon_paths: HashMap<String, PathBuf>,
 }
 
 /// Discover and parse all visible `.desktop` application entries from XDG directories.
@@ -33,7 +45,7 @@ pub fn discover_entries() -> Vec<DesktopEntry> {
                 continue;
             };
 
-            if let Some(parsed) = parse_desktop_file(&path) {
+            if let Some(parsed) = parse_desktop_file(&path, &filename) {
                 seen.insert(filename, parsed);
             }
         }
@@ -42,6 +54,91 @@ pub fn discover_entries() -> Vec<DesktopEntry> {
     let mut entries: Vec<DesktopEntry> = seen.into_values().collect();
     entries.sort_by_key(|e| e.name.to_lowercase());
     entries
+}
+
+/// Resolve icon paths for all entries that have an icon name.
+#[must_use]
+pub fn resolve_all_icon_paths(entries: &[DesktopEntry]) -> HashMap<String, PathBuf> {
+    let mut paths = HashMap::new();
+    for entry in entries {
+        if let Some(ref icon_name) = entry.icon {
+            if let Some(path) = resolve_icon_path(icon_name) {
+                paths.insert(entry.desktop_id.clone(), path);
+            }
+        }
+    }
+    paths
+}
+
+// --- Cache persistence ---
+
+fn cache_dir() -> Option<PathBuf> {
+    let base = std::env::var("XDG_CACHE_HOME")
+        .ok()
+        .or_else(|| std::env::var("HOME").ok().map(|h| format!("{h}/.cache")))
+        .map(PathBuf::from)?;
+    Some(base.join("obayebar"))
+}
+
+/// Load cached launcher data from disk.
+#[must_use]
+pub fn load_cache() -> LauncherCache {
+    let Some(dir) = cache_dir() else {
+        return LauncherCache::default();
+    };
+    let path = dir.join("launcher.json");
+    let Ok(data) = std::fs::read_to_string(&path) else {
+        return LauncherCache::default();
+    };
+    serde_json::from_str(&data).unwrap_or_default()
+}
+
+/// Save launcher cache to disk.
+pub fn save_cache(cache: &LauncherCache) {
+    let Some(dir) = cache_dir() else {
+        return;
+    };
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let Ok(data) = serde_json::to_string(cache) else {
+        return;
+    };
+    let path = dir.join("launcher.json");
+    if let Err(err) = std::fs::write(&path, data) {
+        log::warn!("Failed to write launcher cache: {err}");
+    }
+}
+
+/// Load launch frequency counts from disk.
+#[must_use]
+pub fn load_launch_counts() -> HashMap<String, u32> {
+    let Some(dir) = cache_dir() else {
+        return HashMap::new();
+    };
+    let path = dir.join("launch-history.json");
+    let Ok(data) = std::fs::read_to_string(&path) else {
+        return HashMap::new();
+    };
+    serde_json::from_str(&data).unwrap_or_default()
+}
+
+/// Save launch frequency counts to disk.
+#[allow(clippy::implicit_hasher)]
+pub fn save_launch_counts(counts: &HashMap<String, u32>) {
+    let Some(dir) = cache_dir() else {
+        return;
+    };
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let Ok(data) = serde_json::to_string(counts) else {
+        return;
+    };
+    let path = dir.join("launch-history.json");
+    if let Err(err) = std::fs::write(&path, data) {
+        log::warn!("Failed to write launch history: {err}");
+    }
 }
 
 /// Collect application directories from `XDG_DATA_DIRS` and common paths.
@@ -70,7 +167,7 @@ fn application_dirs() -> Vec<PathBuf> {
 
 /// Parse a single `.desktop` file. Returns `None` if the entry should be hidden
 /// or is not a valid application entry.
-fn parse_desktop_file(path: &Path) -> Option<DesktopEntry> {
+fn parse_desktop_file(path: &Path, desktop_id: &str) -> Option<DesktopEntry> {
     let content = std::fs::read_to_string(path).ok()?;
 
     let mut in_desktop_entry = false;
@@ -140,6 +237,7 @@ fn parse_desktop_file(path: &Path) -> Option<DesktopEntry> {
     let search_text = search_parts.join(" ");
 
     Some(DesktopEntry {
+        desktop_id: desktop_id.to_string(),
         name,
         exec,
         icon,
@@ -288,7 +386,9 @@ mod tests {
         )
         .ok();
 
-        let entry = parse_desktop_file(&path).expect("should parse");
+        let entry =
+            parse_desktop_file(&path, "test.desktop").unwrap_or_else(|| panic!("should parse"));
+        assert_eq!(entry.desktop_id, "test.desktop");
         assert_eq!(entry.name, "Test App");
         assert_eq!(entry.exec, "test-app");
         assert_eq!(entry.comment.as_deref(), Some("A test"));
@@ -309,7 +409,7 @@ mod tests {
         )
         .ok();
 
-        assert!(parse_desktop_file(&path).is_none());
+        assert!(parse_desktop_file(&path, "hidden.desktop").is_none());
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -325,7 +425,7 @@ mod tests {
         )
         .ok();
 
-        assert!(parse_desktop_file(&path).is_none());
+        assert!(parse_desktop_file(&path, "link.desktop").is_none());
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -334,5 +434,34 @@ mod tests {
     fn launch_invalid_command() {
         let result = launch("");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn cache_round_trip() {
+        let cache = LauncherCache {
+            entries: vec![DesktopEntry {
+                desktop_id: "test.desktop".into(),
+                name: "Test".into(),
+                exec: "test".into(),
+                icon: None,
+                comment: None,
+                search_text: "test".into(),
+            }],
+            icon_paths: HashMap::from([("test.desktop".into(), PathBuf::from("/icon.png"))]),
+        };
+        let json = serde_json::to_string(&cache).unwrap_or_default();
+        let loaded: LauncherCache = serde_json::from_str(&json).unwrap_or_default();
+        assert_eq!(loaded.entries.len(), 1);
+        assert_eq!(loaded.icon_paths.len(), 1);
+    }
+
+    #[test]
+    fn launch_counts_round_trip() {
+        let counts: HashMap<String, u32> =
+            HashMap::from([("firefox.desktop".into(), 42), ("code.desktop".into(), 7)]);
+        let json = serde_json::to_string(&counts).unwrap_or_default();
+        let loaded: HashMap<String, u32> = serde_json::from_str(&json).unwrap_or_default();
+        assert_eq!(loaded.get("firefox.desktop").copied(), Some(42));
+        assert_eq!(loaded.get("code.desktop").copied(), Some(7));
     }
 }

@@ -1,4 +1,4 @@
 - [x] app launcher
 - [ ] iddle inhibitor thing
-- [ ] 
-- [.] clic on notif focuses the app
+- [x] clic on notif focuses the app
+- [ ] faster launcher run
