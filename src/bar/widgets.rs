@@ -1,12 +1,28 @@
 //! Shared iced widget builders used across panels.
-//!
-//! These factor out small UI primitives that were previously copy-pasted
-//! across every bar/*_panel.rs module.
 
 use crate::Message;
+use iced::widget::canvas::{path::Arc, Path};
 use iced::widget::{button, container, mouse_area, text, toggler, Space};
-use iced::{Alignment, Border, Color, Element, Length, Padding};
+use iced::{Alignment, Border, Color, Element, Length, Padding, Point, Radians};
 use obayebar::style;
+
+/// Start angle of the 3/4-circle gauge arc (bottom-left, at 135 degrees).
+pub const GAUGE_ARC_START: f32 = std::f32::consts::PI * 0.75;
+/// Total sweep of the 3/4-circle gauge arc (270 degrees, open at the bottom).
+pub const GAUGE_ARC_SPAN: f32 = std::f32::consts::PI * 1.5;
+
+/// Path for a sub-arc inside the standard 3/4-circle gauge layout.
+pub fn gauge_arc(center: Point, radius: f32, start_offset: f32, sweep: f32) -> Path {
+    Path::new(|builder| {
+        let start_angle = GAUGE_ARC_START + start_offset;
+        builder.arc(Arc {
+            center,
+            radius,
+            start_angle: Radians(start_angle),
+            end_angle: Radians(start_angle + sweep),
+        });
+    })
+}
 
 /// 1px horizontal line used between panel sections.
 pub fn separator<'a>() -> Element<'a, Message> {
@@ -85,8 +101,7 @@ pub fn icon_button(icon: &str, color: Color, message: Message) -> Element<'_, Me
     .into()
 }
 
-/// Material-3 styled toggler. Factors out the verbose `iced::widget::toggler`
-/// styling that was duplicated between the Wi-Fi and Bluetooth panels.
+/// Material-3 styled toggler with on/off color scheme.
 pub fn styled_toggler<F>(enabled: bool, on_toggle: F) -> Element<'static, Message>
 where
     F: Fn(bool) -> Message + 'static,

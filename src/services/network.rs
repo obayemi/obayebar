@@ -1,6 +1,24 @@
-use crate::services::dbus_util::{self, proxy as build_proxy};
+use crate::services::dbus_util::{self, proxy, PanelSignal};
 use futures_util::stream::StreamExt;
 use futures_util::Stream;
+
+static PANEL: PanelSignal = PanelSignal::new();
+
+/// Toggle from the UI when the network panel opens/closes. Triggers an
+/// immediate refresh and enables/disables the per-scan AP enumeration.
+pub fn set_panel_open(open: bool) {
+    PANEL.set(open);
+}
+
+const NM_BUS: &str = "org.freedesktop.NetworkManager";
+const NM_PATH: &str = "/org/freedesktop/NetworkManager";
+const NM_AP_IFACE: &str = "org.freedesktop.NetworkManager.AccessPoint";
+const NM_SETTINGS_PATH: &str = "/org/freedesktop/NetworkManager/Settings";
+const NM_SETTINGS_IFACE: &str = "org.freedesktop.NetworkManager.Settings";
+const NM_SETTINGS_CONN_IFACE: &str = "org.freedesktop.NetworkManager.Settings.Connection";
+const NM_WIRELESS_IFACE: &str = "org.freedesktop.NetworkManager.Device.Wireless";
+const NM_DEVICE_IFACE: &str = "org.freedesktop.NetworkManager.Device";
+const NM_ACTIVE_CONN_IFACE: &str = "org.freedesktop.NetworkManager.Connection.Active";
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AccessPointInfo {
@@ -69,13 +87,7 @@ const fn wifi_icon(strength: u8) -> &'static str {
 }
 
 async fn read_ap_info(conn: &zbus::Connection, ap_path: &str) -> Option<(String, u8)> {
-    let ap_proxy = build_proxy(
-        conn,
-        "org.freedesktop.NetworkManager",
-        ap_path,
-        "org.freedesktop.NetworkManager.AccessPoint",
-    )
-    .await?;
+    let ap_proxy = proxy(conn, NM_BUS, ap_path, NM_AP_IFACE).await?;
 
     let ssid_bytes: Vec<u8> = ap_proxy.get_property("Ssid").await.ok()?;
     let ssid = String::from_utf8_lossy(&ssid_bytes).into_owned();
@@ -95,13 +107,7 @@ type NmConnSettings = std::collections::HashMap<
 async fn saved_wifi_ssids(conn: &zbus::Connection) -> std::collections::HashSet<String> {
     let mut ssids = std::collections::HashSet::new();
 
-    let Some(settings_proxy) = build_proxy(
-        conn,
-        "org.freedesktop.NetworkManager",
-        "/org/freedesktop/NetworkManager/Settings",
-        "org.freedesktop.NetworkManager.Settings",
-    )
-    .await
+    let Some(settings_proxy) = proxy(conn, NM_BUS, NM_SETTINGS_PATH, NM_SETTINGS_IFACE).await
     else {
         return ssids;
     };
@@ -112,13 +118,7 @@ async fn saved_wifi_ssids(conn: &zbus::Connection) -> std::collections::HashSet<
         .unwrap_or_default();
 
     for sc_path in &saved_connections {
-        let Some(sc_proxy) = build_proxy(
-            conn,
-            "org.freedesktop.NetworkManager",
-            sc_path.as_str(),
-            "org.freedesktop.NetworkManager.Settings.Connection",
-        )
-        .await
+        let Some(sc_proxy) = proxy(conn, NM_BUS, sc_path.as_str(), NM_SETTINGS_CONN_IFACE).await
         else {
             continue;
         };
@@ -159,13 +159,7 @@ async fn scan_access_points(
     let mut aps = Vec::new();
 
     for dev_path in &devices {
-        let Some(wifi_proxy) = build_proxy(
-            conn,
-            "org.freedesktop.NetworkManager",
-            dev_path.as_str(),
-            "org.freedesktop.NetworkManager.Device.Wireless",
-        )
-        .await
+        let Some(wifi_proxy) = proxy(conn, NM_BUS, dev_path.as_str(), NM_WIRELESS_IFACE).await
         else {
             continue;
         };
@@ -200,15 +194,8 @@ async fn scan_access_points(
 }
 
 #[allow(clippy::too_many_lines)]
-async fn read_network_dbus_with(conn: &zbus::Connection) -> NetworkInfo {
-    let Some(nm_proxy) = build_proxy(
-        conn,
-        "org.freedesktop.NetworkManager",
-        "/org/freedesktop/NetworkManager",
-        "org.freedesktop.NetworkManager",
-    )
-    .await
-    else {
+async fn read_network_dbus_with(conn: &zbus::Connection, panel_open: bool) -> NetworkInfo {
+    let Some(nm_proxy) = proxy(conn, NM_BUS, NM_PATH, NM_BUS).await else {
         return NetworkInfo::default();
     };
 
@@ -231,13 +218,7 @@ async fn read_network_dbus_with(conn: &zbus::Connection) -> NetworkInfo {
     let mut active_conns = Vec::new();
 
     for conn_path in &active_connections {
-        let Some(ac_proxy) = build_proxy(
-            conn,
-            "org.freedesktop.NetworkManager",
-            conn_path.as_str(),
-            "org.freedesktop.NetworkManager.Connection.Active",
-        )
-        .await
+        let Some(ac_proxy) = proxy(conn, NM_BUS, conn_path.as_str(), NM_ACTIVE_CONN_IFACE).await
         else {
             continue;
         };
@@ -253,13 +234,8 @@ async fn read_network_dbus_with(conn: &zbus::Connection) -> NetworkInfo {
                     .await
                 {
                     for dev_path in &devices {
-                        let Some(dev_proxy) = build_proxy(
-                            conn,
-                            "org.freedesktop.NetworkManager",
-                            dev_path.as_str(),
-                            "org.freedesktop.NetworkManager.Device.Wireless",
-                        )
-                        .await
+                        let Some(dev_proxy) =
+                            proxy(conn, NM_BUS, dev_path.as_str(), NM_WIRELESS_IFACE).await
                         else {
                             continue;
                         };
@@ -308,7 +284,7 @@ async fn read_network_dbus_with(conn: &zbus::Connection) -> NetworkInfo {
         obayebar::style::ICON_WIFI_OFF
     };
 
-    let access_points = if wifi_enabled {
+    let access_points = if wifi_enabled && panel_open {
         scan_access_points(conn, &nm_proxy).await
     } else {
         Vec::new()
@@ -332,14 +308,7 @@ pub fn set_wifi_enabled(enabled: bool) {
         let Ok(conn) = zbus::Connection::system().await else {
             return;
         };
-        let Some(proxy) = build_proxy(
-            &conn,
-            "org.freedesktop.NetworkManager",
-            "/org/freedesktop/NetworkManager",
-            "org.freedesktop.NetworkManager",
-        )
-        .await
-        else {
+        let Some(proxy) = proxy(&conn, NM_BUS, NM_PATH, NM_BUS).await else {
             return;
         };
         if let Err(e) = proxy.set_property("WirelessEnabled", enabled).await {
@@ -353,14 +322,7 @@ pub fn disconnect_wifi() {
         let Ok(conn) = zbus::Connection::system().await else {
             return;
         };
-        let Some(nm_proxy) = build_proxy(
-            &conn,
-            "org.freedesktop.NetworkManager",
-            "/org/freedesktop/NetworkManager",
-            "org.freedesktop.NetworkManager",
-        )
-        .await
-        else {
+        let Some(nm_proxy) = proxy(&conn, NM_BUS, NM_PATH, NM_BUS).await else {
             return;
         };
 
@@ -370,13 +332,8 @@ pub fn disconnect_wifi() {
             .unwrap_or_default();
 
         for conn_path in &active_connections {
-            let Some(ac_proxy) = build_proxy(
-                &conn,
-                "org.freedesktop.NetworkManager",
-                conn_path.as_str(),
-                "org.freedesktop.NetworkManager.Connection.Active",
-            )
-            .await
+            let Some(ac_proxy) =
+                proxy(&conn, NM_BUS, conn_path.as_str(), NM_ACTIVE_CONN_IFACE).await
             else {
                 continue;
             };
@@ -411,14 +368,7 @@ async fn find_wifi_device_and_ap(
 
     for dev_path in &devices {
         // Check DeviceType == 2 (WiFi) to skip non-wireless devices
-        let Some(dev_proxy) = build_proxy(
-            conn,
-            "org.freedesktop.NetworkManager",
-            dev_path.as_str(),
-            "org.freedesktop.NetworkManager.Device",
-        )
-        .await
-        else {
+        let Some(dev_proxy) = proxy(conn, NM_BUS, dev_path.as_str(), NM_DEVICE_IFACE).await else {
             continue;
         };
         let dev_type: u32 = dev_proxy.get_property("DeviceType").await.unwrap_or(0);
@@ -426,13 +376,7 @@ async fn find_wifi_device_and_ap(
             continue;
         }
 
-        let Some(wifi_proxy) = build_proxy(
-            conn,
-            "org.freedesktop.NetworkManager",
-            dev_path.as_str(),
-            "org.freedesktop.NetworkManager.Device.Wireless",
-        )
-        .await
+        let Some(wifi_proxy) = proxy(conn, NM_BUS, dev_path.as_str(), NM_WIRELESS_IFACE).await
         else {
             continue;
         };
@@ -457,13 +401,7 @@ async fn find_wifi_device_and_ap(
 }
 
 async fn find_saved_connection(conn: &zbus::Connection, ssid: &str) -> Option<String> {
-    let settings_proxy = build_proxy(
-        conn,
-        "org.freedesktop.NetworkManager",
-        "/org/freedesktop/NetworkManager/Settings",
-        "org.freedesktop.NetworkManager.Settings",
-    )
-    .await?;
+    let settings_proxy = proxy(conn, NM_BUS, NM_SETTINGS_PATH, NM_SETTINGS_IFACE).await?;
 
     let saved_connections: Vec<zbus::zvariant::OwnedObjectPath> = settings_proxy
         .get_property("Connections")
@@ -471,13 +409,7 @@ async fn find_saved_connection(conn: &zbus::Connection, ssid: &str) -> Option<St
         .unwrap_or_default();
 
     for sc_path in &saved_connections {
-        let Some(sc_proxy) = build_proxy(
-            conn,
-            "org.freedesktop.NetworkManager",
-            sc_path.as_str(),
-            "org.freedesktop.NetworkManager.Settings.Connection",
-        )
-        .await
+        let Some(sc_proxy) = proxy(conn, NM_BUS, sc_path.as_str(), NM_SETTINGS_CONN_IFACE).await
         else {
             continue;
         };
@@ -508,14 +440,7 @@ pub fn connect_network(ssid: String) {
         let Ok(conn) = zbus::Connection::system().await else {
             return;
         };
-        let Some(nm_proxy) = build_proxy(
-            &conn,
-            "org.freedesktop.NetworkManager",
-            "/org/freedesktop/NetworkManager",
-            "org.freedesktop.NetworkManager",
-        )
-        .await
-        else {
+        let Some(nm_proxy) = proxy(&conn, NM_BUS, NM_PATH, NM_BUS).await else {
             return;
         };
 
@@ -575,26 +500,12 @@ pub fn connect_network(ssid: String) {
 }
 
 pub fn stream() -> impl Stream<Item = NetworkInfo> {
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-
-    tokio::spawn(async move {
-        loop {
-            let conn = loop {
-                if let Ok(c) = zbus::Connection::system().await {
-                    break c;
-                }
-                log::warn!("network: failed to connect to system D-Bus, retrying");
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-            };
-
-            if run_network_loop(&conn, &tx).await.is_err() {
-                log::warn!("network: signal loop ended, reconnecting");
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-            }
-        }
-    });
-
-    tokio_stream::wrappers::UnboundedReceiverStream::new(rx)
+    dbus_util::spawn_stream(
+        "network",
+        dbus_util::Bus::System,
+        std::time::Duration::from_secs(5),
+        |conn, tx| async move { run_network_loop(&conn, &tx).await },
+    )
 }
 
 async fn run_network_loop(
@@ -604,9 +515,9 @@ async fn run_network_loop(
     // Subscribe to PropertiesChanged on the main NetworkManager object
     // This fires when ActiveConnections, Connectivity, etc. change
     let nm_props = zbus::fdo::PropertiesProxy::builder(conn)
-        .destination("org.freedesktop.NetworkManager")
+        .destination(NM_BUS)
         .map_err(|_| ())?
-        .path("/org/freedesktop/NetworkManager")
+        .path(NM_PATH)
         .map_err(|_| ())?
         .build()
         .await
@@ -617,38 +528,34 @@ async fn run_network_loop(
         .map_err(|_| ())?;
 
     // Subscribe to StateChanged signal for connection state transitions
-    let nm_proxy = build_proxy(
-        conn,
-        "org.freedesktop.NetworkManager",
-        "/org/freedesktop/NetworkManager",
-        "org.freedesktop.NetworkManager",
-    )
-    .await
-    .ok_or(())?;
+    let nm_proxy = proxy(conn, NM_BUS, NM_PATH, NM_BUS).await.ok_or(())?;
     let mut state_changed = nm_proxy
         .receive_signal("StateChanged")
         .await
         .map_err(|_| ())?;
 
     // Emit initial state
-    let mut last = read_network_dbus_with(conn).await;
+    let mut last = read_network_dbus_with(conn, PANEL.is_open()).await;
     tx.send(last.clone()).map_err(|_| ())?;
 
     loop {
+        // Only refresh AP signal strengths on the timer while the panel is open.
+        let refresh_interval = if PANEL.is_open() {
+            std::time::Duration::from_secs(10)
+        } else {
+            std::time::Duration::from_mins(2)
+        };
         tokio::select! {
             Some(_) = nm_signals.next() => {}
             Some(_) = state_changed.next() => {}
-            // Periodic refresh for AP signal strength updates (not signaled)
-            () = tokio::time::sleep(std::time::Duration::from_secs(30)) => {}
+            () = PANEL.changed() => {}
+            () = tokio::time::sleep(refresh_interval) => {}
         }
 
         // Small delay to let D-Bus settle after state changes
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-        let info = read_network_dbus_with(conn).await;
-        if info != last {
-            last = info.clone();
-            tx.send(info).map_err(|_| ())?;
-        }
+        let info = read_network_dbus_with(conn, PANEL.is_open()).await;
+        dbus_util::send_if_changed(tx, &mut last, info)?;
     }
 }

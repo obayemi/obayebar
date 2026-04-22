@@ -164,26 +164,12 @@ async fn read_full_state(upower_proxy: &zbus::Proxy<'_>, conn: &zbus::Connection
 }
 
 pub fn stream() -> impl Stream<Item = BatteryInfo> {
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-
-    tokio::spawn(async move {
-        loop {
-            let conn = loop {
-                if let Ok(c) = zbus::Connection::system().await {
-                    break c;
-                }
-                log::warn!("battery: failed to connect to system D-Bus, retrying");
-                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-            };
-
-            if run_battery_loop(&conn, &tx).await.is_err() {
-                log::warn!("battery: signal loop ended, reconnecting");
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-            }
-        }
-    });
-
-    tokio_stream::wrappers::UnboundedReceiverStream::new(rx)
+    dbus_util::spawn_stream(
+        "battery",
+        dbus_util::Bus::System,
+        std::time::Duration::from_secs(5),
+        |conn, tx| async move { run_battery_loop(&conn, &tx).await },
+    )
 }
 
 async fn run_battery_loop(
@@ -241,9 +227,6 @@ async fn run_battery_loop(
         }
 
         let info = read_full_state(&upower_proxy, conn).await;
-        if info != last {
-            last = info.clone();
-            tx.send(info).map_err(|_| ())?;
-        }
+        dbus_util::send_if_changed(tx, &mut last, info)?;
     }
 }

@@ -1,6 +1,10 @@
-use crate::services::dbus_util::{self, proxy as build_proxy};
+use crate::services::dbus_util::{self, proxy};
 use futures_util::stream::StreamExt;
 use futures_util::Stream;
+
+const SNW_BUS: &str = "org.kde.StatusNotifierWatcher";
+const SNW_PATH: &str = "/StatusNotifierWatcher";
+const SNI_IFACE: &str = "org.kde.StatusNotifierItem";
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TrayItemInfo {
@@ -24,26 +28,16 @@ async fn activate_item_dbus(id: &str) -> Result<(), Box<dyn std::error::Error + 
     let (bus_name, path) = id.split_once(':').ok_or("invalid tray item id format")?;
 
     let conn = zbus::Connection::session().await?;
-    let proxy: zbus::Proxy<'_> = zbus::proxy::Builder::new(&conn)
-        .destination(bus_name.to_string())?
-        .path(path.to_string())?
-        .interface("org.kde.StatusNotifierItem".to_string())?
-        .build()
-        .await?;
+    let item = proxy(&conn, bus_name, path, SNI_IFACE)
+        .await
+        .ok_or("failed to build tray item proxy")?;
 
-    proxy.call_noreply("Activate", &(0i32, 0i32)).await?;
+    item.call_noreply("Activate", &(0i32, 0i32)).await?;
     Ok(())
 }
 
 async fn read_tray_items_with(conn: &zbus::Connection) -> Vec<TrayItemInfo> {
-    let Some(watcher_proxy) = build_proxy(
-        conn,
-        "org.kde.StatusNotifierWatcher",
-        "/StatusNotifierWatcher",
-        "org.kde.StatusNotifierWatcher",
-    )
-    .await
-    else {
+    let Some(watcher_proxy) = proxy(conn, SNW_BUS, SNW_PATH, SNW_BUS).await else {
         return Vec::new();
     };
 
@@ -64,9 +58,7 @@ async fn read_tray_items_with(conn: &zbus::Connection) -> Vec<TrayItemInfo> {
             (item_service.clone(), "/StatusNotifierItem".to_string())
         };
 
-        let Some(item_proxy) =
-            build_proxy(conn, &bus_name, &path, "org.kde.StatusNotifierItem").await
-        else {
+        let Some(item_proxy) = proxy(conn, &bus_name, &path, SNI_IFACE).await else {
             continue;
         };
 
@@ -98,40 +90,19 @@ async fn read_tray_items_with(conn: &zbus::Connection) -> Vec<TrayItemInfo> {
 }
 
 pub fn stream() -> impl Stream<Item = Vec<TrayItemInfo>> {
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-
-    tokio::spawn(async move {
-        loop {
-            let conn = loop {
-                if let Ok(c) = zbus::Connection::session().await {
-                    break c;
-                }
-                log::warn!("tray: failed to connect to session D-Bus, retrying");
-                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-            };
-
-            if run_tray_loop(&conn, &tx).await.is_err() {
-                log::warn!("tray: signal loop ended, reconnecting");
-                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-            }
-        }
-    });
-
-    tokio_stream::wrappers::UnboundedReceiverStream::new(rx)
+    dbus_util::spawn_stream(
+        "tray",
+        dbus_util::Bus::Session,
+        std::time::Duration::from_secs(3),
+        |conn, tx| async move { run_tray_loop(&conn, &tx).await },
+    )
 }
 
 async fn run_tray_loop(
     conn: &zbus::Connection,
     tx: &tokio::sync::mpsc::UnboundedSender<Vec<TrayItemInfo>>,
 ) -> Result<(), ()> {
-    let watcher_proxy = build_proxy(
-        conn,
-        "org.kde.StatusNotifierWatcher",
-        "/StatusNotifierWatcher",
-        "org.kde.StatusNotifierWatcher",
-    )
-    .await
-    .ok_or(())?;
+    let watcher_proxy = proxy(conn, SNW_BUS, SNW_PATH, SNW_BUS).await.ok_or(())?;
 
     // Subscribe to item registered/unregistered signals
     let mut registered = watcher_proxy

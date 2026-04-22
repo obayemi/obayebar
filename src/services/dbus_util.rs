@@ -1,12 +1,51 @@
 //! Small D-Bus helpers shared by every service.
-//!
-//! The patterns factored out here were previously duplicated verbatim across
-//! `network.rs`, `bluetooth.rs`, `battery.rs` and `tray.rs`.
 
 use std::future::Future;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use futures_util::Stream;
+use tokio::sync::Notify;
+
+/// Panel-open signal: lets services throttle expensive detail refreshes to
+/// the times when the UI is actually showing that detail.
+#[derive(Debug)]
+pub struct PanelSignal {
+    open: AtomicBool,
+    notify: OnceLock<Notify>,
+}
+
+impl PanelSignal {
+    pub const fn new() -> Self {
+        Self {
+            open: AtomicBool::new(false),
+            notify: OnceLock::new(),
+        }
+    }
+
+    fn notify_cell(&self) -> &Notify {
+        self.notify.get_or_init(Notify::new)
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.open.load(Ordering::Relaxed)
+    }
+
+    /// Called from the UI thread when the panel opens/closes.
+    /// Wakes anyone waiting on `wait_change` so refreshes happen immediately.
+    pub fn set(&self, open: bool) {
+        let prev = self.open.swap(open, Ordering::Relaxed);
+        if prev != open {
+            self.notify_cell().notify_waiters();
+        }
+    }
+
+    /// Wait for the next open/close transition.
+    pub async fn changed(&self) {
+        self.notify_cell().notified().await;
+    }
+}
 
 /// Build a `zbus::Proxy` from the four required pieces (connection, bus name,
 /// object path, interface). Returns `None` on any construction error.
@@ -64,15 +103,24 @@ where
 
     tokio::spawn(async move {
         loop {
+            if tx.is_closed() {
+                return;
+            }
             let conn = loop {
                 if let Ok(c) = bus.connect().await {
                     break c;
+                }
+                if tx.is_closed() {
+                    return;
                 }
                 log::warn!("{name}: failed to connect to D-Bus, retrying");
                 tokio::time::sleep(reconnect_delay).await;
             };
 
             if run_loop(conn, tx.clone()).await.is_err() {
+                if tx.is_closed() {
+                    return;
+                }
                 log::warn!("{name}: signal loop ended, reconnecting");
                 tokio::time::sleep(reconnect_delay).await;
             }

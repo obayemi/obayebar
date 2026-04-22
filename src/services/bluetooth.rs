@@ -1,6 +1,13 @@
-use crate::services::dbus_util;
+use crate::services::dbus_util::{self, PanelSignal};
 use futures_util::stream::StreamExt;
 use futures_util::Stream;
+
+static PANEL: PanelSignal = PanelSignal::new();
+
+/// Toggle from the UI when the bluetooth panel opens/closes.
+pub fn set_panel_open(open: bool) {
+    PANEL.set(open);
+}
 
 const BLUEZ: &str = "org.bluez";
 
@@ -54,7 +61,7 @@ const fn bt_icon(powered: bool, has_connected: bool) -> &'static str {
     }
 }
 
-async fn read_bluetooth_dbus(conn: &zbus::Connection) -> BluetoothInfo {
+async fn read_bluetooth_dbus(conn: &zbus::Connection, panel_open: bool) -> BluetoothInfo {
     let Some(adapter) = build_proxy(conn, "/org/bluez/hci0", "org.bluez.Adapter1").await else {
         return BluetoothInfo::default();
     };
@@ -70,15 +77,49 @@ async fn read_bluetooth_dbus(conn: &zbus::Connection) -> BluetoothInfo {
     }
 
     let discovering: bool = adapter.get_property("Discovering").await.unwrap_or(false);
-    let devices = enumerate_devices(conn, discovering).await;
-    let has_connected = devices.iter().any(|d| d.connected);
 
-    BluetoothInfo {
-        powered: true,
-        discovering,
-        icon_name: bt_icon(true, has_connected),
-        devices,
+    if panel_open {
+        let devices = enumerate_devices(conn, discovering).await;
+        let has_connected = devices.iter().any(|d| d.connected);
+        BluetoothInfo {
+            powered: true,
+            discovering,
+            icon_name: bt_icon(true, has_connected),
+            devices,
+        }
+    } else {
+        // Bar icon only needs powered + has_connected — avoid deserializing
+        // per-device alias/icon/battery fields.
+        let has_connected = has_any_connected_device(conn).await;
+        BluetoothInfo {
+            powered: true,
+            discovering,
+            icon_name: bt_icon(true, has_connected),
+            devices: Vec::new(),
+        }
     }
+}
+
+/// Cheap path: check only the `Connected` field on each Device1 interface,
+/// short-circuiting as soon as one is true.
+async fn has_any_connected_device(conn: &zbus::Connection) -> bool {
+    let Some(om_proxy) = build_proxy(conn, "/", "org.freedesktop.DBus.ObjectManager").await else {
+        return false;
+    };
+    let Ok(objects) = om_proxy
+        .call::<_, _, ManagedObjects>("GetManagedObjects", &())
+        .await
+    else {
+        return false;
+    };
+    objects.values().any(|ifaces| {
+        ifaces.get("org.bluez.Device1").is_some_and(|props| {
+            props
+                .get("Connected")
+                .and_then(|v| <bool as TryFrom<_>>::try_from(v.clone()).ok())
+                .unwrap_or(false)
+        })
+    })
 }
 
 type ManagedObjects = std::collections::HashMap<
@@ -218,26 +259,12 @@ pub fn remove_device(device_path: &str) {
 }
 
 pub fn stream() -> impl Stream<Item = BluetoothInfo> {
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-
-    tokio::spawn(async move {
-        loop {
-            let conn = loop {
-                if let Ok(c) = zbus::Connection::system().await {
-                    break c;
-                }
-                log::warn!("bluetooth: failed to connect to system D-Bus, retrying");
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-            };
-
-            if run_bluetooth_loop(&conn, &tx).await.is_err() {
-                log::warn!("bluetooth: signal loop ended, reconnecting");
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-            }
-        }
-    });
-
-    tokio_stream::wrappers::UnboundedReceiverStream::new(rx)
+    dbus_util::spawn_stream(
+        "bluetooth",
+        dbus_util::Bus::System,
+        std::time::Duration::from_secs(5),
+        |conn, tx| async move { run_bluetooth_loop(&conn, &tx).await },
+    )
 }
 
 async fn run_bluetooth_loop(
@@ -272,7 +299,7 @@ async fn run_bluetooth_loop(
         .map_err(|_| ())?;
 
     // Emit initial state
-    let mut last = read_bluetooth_dbus(conn).await;
+    let mut last = read_bluetooth_dbus(conn, PANEL.is_open()).await;
     tx.send(last.clone()).map_err(|_| ())?;
 
     loop {
@@ -280,6 +307,7 @@ async fn run_bluetooth_loop(
             Some(_) = ifaces_added.next() => {}
             Some(_) = ifaces_removed.next() => {}
             Some(_) = adapter_signals.next() => {}
+            () = PANEL.changed() => {}
             // Fallback refresh every 2 minutes
             () = tokio::time::sleep(std::time::Duration::from_mins(2)) => {}
         }
@@ -287,10 +315,7 @@ async fn run_bluetooth_loop(
         // Small delay to let D-Bus settle
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        let info = read_bluetooth_dbus(conn).await;
-        if info != last {
-            last = info.clone();
-            tx.send(info).map_err(|_| ())?;
-        }
+        let info = read_bluetooth_dbus(conn, PANEL.is_open()).await;
+        dbus_util::send_if_changed(tx, &mut last, info)?;
     }
 }

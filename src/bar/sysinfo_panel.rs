@@ -1,17 +1,13 @@
-use super::widgets::panel_with_exit;
+use super::widgets::{gauge_arc, panel_with_exit, GAUGE_ARC_SPAN};
 use crate::services::sysinfo::{self, SysInfo};
 use crate::Message;
-use iced::widget::canvas::{self, path::Arc, Frame, Geometry, LineCap, Path, Stroke};
+use iced::widget::canvas::{self, Frame, Geometry, LineCap, Stroke};
 use iced::widget::{column, container, row, text, Stack};
-use iced::{Alignment, Element, Length, Point, Radians, Rectangle, Renderer, Theme};
+use iced::{Alignment, Element, Length, Point, Rectangle, Renderer, Theme};
 use obayebar::style;
 
 const GAUGE_SIZE: f32 = 90.0;
 const ARC_WIDTH: f32 = 7.0;
-/// The arc spans 270 degrees (3/4 of a circle), open at the bottom
-const ARC_SPAN: f32 = std::f32::consts::PI * 1.5;
-/// Start angle: 135 degrees (bottom-left)
-const ARC_START: f32 = std::f32::consts::PI * 0.75;
 
 struct UsageGaugeProgram {
     percent: f32,
@@ -35,17 +31,17 @@ impl canvas::Program<Message> for UsageGaugeProgram {
 
         // Background track
         frame.stroke(
-            &arc_path(center, radius, 0.0, ARC_SPAN),
+            &gauge_arc(center, radius, 0.0, GAUGE_ARC_SPAN),
             Stroke::default()
                 .with_width(ARC_WIDTH)
                 .with_color(style::with_alpha(style::M3_ON_SURFACE, 0.12)),
         );
 
         // Foreground arc
-        let fill_angle = ARC_SPAN * (self.percent / 100.0);
+        let fill_angle = GAUGE_ARC_SPAN * (self.percent / 100.0);
         if fill_angle > 0.01 {
             frame.stroke(
-                &arc_path(center, radius, 0.0, fill_angle),
+                &gauge_arc(center, radius, 0.0, fill_angle),
                 Stroke::default()
                     .with_width(ARC_WIDTH)
                     .with_color(self.color)
@@ -55,18 +51,6 @@ impl canvas::Program<Message> for UsageGaugeProgram {
 
         vec![frame.into_geometry()]
     }
-}
-
-fn arc_path(center: Point, radius: f32, start_offset: f32, sweep: f32) -> Path {
-    Path::new(|builder| {
-        let start_angle = ARC_START + start_offset;
-        builder.arc(Arc {
-            center,
-            radius,
-            start_angle: Radians(start_angle),
-            end_angle: Radians(start_angle + sweep),
-        });
-    })
 }
 
 fn usage_color(percent: f32) -> iced::Color {

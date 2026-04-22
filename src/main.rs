@@ -371,6 +371,7 @@ impl App {
                 let conn_groups = connection_type_groups(&self.network.active_connections);
                 let height =
                     style::network_panel_height(ap_count, &conn_groups, self.network.wifi_enabled);
+                services::network::set_panel_open(true);
                 let open = self
                     .network_panel
                     .open(style::NETWORK_PANEL_WIDTH, height, monitor);
@@ -406,6 +407,7 @@ impl App {
                     self.bluetooth.powered,
                     self.bluetooth.discovering,
                 );
+                services::bluetooth::set_panel_open(true);
                 let open = self
                     .bluetooth_panel
                     .open(style::BLUETOOTH_PANEL_WIDTH, height, monitor);
@@ -414,6 +416,7 @@ impl App {
             Message::SysinfoPanelOpen(monitor) => {
                 let close = self.close_all_panels();
                 let height = style::sysinfo_panel_height();
+                services::sysinfo::set_panel_open(true);
                 let open = self
                     .sysinfo_panel
                     .open(style::SYSINFO_PANEL_WIDTH, height, monitor);
@@ -630,6 +633,9 @@ impl App {
     }
 
     fn close_all_panels(&mut self) -> Task<Message> {
+        services::network::set_panel_open(false);
+        services::bluetooth::set_panel_open(false);
+        services::sysinfo::set_panel_open(false);
         Task::batch([
             self.audio_panel.close(),
             self.network_panel.close(),

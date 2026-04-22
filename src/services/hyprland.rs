@@ -166,16 +166,23 @@ pub fn stream() -> impl Stream<Item = HyprEvent> {
                 Some((HyprEvent::State(hypr_state), State::Streaming(reader)))
             }
             State::Streaming(mut reader) => {
-                let mut line = String::new();
-                match reader.read_line(&mut line).await {
-                    Ok(0) | Err(_) => {
-                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                        Some((HyprEvent::State(fetch_full_state().await), State::Starting))
-                    }
-                    Ok(_) => {
-                        let line = line.trim();
-                        let event = parse_event(line).await;
-                        Some((event, State::Streaming(reader)))
+                // Skip uninteresting events (windowtitle, submap, config reloaded,
+                // activewindowv2, etc.) without ever waking the UI thread.
+                loop {
+                    let mut line = String::new();
+                    match reader.read_line(&mut line).await {
+                        Ok(0) | Err(_) => {
+                            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                            return Some((
+                                HyprEvent::State(fetch_full_state().await),
+                                State::Starting,
+                            ));
+                        }
+                        Ok(_) => {
+                            if let Some(event) = parse_event(line.trim()).await {
+                                return Some((event, State::Streaming(reader)));
+                            }
+                        }
                     }
                 }
             }
@@ -183,18 +190,28 @@ pub fn stream() -> impl Stream<Item = HyprEvent> {
     })
 }
 
-async fn parse_event(line: &str) -> HyprEvent {
-    let Some((event_name, _data)) = line.split_once(">>") else {
-        return HyprEvent::State(fetch_full_state().await);
-    };
+async fn parse_event(line: &str) -> Option<HyprEvent> {
+    let (event_name, data) = line.split_once(">>")?;
 
     match event_name {
-        "activewindow" | "activewindowv2" => {
-            let win: Option<WindowInfo> = query_json("j/activewindow").await;
-            HyprEvent::ActiveWindow(win.filter(|w| !w.class.is_empty()))
+        // Active window: parse class,title directly from event data — no need
+        // to re-query the socket. Event payload is "WINDOWCLASS,WINDOWTITLE".
+        "activewindow" => {
+            let win = data.split_once(',').map(|(class, title)| WindowInfo {
+                class: class.to_string(),
+                title: title.to_string(),
+            });
+            Some(HyprEvent::ActiveWindow(win.filter(|w| !w.class.is_empty())))
         }
-        // All workspace/monitor events (including monitoraddedv2/monitorremoved)
-        // trigger a full state refresh so bars are created/removed dynamically.
-        _ => HyprEvent::State(fetch_full_state().await),
+        // Window/workspace/monitor changes that affect what we render: refresh.
+        "workspace" | "workspacev2" | "createworkspace" | "createworkspacev2"
+        | "destroyworkspace" | "destroyworkspacev2" | "focusedmon" | "focusedmonv2"
+        | "openwindow" | "closewindow" | "movewindow" | "movewindowv2" | "monitoraddedv2"
+        | "monitorremoved" | "monitorremovedv2" | "changefloatingmode" | "urgent" => {
+            Some(HyprEvent::State(fetch_full_state().await))
+        }
+        // Ignore high-frequency noise: title changes, submap changes, activewindowv2
+        // (duplicate of activewindow), config reloads, etc.
+        _ => None,
     }
 }

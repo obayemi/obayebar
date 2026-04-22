@@ -1,4 +1,12 @@
+use crate::services::dbus_util::PanelSignal;
 use futures_util::Stream;
+
+static PANEL: PanelSignal = PanelSignal::new();
+
+/// Toggle from the UI when the sysinfo panel opens/closes.
+pub fn set_panel_open(open: bool) {
+    PANEL.set(open);
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SysInfo {
@@ -296,6 +304,7 @@ pub fn stream() -> impl Stream<Item = SysInfo> {
         let mut prev_cpu_total: u64 = 0;
         let mut prev_net_rx: u64 = 0;
         let mut prev_net_tx: u64 = 0;
+        let mut prev_sample_at = std::time::Instant::now();
         let mut last = SysInfo::default();
 
         loop {
@@ -336,10 +345,12 @@ pub fn stream() -> impl Stream<Item = SysInfo> {
                 .ok()
                 .map_or((0, 0), |content| parse_net_dev(&content));
 
-            let rx_rate = net_rx.saturating_sub(prev_net_rx) / 2; // 2s interval
-            let tx_rate = net_tx.saturating_sub(prev_net_tx) / 2;
+            let elapsed = prev_sample_at.elapsed().as_secs().max(1);
+            let rx_rate = net_rx.saturating_sub(prev_net_rx) / elapsed;
+            let tx_rate = net_tx.saturating_sub(prev_net_tx) / elapsed;
             prev_net_rx = net_rx;
             prev_net_tx = net_tx;
+            prev_sample_at = std::time::Instant::now();
 
             let info = SysInfo {
                 cpu_percent,
@@ -358,7 +369,18 @@ pub fn stream() -> impl Stream<Item = SysInfo> {
                 }
             }
 
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            // Panel open: 2s for smooth gauges. Panel closed: 10s — the bar
+            // icon only reacts to bucket (70/90) crossings, which are slow.
+            // `changed()` wakes us immediately when the user opens the panel.
+            let interval = if PANEL.is_open() {
+                std::time::Duration::from_secs(2)
+            } else {
+                std::time::Duration::from_secs(10)
+            };
+            tokio::select! {
+                () = tokio::time::sleep(interval) => {}
+                () = PANEL.changed() => {}
+            }
         }
     });
 
