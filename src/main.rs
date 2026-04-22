@@ -66,6 +66,11 @@ fn main() {
         .map(|()| log::set_max_level(max_level))
         .ok();
 
+    // The bar has no text input and doesn't need clipboard. The forked
+    // iced_layershell (vendor/iced_layershell) exposes this opt-out to
+    // skip spawning the always-on smithay-clipboard worker thread.
+    iced_layershell::disable_clipboard();
+
     let icon_fonts = style::load_icon_font();
 
     // The initial window is created by settings on the default output.
@@ -612,7 +617,7 @@ impl App {
         let is_animating = self.ws_spring.values().any(SpringState::is_animating);
 
         let mut subs = vec![
-            iced::time::every(std::time::Duration::from_secs(1)).map(|_| Message::Tick),
+            Subscription::run(services::timers::clock_stream).map(|_| Message::Tick),
             Subscription::run(services::hyprland::stream).map(Message::Hyprland),
             Subscription::run(services::battery::stream).map(Message::Battery),
             Subscription::run(services::network::stream).map(Message::Network),
@@ -622,6 +627,22 @@ impl App {
             Subscription::run(services::sysinfo::stream).map(Message::SysInfo),
             Subscription::run(services::notifications::stream).map(Message::Notif),
         ];
+
+        // Wake at the earliest pending popup expiry so we can retire it.
+        // The subscription's identity is the instant itself: when a new popup
+        // with a sooner expiry arrives, iced tears the old wake down and
+        // spawns a fresh one.
+        if let Some(next) = self
+            .popup_notifications
+            .iter()
+            .filter_map(|n| n.expire_at)
+            .min()
+        {
+            subs.push(
+                Subscription::run_with(next, |at| services::timers::wake_at(*at))
+                    .map(|()| Message::Tick),
+            );
+        }
 
         if is_animating {
             subs.push(

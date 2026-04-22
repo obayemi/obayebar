@@ -65,3 +65,9 @@ multiple_crate_versions = "allow"
 
 [profile.dev]
 codegen-backend = "cranelift"
+
+# Local fork of iced_layershell with an opt-out for clipboard init
+# (env var ICED_LAYERSHELL_NO_CLIPBOARD). The bar sets the env var to
+# skip spawning the always-on smithay-clipboard worker thread.
+[patch.crates-io]
+iced_layershell = { path = "vendor/iced_layershell" }
