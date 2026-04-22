@@ -1,3 +1,4 @@
+use crate::services::dbus_util::{self, proxy as build_proxy};
 use futures_util::stream::StreamExt;
 use futures_util::Stream;
 
@@ -65,24 +66,6 @@ const fn wifi_icon(strength: u8) -> &'static str {
         1..=24 => style::ICON_WIFI_1,
         _ => style::ICON_WIFI_0,
     }
-}
-
-async fn build_proxy<'a>(
-    conn: &'a zbus::Connection,
-    dest: &str,
-    path: &str,
-    iface: &str,
-) -> Option<zbus::Proxy<'a>> {
-    zbus::proxy::Builder::new(conn)
-        .destination(dest.to_string())
-        .ok()?
-        .path(path.to_string())
-        .ok()?
-        .interface(iface.to_string())
-        .ok()?
-        .build()
-        .await
-        .ok()
 }
 
 async fn read_ap_info(conn: &zbus::Connection, ap_path: &str) -> Option<(String, u8)> {

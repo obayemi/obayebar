@@ -1,5 +1,18 @@
+use crate::services::dbus_util;
 use futures_util::stream::StreamExt;
 use futures_util::Stream;
+
+const BLUEZ: &str = "org.bluez";
+
+/// Build an `org.bluez` proxy. Local wrapper around `dbus_util::proxy` that
+/// pins the destination, since every call in this module targets `BlueZ`.
+async fn build_proxy<'a>(
+    conn: &'a zbus::Connection,
+    path: &str,
+    iface: &str,
+) -> Option<zbus::Proxy<'a>> {
+    dbus_util::proxy(conn, BLUEZ, path, iface).await
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct BluetoothDevice {
@@ -39,23 +52,6 @@ const fn bt_icon(powered: bool, has_connected: bool) -> &'static str {
     } else {
         style::ICON_BLUETOOTH
     }
-}
-
-async fn build_proxy<'a>(
-    conn: &'a zbus::Connection,
-    path: &str,
-    iface: &str,
-) -> Option<zbus::Proxy<'a>> {
-    zbus::proxy::Builder::new(conn)
-        .destination("org.bluez")
-        .ok()?
-        .path(path.to_string())
-        .ok()?
-        .interface(iface.to_string())
-        .ok()?
-        .build()
-        .await
-        .ok()
 }
 
 async fn read_bluetooth_dbus(conn: &zbus::Connection) -> BluetoothInfo {

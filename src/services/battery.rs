@@ -1,8 +1,16 @@
 use std::sync::OnceLock;
 
+use crate::services::dbus_util;
 use futures_util::stream::StreamExt;
 use futures_util::Stream;
 use tokio::sync::Notify;
+
+const UPOWER_BUS: &str = "org.freedesktop.UPower";
+const UPOWER_PATH: &str = "/org/freedesktop/UPower/devices/DisplayDevice";
+const UPOWER_IFACE: &str = "org.freedesktop.UPower.Device";
+const PPD_BUS: &str = "net.hadess.PowerProfiles";
+const PPD_PATH: &str = "/net/hadess/PowerProfiles";
+const PPD_IFACE: &str = "net.hadess.PowerProfiles";
 
 static REFRESH_NOTIFY: OnceLock<Notify> = OnceLock::new();
 
@@ -79,16 +87,7 @@ fn battery_icon(percentage: f64, charging: bool) -> &'static str {
 }
 
 async fn read_power_profiles(conn: &zbus::Connection) -> Option<PowerProfileInfo> {
-    let proxy: zbus::Proxy<'_> = zbus::proxy::Builder::new(conn)
-        .destination("net.hadess.PowerProfiles")
-        .ok()?
-        .path("/net/hadess/PowerProfiles")
-        .ok()?
-        .interface("net.hadess.PowerProfiles")
-        .ok()?
-        .build()
-        .await
-        .ok()?;
+    let proxy = dbus_util::proxy(conn, PPD_BUS, PPD_PATH, PPD_IFACE).await?;
 
     let active: String = proxy.get_property("ActiveProfile").await.ok()?;
 
@@ -119,33 +118,17 @@ pub fn set_power_profile(profile: &str) {
         let Ok(conn) = zbus::Connection::system().await else {
             return;
         };
-        let Some(proxy) = zbus::proxy::Builder::<zbus::Proxy<'_>>::new(&conn)
-            .destination("net.hadess.PowerProfiles")
-            .ok()
-            .and_then(|b| b.path("/net/hadess/PowerProfiles").ok())
-            .and_then(|b| b.interface("net.hadess.PowerProfiles").ok())
-        else {
+        let Some(proxy) = dbus_util::proxy(&conn, PPD_BUS, PPD_PATH, PPD_IFACE).await else {
             return;
         };
-        if let Ok(proxy) = proxy.build().await {
-            if proxy.set_property("ActiveProfile", &profile).await.is_ok() {
-                refresh_notify().notify_one();
-            }
+        if proxy.set_property("ActiveProfile", &profile).await.is_ok() {
+            refresh_notify().notify_one();
         }
     });
 }
 
 async fn build_upower_proxy(conn: &zbus::Connection) -> Option<zbus::Proxy<'_>> {
-    zbus::proxy::Builder::new(conn)
-        .destination("org.freedesktop.UPower")
-        .ok()?
-        .path("/org/freedesktop/UPower/devices/DisplayDevice")
-        .ok()?
-        .interface("org.freedesktop.UPower.Device")
-        .ok()?
-        .build()
-        .await
-        .ok()
+    dbus_util::proxy(conn, UPOWER_BUS, UPOWER_PATH, UPOWER_IFACE).await
 }
 
 async fn read_battery_dbus(proxy: &zbus::Proxy<'_>) -> Option<BatteryInfo> {
