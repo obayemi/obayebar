@@ -1,8 +1,9 @@
+use super::widgets::panel_with_exit;
 use crate::services::sysinfo::{self, SysInfo};
 use crate::Message;
 use iced::widget::canvas::{self, path::Arc, Frame, Geometry, LineCap, Path, Stroke};
-use iced::widget::{column, container, mouse_area, row, text, Stack};
-use iced::{Alignment, Element, Length, Padding, Point, Radians, Rectangle, Renderer, Theme};
+use iced::widget::{column, container, row, text, Stack};
+use iced::{Alignment, Element, Length, Point, Radians, Rectangle, Renderer, Theme};
 use obayebar::style;
 
 const GAUGE_SIZE: f32 = 90.0;
@@ -248,19 +249,5 @@ pub fn view(sysinfo: &SysInfo) -> Element<'_, Message> {
         .height(Length::Shrink)
         .style(style::audio_panel_container);
 
-    mouse_area(
-        container(panel)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .align_y(Alignment::End)
-            .padding(Padding {
-                top: 0.0,
-                right: 0.0,
-                bottom: style::PANEL_GAP,
-                left: style::PANEL_GAP,
-            })
-            .style(style::panel_wrapper_container),
-    )
-    .on_exit(Message::CloseAllPanels)
-    .into()
+    panel_with_exit(panel.into())
 }

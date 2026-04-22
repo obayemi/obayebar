@@ -1,10 +1,9 @@
+use super::widgets::{hover_button_style, panel_with_exit, separator};
 use crate::services::battery::BatteryInfo;
 use crate::Message;
 use iced::widget::canvas::{self, path::Arc, Frame, Geometry, Path, Stroke};
-use iced::widget::{button, column, container, mouse_area, row, text, Space, Stack};
-use iced::{
-    Alignment, Border, Element, Length, Padding, Point, Radians, Rectangle, Renderer, Theme,
-};
+use iced::widget::{button, column, container, row, text, Stack};
+use iced::{Alignment, Element, Length, Point, Radians, Rectangle, Renderer, Theme};
 use obayebar::style;
 
 const GAUGE_SIZE: f32 = 140.0;
@@ -92,18 +91,6 @@ fn format_duration(seconds: i64) -> String {
     }
 }
 
-fn separator<'a>() -> Element<'a, Message> {
-    container(Space::new().width(Length::Fill).height(1.0))
-        .style(|_theme| container::Style {
-            background: Some(iced::Background::Color(style::with_alpha(
-                style::M3_OUTLINE_VARIANT,
-                0.5,
-            ))),
-            ..container::Style::default()
-        })
-        .into()
-}
-
 fn profile_label(name: &str) -> &str {
     match name {
         "power-saver" => "Saver",
@@ -152,24 +139,7 @@ fn profile_button(name: &str, is_active: bool) -> Element<'_, Message> {
 
     button(content)
         .on_press(Message::SetPowerProfile(profile_name))
-        .style(move |_theme, status| {
-            let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
-            let bg_color = if hover {
-                style::with_alpha(style::M3_ON_SURFACE, 0.08)
-            } else {
-                bg
-            };
-            button::Style {
-                background: Some(iced::Background::Color(bg_color)),
-                text_color,
-                border: Border {
-                    radius: style::ROUNDING_SMALL.into(),
-                    ..Border::default()
-                },
-                shadow: iced::Shadow::default(),
-                snap: false,
-            }
-        })
+        .style(hover_button_style(bg, text_color))
         .padding([style::PADDING_SMALL, style::PADDING_SMALLER])
         .width(Length::Fill)
         .into()
@@ -282,19 +252,5 @@ pub fn view(battery: &BatteryInfo) -> Element<'_, Message> {
         .height(Length::Shrink)
         .style(style::audio_panel_container);
 
-    mouse_area(
-        container(panel)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .align_y(Alignment::End)
-            .padding(Padding {
-                top: 0.0,
-                right: 0.0,
-                bottom: style::PANEL_GAP,
-                left: style::PANEL_GAP,
-            })
-            .style(style::panel_wrapper_container),
-    )
-    .on_exit(Message::CloseAllPanels)
-    .into()
+    panel_with_exit(panel.into())
 }

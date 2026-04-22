@@ -8,6 +8,7 @@ pub mod network_panel;
 mod status;
 pub mod sysinfo_panel;
 mod tray;
+mod widgets;
 pub mod workspaces;
 
 use crate::App;

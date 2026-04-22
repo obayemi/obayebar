@@ -1,20 +1,9 @@
+use super::widgets::{hover_button_style, panel_with_exit, separator};
 use crate::services::audio::AudioInfo;
 use crate::Message;
-use iced::widget::{button, column, container, mouse_area, row, slider, text, Space};
-use iced::{Alignment, Border, Element, Length};
+use iced::widget::{button, column, container, row, slider, text};
+use iced::{Alignment, Element, Length};
 use obayebar::style;
-
-fn separator<'a>() -> Element<'a, Message> {
-    container(Space::new().width(Length::Fill).height(1.0))
-        .style(|_theme| container::Style {
-            background: Some(iced::Background::Color(style::with_alpha(
-                style::M3_OUTLINE_VARIANT,
-                0.5,
-            ))),
-            ..container::Style::default()
-        })
-        .into()
-}
 
 fn sink_entry(description: &str, sink_id: u32, is_selected: bool) -> Element<'_, Message> {
     let (bg, text_color) = if is_selected {
@@ -33,24 +22,7 @@ fn sink_entry(description: &str, sink_id: u32, is_selected: bool) -> Element<'_,
             .width(Length::Fill),
     )
     .on_press(Message::AudioSetDefaultSink(sink_id))
-    .style(move |_theme, status| {
-        let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
-        let bg_color = if hover {
-            style::with_alpha(style::M3_ON_SURFACE, 0.08)
-        } else {
-            bg
-        };
-        button::Style {
-            background: Some(iced::Background::Color(bg_color)),
-            text_color,
-            border: Border {
-                radius: style::ROUNDING_SMALL.into(),
-                ..Border::default()
-            },
-            shadow: iced::Shadow::default(),
-            snap: false,
-        }
-    })
+    .style(hover_button_style(bg, text_color))
     .padding(style::PADDING_ENTRY)
     .width(Length::Fill)
     .into()
@@ -160,19 +132,5 @@ pub fn view(audio: &AudioInfo) -> Element<'_, Message> {
         .height(Length::Shrink)
         .style(style::audio_panel_container);
 
-    mouse_area(
-        container(panel)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .align_y(Alignment::End)
-            .padding(iced::Padding {
-                top: 0.0,
-                right: 0.0,
-                bottom: style::PANEL_GAP,
-                left: style::PANEL_GAP,
-            })
-            .style(style::panel_wrapper_container),
-    )
-    .on_exit(Message::CloseAllPanels)
-    .into()
+    panel_with_exit(panel.into())
 }

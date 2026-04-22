@@ -1,20 +1,9 @@
+use super::widgets::{hover_button_style, icon_button, panel_with_exit, separator, styled_toggler};
 use crate::services::bluetooth::BluetoothInfo;
 use crate::Message;
-use iced::widget::{button, column, container, mouse_area, row, text, toggler, Space};
-use iced::{Alignment, Border, Element, Length, Padding};
+use iced::widget::{button, column, container, row, text, Space};
+use iced::{Alignment, Border, Element, Length};
 use obayebar::style;
-
-fn separator<'a>() -> Element<'a, Message> {
-    container(Space::new().width(Length::Fill).height(1.0))
-        .style(|_theme| container::Style {
-            background: Some(iced::Background::Color(style::with_alpha(
-                style::M3_OUTLINE_VARIANT,
-                0.5,
-            ))),
-            ..container::Style::default()
-        })
-        .into()
-}
 
 fn device_icon(icon_hint: &str) -> &'static str {
     match icon_hint {
@@ -23,36 +12,6 @@ fn device_icon(icon_hint: &str) -> &'static str {
         s if s.contains("phone") => style::ICON_LANGUAGE,
         _ => style::ICON_BLUETOOTH,
     }
-}
-
-fn icon_button(icon: &str, color: iced::Color, message: Message) -> Element<'_, Message> {
-    button(
-        text(icon)
-            .font(style::ICON_FONT)
-            .size(style::FONT_SIZE_NORMAL)
-            .color(color)
-            .align_x(Alignment::Center),
-    )
-    .on_press(message)
-    .style(move |_theme, status| {
-        let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
-        button::Style {
-            background: Some(iced::Background::Color(if hover {
-                style::with_alpha(style::M3_ON_SURFACE, 0.08)
-            } else {
-                iced::Color::TRANSPARENT
-            })),
-            text_color: color,
-            border: Border {
-                radius: style::ROUNDING_SMALL.into(),
-                ..Border::default()
-            },
-            shadow: iced::Shadow::default(),
-            snap: false,
-        }
-    })
-    .padding(style::PADDING_SMALL)
-    .into()
 }
 
 fn device_entry(dev: &crate::services::bluetooth::BluetoothDevice) -> Element<'_, Message> {
@@ -170,45 +129,6 @@ fn nearby_entry(dev: &crate::services::bluetooth::BluetoothDevice) -> Element<'_
         .into()
 }
 
-fn power_toggle(powered: bool) -> Element<'static, Message> {
-    toggler(powered)
-        .on_toggle(Message::BluetoothSetPowered)
-        .size(style::FONT_SIZE_LARGE)
-        .style(move |_theme, status| {
-            let is_on = matches!(
-                status,
-                iced::widget::toggler::Status::Active { is_toggled: true }
-                    | iced::widget::toggler::Status::Hovered { is_toggled: true }
-            );
-            if is_on {
-                iced::widget::toggler::Style {
-                    background: iced::Background::Color(style::M3_PRIMARY),
-                    foreground: iced::Background::Color(style::M3_ON_PRIMARY),
-                    background_border_width: 0.0,
-                    background_border_color: iced::Color::TRANSPARENT,
-                    foreground_border_width: 0.0,
-                    foreground_border_color: iced::Color::TRANSPARENT,
-                    text_color: None,
-                    border_radius: None,
-                    padding_ratio: 0.15,
-                }
-            } else {
-                iced::widget::toggler::Style {
-                    background: iced::Background::Color(style::M3_SURFACE_CONTAINER_HIGHEST),
-                    foreground: iced::Background::Color(style::M3_OUTLINE),
-                    background_border_width: 2.0,
-                    background_border_color: style::M3_OUTLINE,
-                    foreground_border_width: 0.0,
-                    foreground_border_color: iced::Color::TRANSPARENT,
-                    text_color: None,
-                    border_radius: None,
-                    padding_ratio: 0.15,
-                }
-            }
-        })
-        .into()
-}
-
 fn discovery_button(discovering: bool) -> Element<'static, Message> {
     let (label, icon, text_color, bg) = if discovering {
         (
@@ -239,23 +159,7 @@ fn discovery_button(discovering: bool) -> Element<'static, Message> {
 
     button(content)
         .on_press(Message::BluetoothSetDiscovery(!discovering))
-        .style(move |_theme, status| {
-            let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
-            button::Style {
-                background: Some(iced::Background::Color(if hover {
-                    style::with_alpha(style::M3_ON_SURFACE, 0.08)
-                } else {
-                    bg
-                })),
-                text_color,
-                border: Border {
-                    radius: style::ROUNDING_SMALL.into(),
-                    ..Border::default()
-                },
-                shadow: iced::Shadow::default(),
-                snap: false,
-            }
-        })
+        .style(hover_button_style(bg, text_color))
         .padding(style::PADDING_ENTRY)
         .width(Length::Fill)
         .into()
@@ -271,7 +175,7 @@ pub fn view(bt: &BluetoothInfo) -> Element<'_, Message> {
             .size(style::FONT_SIZE_LARGE)
             .color(style::M3_ON_SURFACE),
         Space::new().width(Length::Fill),
-        power_toggle(bt.powered),
+        styled_toggler(bt.powered, Message::BluetoothSetPowered),
     ]
     .spacing(style::SPACING_SMALLER)
     .align_y(Alignment::Center);
@@ -334,19 +238,5 @@ pub fn view(bt: &BluetoothInfo) -> Element<'_, Message> {
         .height(Length::Shrink)
         .style(style::audio_panel_container);
 
-    mouse_area(
-        container(panel)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .align_y(Alignment::End)
-            .padding(Padding {
-                top: 0.0,
-                right: 0.0,
-                bottom: style::PANEL_GAP,
-                left: style::PANEL_GAP,
-            })
-            .style(style::panel_wrapper_container),
-    )
-    .on_exit(Message::CloseAllPanels)
-    .into()
+    panel_with_exit(panel.into())
 }

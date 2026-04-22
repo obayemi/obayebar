@@ -1,6 +1,7 @@
+use super::widgets::{icon_button, panel_with_exit, separator, styled_toggler};
 use crate::services::network::NetworkInfo;
 use crate::Message;
-use iced::widget::{button, column, container, mouse_area, row, text, toggler, Space};
+use iced::widget::{column, container, row, text, Space};
 use iced::{Alignment, Border, Element, Length};
 use obayebar::style;
 
@@ -63,35 +64,7 @@ fn network_entry<'a>(
                 Message::NetworkConnect(ssid.to_string()),
             )
         };
-        let action_color = style::M3_ON_SURFACE_VARIANT;
-
-        button(
-            text(action_icon)
-                .font(style::ICON_FONT)
-                .size(style::FONT_SIZE_NORMAL)
-                .color(action_color)
-                .align_x(Alignment::Center),
-        )
-        .on_press(action_msg)
-        .style(move |_theme, status| {
-            let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
-            button::Style {
-                background: Some(iced::Background::Color(if hover {
-                    style::with_alpha(style::M3_ON_SURFACE, 0.08)
-                } else {
-                    iced::Color::TRANSPARENT
-                })),
-                text_color: action_color,
-                border: Border {
-                    radius: style::ROUNDING_SMALL.into(),
-                    ..Border::default()
-                },
-                shadow: iced::Shadow::default(),
-                snap: false,
-            }
-        })
-        .padding(style::PADDING_SMALL)
-        .into()
+        icon_button(action_icon, style::M3_ON_SURFACE_VARIANT, action_msg)
     };
 
     let content = row![wifi_icon, label_row, action]
@@ -146,57 +119,6 @@ fn active_connection_entry<'a>(name: &'a str, icon_name: &'a str) -> Element<'a,
         .into()
 }
 
-fn separator<'a>() -> Element<'a, Message> {
-    container(Space::new().width(Length::Fill).height(1.0))
-        .style(|_theme| container::Style {
-            background: Some(iced::Background::Color(style::with_alpha(
-                style::M3_OUTLINE_VARIANT,
-                0.5,
-            ))),
-            ..container::Style::default()
-        })
-        .into()
-}
-
-fn wifi_toggle(enabled: bool) -> Element<'static, Message> {
-    toggler(enabled)
-        .on_toggle(Message::NetworkSetWifiEnabled)
-        .size(style::FONT_SIZE_LARGE)
-        .style(move |_theme, status| {
-            let is_on = matches!(
-                status,
-                iced::widget::toggler::Status::Active { is_toggled: true }
-                    | iced::widget::toggler::Status::Hovered { is_toggled: true }
-            );
-            if is_on {
-                iced::widget::toggler::Style {
-                    background: iced::Background::Color(style::M3_PRIMARY),
-                    foreground: iced::Background::Color(style::M3_ON_PRIMARY),
-                    background_border_width: 0.0,
-                    background_border_color: iced::Color::TRANSPARENT,
-                    foreground_border_width: 0.0,
-                    foreground_border_color: iced::Color::TRANSPARENT,
-                    text_color: None,
-                    border_radius: None,
-                    padding_ratio: 0.15,
-                }
-            } else {
-                iced::widget::toggler::Style {
-                    background: iced::Background::Color(style::M3_SURFACE_CONTAINER_HIGHEST),
-                    foreground: iced::Background::Color(style::M3_OUTLINE),
-                    background_border_width: 2.0,
-                    background_border_color: style::M3_OUTLINE,
-                    foreground_border_width: 0.0,
-                    foreground_border_color: iced::Color::TRANSPARENT,
-                    text_color: None,
-                    border_radius: None,
-                    padding_ratio: 0.15,
-                }
-            }
-        })
-        .into()
-}
-
 fn connection_type_label(conn_type: &str) -> &'static str {
     match conn_type {
         "802-3-ethernet" => "Ethernet",
@@ -228,7 +150,7 @@ pub fn view<'a>(
             .size(style::FONT_SIZE_LARGE)
             .color(style::M3_ON_SURFACE),
         Space::new().width(Length::Fill),
-        wifi_toggle(network.wifi_enabled),
+        styled_toggler(network.wifi_enabled, Message::NetworkSetWifiEnabled),
     ]
     .spacing(style::SPACING_SMALLER)
     .align_y(Alignment::Center);
@@ -337,19 +259,5 @@ pub fn view<'a>(
         .height(Length::Shrink)
         .style(style::audio_panel_container);
 
-    mouse_area(
-        container(panel)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .align_y(Alignment::End)
-            .padding(iced::Padding {
-                top: 0.0,
-                right: 0.0,
-                bottom: style::PANEL_GAP,
-                left: style::PANEL_GAP,
-            })
-            .style(style::panel_wrapper_container),
-    )
-    .on_exit(Message::CloseAllPanels)
-    .into()
+    panel_with_exit(panel.into())
 }
