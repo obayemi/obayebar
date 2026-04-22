@@ -131,6 +131,7 @@ pub struct App {
     pub sysinfo: SysInfo,
     pub tray_items: Vec<TrayItemInfo>,
     pub popup_notifications: Vec<NotificationData>,
+    pub hovered_notif_id: Option<u32>,
 }
 
 #[to_layer_message(multi)]
@@ -149,6 +150,8 @@ pub enum Message {
     Notif(NotifEvent),
     NotifDismiss(u32),
     NotifActivate(u32),
+    NotifHoverEnter(u32),
+    NotifHoverExit(u32),
     AudioPanelOpen(Option<String>),
     NetworkPanelOpen(Option<String>),
     BatteryPanelOpen(Option<String>),
@@ -199,6 +202,7 @@ impl App {
                 sysinfo: SysInfo::default(),
                 tray_items: Vec::new(),
                 popup_notifications: Vec::new(),
+                hovered_notif_id: None,
             },
             Task::none(),
         )
@@ -314,12 +318,28 @@ impl App {
                 }
                 NotifEvent::Closed(id) => {
                     self.popup_notifications.retain(|n| n.id != id);
+                    if self.hovered_notif_id == Some(id) {
+                        self.hovered_notif_id = None;
+                    }
                     self.maybe_close_popup_window()
                 }
             },
             Message::NotifDismiss(id) => {
                 self.popup_notifications.retain(|n| n.id != id);
+                if self.hovered_notif_id == Some(id) {
+                    self.hovered_notif_id = None;
+                }
                 self.maybe_close_popup_window()
+            }
+            Message::NotifHoverEnter(id) => {
+                self.hovered_notif_id = Some(id);
+                Task::none()
+            }
+            Message::NotifHoverExit(id) => {
+                if self.hovered_notif_id == Some(id) {
+                    self.hovered_notif_id = None;
+                }
+                Task::none()
             }
             Message::NotifActivate(id) => {
                 let notif = self.popup_notifications.iter().find(|n| n.id == id);
@@ -328,6 +348,9 @@ impl App {
                     .map_or_else(|| "default".to_string(), |(key, _)| key.clone());
                 let app_name = notif.map(|n| n.app_name.clone());
                 self.popup_notifications.retain(|n| n.id != id);
+                if self.hovered_notif_id == Some(id) {
+                    self.hovered_notif_id = None;
+                }
                 services::notifications::invoke_action(id, action_key);
                 if let Some(name) = app_name {
                     services::hyprland::focus_window(&name);
@@ -620,6 +643,11 @@ impl App {
         let now = chrono::Local::now();
         self.popup_notifications
             .retain(|n| n.expire_at.is_none_or(|exp| now < exp));
+        if let Some(hovered) = self.hovered_notif_id {
+            if !self.popup_notifications.iter().any(|n| n.id == hovered) {
+                self.hovered_notif_id = None;
+            }
+        }
         self.maybe_close_popup_window()
     }
 

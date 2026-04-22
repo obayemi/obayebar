@@ -1,6 +1,6 @@
 use crate::services::notifications::{NotificationData, Urgency};
 use crate::Message;
-use iced::widget::{button, column, container, image, mouse_area, row, text, Space};
+use iced::widget::{column, container, image, mouse_area, row, text, Space};
 use iced::{Alignment, Border, Element, Length};
 use obayebar::style;
 
@@ -8,11 +8,14 @@ use obayebar::style;
 /// summary (13*1.3) + spacing (2) + body (11*1.3) + padding (10*2) ≈ 53
 const ICON_STRIP_SIZE: f32 = 53.0;
 
-fn notification_card(notif: &NotificationData) -> Element<'_, Message> {
-    let container_style = if notif.urgency == Urgency::Critical {
-        style::notification_critical_container as fn(&iced::Theme) -> container::Style
-    } else {
-        style::notification_container
+fn notification_card(notif: &NotificationData, hovered: bool) -> Element<'_, Message> {
+    let container_style = match (notif.urgency == Urgency::Critical, hovered) {
+        (true, true) => {
+            style::notification_critical_container_hovered as fn(&iced::Theme) -> container::Style
+        }
+        (true, false) => style::notification_critical_container,
+        (false, true) => style::notification_container_hovered,
+        (false, false) => style::notification_container,
     };
 
     let icon_strip = build_icon_strip(notif);
@@ -28,6 +31,9 @@ fn notification_card(notif: &NotificationData) -> Element<'_, Message> {
 
     mouse_area(card)
         .on_press(Message::NotifActivate(notif_id))
+        .on_right_press(Message::NotifDismiss(notif_id))
+        .on_enter(Message::NotifHoverEnter(notif_id))
+        .on_exit(Message::NotifHoverExit(notif_id))
         .into()
 }
 
@@ -121,18 +127,7 @@ fn build_right_content(notif: &NotificationData) -> Element<'_, Message> {
         .spacing(2.0)
         .width(Length::Fill);
 
-    let notif_id = notif.id;
-    let dismiss_btn = button(
-        text(style::ICON_CLOSE)
-            .font(style::ICON_FONT)
-            .size(14.0)
-            .color(style::M3_ON_SURFACE),
-    )
-    .on_press(Message::NotifDismiss(notif_id))
-    .style(style::transparent_button)
-    .padding(2.0);
-
-    row![text_content, dismiss_btn]
+    row![text_content]
         .spacing(4.0)
         .padding([style::PADDING_NORMAL, style::PADDING_NORMAL])
         .align_y(Alignment::Start)
@@ -140,13 +135,14 @@ fn build_right_content(notif: &NotificationData) -> Element<'_, Message> {
         .into()
 }
 
-pub fn view(popups: &[NotificationData]) -> Element<'_, Message> {
+pub fn view(popups: &[NotificationData], hovered_id: Option<u32>) -> Element<'_, Message> {
     let mut content = column![]
         .spacing(style::SPACING_SMALLER)
         .width(Length::Fill);
 
     for notif in popups {
-        content = content.push(notification_card(notif));
+        let hovered = hovered_id == Some(notif.id);
+        content = content.push(notification_card(notif, hovered));
     }
 
     container(content)

@@ -517,11 +517,40 @@ pub fn notification_container(theme: &iced::Theme) -> container::Style {
     }
 }
 
+/// Notification card container (hovered)
+pub fn notification_container_hovered(theme: &iced::Theme) -> container::Style {
+    let _ = theme;
+    container::Style {
+        background: Some(Background::Color(with_alpha(
+            M3_SURFACE_CONTAINER_HIGHEST,
+            0.98,
+        ))),
+        border: Border {
+            radius: ROUNDING_EXTRA_SMALL.into(),
+            ..Border::default()
+        },
+        ..container::Style::default()
+    }
+}
+
 /// Critical notification container
 pub fn notification_critical_container(theme: &iced::Theme) -> container::Style {
     let _ = theme;
     container::Style {
         background: Some(Background::Color(with_alpha(M3_SECONDARY_CONTAINER, 0.95))),
+        border: Border {
+            radius: ROUNDING_EXTRA_SMALL.into(),
+            ..Border::default()
+        },
+        ..container::Style::default()
+    }
+}
+
+/// Critical notification container (hovered)
+pub fn notification_critical_container_hovered(theme: &iced::Theme) -> container::Style {
+    let _ = theme;
+    container::Style {
+        background: Some(Background::Color(with_alpha(M3_TERTIARY_CONTAINER, 0.98))),
         border: Border {
             radius: ROUNDING_EXTRA_SMALL.into(),
             ..Border::default()
