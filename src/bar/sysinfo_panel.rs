@@ -69,23 +69,11 @@ fn arc_path(center: Point, radius: f32, start_offset: f32, sweep: f32) -> Path {
 }
 
 fn usage_color(percent: f32) -> iced::Color {
-    if percent >= 90.0 {
-        style::M3_ERROR
-    } else if percent >= 70.0 {
-        style::M3_TERTIARY
-    } else {
-        style::M3_PRIMARY
-    }
+    style::severity_color(percent, 70.0, 90.0, style::M3_PRIMARY)
 }
 
 fn temp_color(temp_c: f32) -> iced::Color {
-    if temp_c >= 90.0 {
-        style::M3_ERROR
-    } else if temp_c >= 70.0 {
-        style::M3_TERTIARY
-    } else {
-        style::M3_ON_SURFACE_VARIANT
-    }
+    style::severity_color(temp_c, 70.0, 90.0, style::M3_ON_SURFACE_VARIANT)
 }
 
 fn gauge_widget<'a>(

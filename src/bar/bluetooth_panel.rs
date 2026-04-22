@@ -133,7 +133,7 @@ fn device_entry(dev: &crate::services::bluetooth::BluetoothDevice) -> Element<'_
             },
             ..container::Style::default()
         })
-        .padding([style::PADDING_SMALL, style::PADDING_NORMAL])
+        .padding(style::PADDING_ENTRY)
         .width(Length::Fill)
         .into()
 }
@@ -165,7 +165,7 @@ fn nearby_entry(dev: &crate::services::bluetooth::BluetoothDevice) -> Element<'_
         .width(Length::Fill);
 
     container(content)
-        .padding([style::PADDING_SMALL, style::PADDING_NORMAL])
+        .padding(style::PADDING_ENTRY)
         .width(Length::Fill)
         .into()
 }
@@ -256,7 +256,7 @@ fn discovery_button(discovering: bool) -> Element<'static, Message> {
                 snap: false,
             }
         })
-        .padding([style::PADDING_SMALL, style::PADDING_NORMAL])
+        .padding(style::PADDING_ENTRY)
         .width(Length::Fill)
         .into()
 }

@@ -100,7 +100,7 @@ fn network_entry<'a>(
         .width(Length::Fill);
 
     container(content)
-        .padding([style::PADDING_SMALL, style::PADDING_NORMAL])
+        .padding(style::PADDING_ENTRY)
         .width(Length::Fill)
         .style(move |_theme| container::Style {
             background: Some(iced::Background::Color(bg)),
@@ -130,7 +130,7 @@ fn active_connection_entry<'a>(name: &'a str, icon_name: &'a str) -> Element<'a,
         .width(Length::Fill);
 
     container(content)
-        .padding([style::PADDING_SMALL, style::PADDING_NORMAL])
+        .padding(style::PADDING_ENTRY)
         .width(Length::Fill)
         .style(|_theme| container::Style {
             background: Some(iced::Background::Color(style::with_alpha(

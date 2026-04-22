@@ -62,6 +62,9 @@ pub const PADDING_NORMAL: f32 = 10.0;
 pub const PADDING_LARGER: f32 = 12.0;
 pub const PADDING_LARGE: f32 = 15.0;
 
+/// Standard vertical/horizontal padding for list entries across panels.
+pub const PADDING_ENTRY: [f32; 2] = [PADDING_SMALL, PADDING_NORMAL];
+
 // Rounding (from AppearanceConfig)
 pub const ROUNDING_EXTRA_SMALL: f32 = 5.0;
 pub const ROUNDING_SMALL: f32 = 12.0;
@@ -596,5 +599,34 @@ pub fn transparent_button(
         border: Border::default(),
         shadow: iced::Shadow::default(),
         snap: false,
+    }
+}
+
+/// Shared Material 3 dark palette for iced themes.
+pub const fn m3_palette() -> iced::theme::Palette {
+    iced::theme::Palette {
+        background: Color::TRANSPARENT,
+        text: M3_ON_SURFACE,
+        primary: M3_PRIMARY,
+        success: Color::from_rgb(0.2, 0.8, 0.2),
+        danger: M3_ERROR,
+        warning: M3_TERTIARY,
+    }
+}
+
+/// Custom `iced::Theme` with the Material 3 dark palette.
+pub fn m3_theme(name: &str) -> iced::Theme {
+    iced::Theme::custom(name.to_string(), m3_palette())
+}
+
+/// Pick a color from an ascending severity scale: `baseline` below `warn`,
+/// tertiary between `warn` and `danger`, error at/above `danger`.
+pub fn severity_color(value: f32, warn: f32, danger: f32, baseline: Color) -> Color {
+    if value >= danger {
+        M3_ERROR
+    } else if value >= warn {
+        M3_TERTIARY
+    } else {
+        baseline
     }
 }

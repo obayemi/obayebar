@@ -642,15 +642,5 @@ pub fn theme(_launcher: &Launcher, theme: &Theme) -> iced::theme::Style {
 }
 
 pub fn theme_fn(_launcher: &Launcher) -> Theme {
-    Theme::custom(
-        String::from("obayebar-launcher-dark"),
-        iced::theme::Palette {
-            background: Color::TRANSPARENT,
-            text: style::M3_ON_SURFACE,
-            primary: style::M3_PRIMARY,
-            success: Color::from_rgb(0.2, 0.8, 0.2),
-            danger: style::M3_ERROR,
-            warning: style::M3_TERTIARY,
-        },
-    )
+    style::m3_theme("obayebar-launcher-dark")
 }

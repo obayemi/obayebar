@@ -51,7 +51,7 @@ fn sink_entry(description: &str, sink_id: u32, is_selected: bool) -> Element<'_,
             snap: false,
         }
     })
-    .padding([style::PADDING_SMALL, style::PADDING_NORMAL])
+    .padding(style::PADDING_ENTRY)
     .width(Length::Fill)
     .into()
 }

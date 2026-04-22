@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use bar::workspaces::SpringState;
 use iced::widget::canvas;
 use iced::window;
-use iced::{Color, Element, Subscription, Task, Theme};
+use iced::{Element, Subscription, Task, Theme};
 use iced_layershell::reexport::{
     Anchor, KeyboardInteractivity, Layer, NewLayerShellSettings, OutputOption,
 };
@@ -705,17 +705,7 @@ fn connection_type_groups(conns: &[services::network::ActiveConnectionInfo]) -> 
 }
 
 fn theme_fn(_app: &App, _id: window::Id) -> Theme {
-    Theme::custom(
-        String::from("obayebar-dark"),
-        iced::theme::Palette {
-            background: Color::TRANSPARENT,
-            text: style::M3_ON_SURFACE,
-            primary: style::M3_PRIMARY,
-            success: Color::from_rgb(0.2, 0.8, 0.2),
-            danger: style::M3_ERROR,
-            warning: style::M3_TERTIARY,
-        },
-    )
+    style::m3_theme("obayebar-dark")
 }
 
 fn close_window(id: window::Id) -> Task<Message> {
