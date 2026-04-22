@@ -401,25 +401,44 @@ pub fn sysinfo_panel_height() -> u32 {
     (container_padding + header + per_row * 2.0 + outer_spacing + safety).ceil() as u32
 }
 
+fn find_outlined_font(dir: &str) -> Option<std::path::PathBuf> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        if name.starts_with("MaterialSymbolsOutlined")
+            && path
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("ttf"))
+        {
+            return Some(path);
+        }
+    }
+    None
+}
+
 /// Load the Material Symbols font from the system or `OBAYEBAR_FONT_DIR` env var.
 pub fn load_icon_font() -> Vec<Cow<'static, [u8]>> {
-    let font_paths = [
-        // Environment variable set by nix flake
-        std::env::var("OBAYEBAR_FONT_DIR")
-            .map(|dir| format!("{dir}/MaterialSymbolsOutlined.ttf"))
-            .ok(),
-        // Common system paths
-        Some("/run/current-system/sw/share/fonts/TTF/MaterialSymbolsOutlined.ttf".into()),
+    // Nixpkgs' material-symbols package now ships a variable font named
+    // `MaterialSymbolsOutlined[FILL,GRAD,opsz,wght].ttf`; older releases
+    // shipped `MaterialSymbolsOutlined.ttf`. Scan the directory for either.
+    let font_dirs = [
+        std::env::var("OBAYEBAR_FONT_DIR").ok(),
+        Some("/run/current-system/sw/share/fonts/TTF".into()),
         Some(format!(
-            "{}/.local/share/fonts/MaterialSymbolsOutlined.ttf",
+            "{}/.local/share/fonts",
             std::env::var("HOME").unwrap_or_default()
         )),
     ];
 
-    for path in font_paths.into_iter().flatten() {
-        if let Ok(data) = std::fs::read(&path) {
-            log::info!("Loaded icon font from {path}");
-            return vec![Cow::Owned(data)];
+    for dir in font_dirs.into_iter().flatten() {
+        if let Some(path) = find_outlined_font(&dir) {
+            if let Ok(data) = std::fs::read(&path) {
+                log::info!("Loaded icon font from {}", path.display());
+                return vec![Cow::Owned(data)];
+            }
         }
     }
 
