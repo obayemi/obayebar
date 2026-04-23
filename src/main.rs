@@ -86,6 +86,7 @@ fn main() {
                 ..LayerShellSettings::default()
             },
             fonts: icon_fonts,
+            antialiasing: true,
             ..Settings::default()
         })
         .subscription(App::subscription)
