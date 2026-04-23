@@ -114,8 +114,8 @@ pub fn view<'a>(app: &'a App, monitor: Option<&'a str>) -> Element<'a, Message> 
     ]
     .spacing(style::SPACING_NORMAL)
     .padding(Padding {
-        top: style::PADDING_LARGE,
-        bottom: style::PADDING_LARGE,
+        top: style::PADDING_SMALL,
+        bottom: style::PADDING_SMALL,
         left: style::BAR_PADDING,
         right: style::BAR_PADDING,
     })
