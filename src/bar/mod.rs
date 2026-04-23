@@ -14,7 +14,7 @@ use crate::App;
 use crate::Message;
 use chrono::{Datelike, Timelike};
 use iced::widget::{column, container, lazy, Space};
-use iced::{Background, Element, Length, Padding};
+use iced::{Background, Element, Length};
 use obayebar::style;
 
 /// Bucket a percentage into threshold categories for cache-key hashing.
@@ -113,12 +113,7 @@ pub fn view<'a>(app: &'a App, monitor: Option<&'a str>) -> Element<'a, Message> 
         }),
     ]
     .spacing(style::SPACING_NORMAL)
-    .padding(Padding {
-        top: style::PADDING_SMALL,
-        bottom: style::PADDING_SMALL,
-        left: style::BAR_PADDING,
-        right: style::BAR_PADDING,
-    })
+    .padding(style::BAR_PADDING)
     .align_x(iced::Alignment::Center)
     .width(Length::Fill)
     .height(Length::Fill);
