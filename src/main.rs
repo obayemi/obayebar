@@ -20,7 +20,7 @@ use iced_layershell::to_layer_message;
 use services::audio::{AudioCommand, AudioInfo};
 use services::battery::BatteryInfo;
 use services::bluetooth::BluetoothInfo;
-use services::hyprland::{HyprEvent, HyprState, WindowInfo, WorkspaceInfo};
+use services::hyprland::{HyprEvent, HyprState, MonitorGeom, WindowInfo, WorkspaceInfo};
 use services::network::NetworkInfo;
 use services::notifications::{NotifEvent, NotificationData};
 use services::sysinfo::SysInfo;
@@ -127,6 +127,11 @@ pub struct App {
     pub workspaces: Vec<WorkspaceInfo>,
     /// Per-monitor active workspace: `monitor_name` -> `active_workspace_id`
     pub active_workspaces: HashMap<String, i32>,
+    /// Physical geometry of each connected monitor, keyed by name.
+    pub monitor_geoms: HashMap<String, MonitorGeom>,
+    /// Name of the Hyprland-focused monitor, used as the reference output for
+    /// overlays that need a screen-relative size (notification popup, etc.).
+    pub focused_monitor: Option<String>,
     pub active_window: Option<WindowInfo>,
     pub time: chrono::DateTime<chrono::Local>,
     pub battery: BatteryInfo,
@@ -198,6 +203,8 @@ impl App {
                 sysinfo_panel: panel::Panel::new(),
                 workspaces: Vec::new(),
                 active_workspaces: HashMap::new(),
+                monitor_geoms: HashMap::new(),
+                focused_monitor: None,
                 active_window: None,
                 time: chrono::Local::now(),
                 battery: BatteryInfo::default(),
@@ -498,6 +505,8 @@ impl App {
     fn apply_hypr_state(&mut self, state: HyprState) -> Task<Message> {
         self.workspaces = state.workspaces;
         self.active_window = state.active_window;
+        self.monitor_geoms = state.monitor_geoms;
+        self.focused_monitor = Some(state.focused_monitor.clone());
 
         // Invalidate all workspace caches since data changed
         for cache in self.ws_cache.values() {
@@ -592,6 +601,12 @@ impl App {
             }));
         }
 
+        // Re-fit notification popup: focused monitor or its geometry may have
+        // changed, which affects the 2/5-of-screen cap.
+        if self.notif_popup_id.is_some() && !self.popup_notifications.is_empty() {
+            tasks.push(self.ensure_popup_window());
+        }
+
         Task::batch(tasks)
     }
 
@@ -679,13 +694,51 @@ impl App {
         self.maybe_close_popup_window()
     }
 
+    /// Maximum popup height in logical pixels: 2/5 of the focused monitor's
+    /// logical height, or a conservative 1080p-based fallback.
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss,
+        clippy::cast_sign_loss,
+        clippy::as_conversions
+    )]
+    fn popup_max_height(&self) -> u32 {
+        const FALLBACK_LOGICAL_H: f32 = 1080.0;
+        let num = f32::from(u16::try_from(style::NOTIF_POPUP_MAX_FRACTION_NUM).unwrap_or(2));
+        let den = f32::from(u16::try_from(style::NOTIF_POPUP_MAX_FRACTION_DEN).unwrap_or(5));
+
+        let geom = self
+            .focused_monitor
+            .as_deref()
+            .and_then(|name| self.monitor_geoms.get(name));
+
+        let logical_h = geom.map_or(FALLBACK_LOGICAL_H, |g| {
+            let scale = if g.scale > 0.0 { g.scale } else { 1.0 };
+            // Transforms 1/3/5/7 rotate by 90° or 270°, swapping width/height.
+            let raw = match g.transform {
+                1 | 3 | 5 | 7 => g.width,
+                _ => g.height,
+            };
+            raw as f32 / scale
+        });
+
+        (logical_h * num / den) as u32
+    }
+
+    /// Decide how many popup cards fit and how many spill into an overflow
+    /// summary entry, using the focused monitor's screen cap.
+    fn popup_fit(&self) -> (usize, usize) {
+        style::notif_popup_fit(self.popup_notifications.len(), self.popup_max_height())
+    }
+
     fn ensure_popup_window(&mut self) -> Task<Message> {
         if self.popup_notifications.is_empty() {
             return Task::none();
         }
-        let height = style::notif_popup_height(self.popup_notifications.len());
+        let (visible, overflow) = self.popup_fit();
+        let height = style::notif_popup_height(visible, overflow);
         if let Some(id) = self.notif_popup_id {
-            // Resize existing window to fit current notification count
+            // Resize existing window to fit current notification layout
             return Task::done(Message::SizeChange {
                 id,
                 size: (style::NOTIF_WIDTH, height),

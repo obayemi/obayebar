@@ -135,14 +135,42 @@ fn build_right_content(notif: &NotificationData) -> Element<'_, Message> {
         .into()
 }
 
-pub fn view(popups: &[NotificationData], hovered_id: Option<u32>) -> Element<'_, Message> {
+fn overflow_card(count: usize) -> Element<'static, Message> {
+    let label = if count == 1 {
+        "1 other notification".to_string()
+    } else {
+        format!("{count} other notifications")
+    };
+    container(
+        text(label)
+            .size(style::FONT_SIZE_SMALLER)
+            .color(style::M3_ON_SURFACE_VARIANT)
+            .align_x(Alignment::Center),
+    )
+    .padding([style::PADDING_NORMAL, style::PADDING_NORMAL])
+    .width(Length::Fill)
+    .align_x(Alignment::Center)
+    .style(style::notification_container)
+    .into()
+}
+
+pub fn view(
+    popups: &[NotificationData],
+    hovered_id: Option<u32>,
+    visible: usize,
+    overflow: usize,
+) -> Element<'_, Message> {
     let mut content = column![]
         .spacing(style::SPACING_SMALLER)
         .width(Length::Fill);
 
-    for notif in popups {
+    for notif in popups.iter().take(visible) {
         let hovered = hovered_id == Some(notif.id);
         content = content.push(notification_card(notif, hovered));
+    }
+
+    if overflow > 0 {
+        content = content.push(overflow_card(overflow));
     }
 
     container(content)

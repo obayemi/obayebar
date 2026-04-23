@@ -2,4 +2,5 @@
 - [ ] iddle inhibitor thing
 - [x] clic on notif focuses the app
 - [x] faster launcher run
-- [ ] launcher navigation with arrows scrolls the viewport
+- [x] launcher navigation with arrows scrolls the viewport
+- [x] resize the notification pannel dynamically according to the current number of notifications (or fix the thing). also do implement a limit to the number of notification that can be displayed, if the notification should take more than 2/5 of the screen, show a message "<n> other notifications" instead

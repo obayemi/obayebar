@@ -29,6 +29,14 @@ pub struct MonitorInfo {
     pub active_workspace: MonitorWorkspace,
     #[serde(default)]
     pub focused: bool,
+    #[serde(default)]
+    pub width: u32,
+    #[serde(default)]
+    pub height: u32,
+    #[serde(default)]
+    pub scale: f32,
+    #[serde(default)]
+    pub transform: i32,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -36,11 +44,22 @@ pub struct MonitorWorkspace {
     pub id: i32,
 }
 
+/// Physical geometry of a connected monitor, used for sizing overlays
+/// that need to know the screen dimensions (e.g. notification popup cap).
+#[derive(Debug, Clone, Copy)]
+pub struct MonitorGeom {
+    pub width: u32,
+    pub height: u32,
+    pub scale: f32,
+    pub transform: i32,
+}
+
 /// All state fetched from Hyprland in one batch
 #[derive(Debug, Clone)]
 pub struct HyprState {
     pub monitors: Vec<String>,
     pub focused_monitor: String,
+    pub monitor_geoms: HashMap<String, MonitorGeom>,
     pub workspaces: Vec<WorkspaceInfo>,
     pub active_workspaces: HashMap<String, i32>,
     pub active_window: Option<WindowInfo>,
@@ -93,10 +112,25 @@ async fn fetch_full_state() -> HyprState {
         .iter()
         .map(|m| (m.name.clone(), m.active_workspace.id))
         .collect();
+    let monitor_geoms: HashMap<String, MonitorGeom> = monitors
+        .iter()
+        .map(|m| {
+            (
+                m.name.clone(),
+                MonitorGeom {
+                    width: m.width,
+                    height: m.height,
+                    scale: if m.scale > 0.0 { m.scale } else { 1.0 },
+                    transform: m.transform,
+                },
+            )
+        })
+        .collect();
 
     HyprState {
         monitors: monitor_names,
         focused_monitor,
+        monitor_geoms,
         workspaces,
         active_workspaces,
         active_window,
@@ -145,6 +179,7 @@ pub fn stream() -> impl Stream<Item = HyprEvent> {
                         HyprEvent::State(HyprState {
                             monitors: Vec::new(),
                             focused_monitor: String::new(),
+                            monitor_geoms: HashMap::new(),
                             workspaces: Vec::new(),
                             active_workspaces: HashMap::new(),
                             active_window: None,

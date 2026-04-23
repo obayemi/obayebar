@@ -191,28 +191,103 @@ pub fn audio_panel_height(sink_count: usize) -> u32 {
         .ceil() as u32
 }
 
-/// Compute the popup notification window height for `notif_count` cards.
+/// Height of a single notification card. The card holds two text lines and
+/// vertical padding, clamped to at least the left icon-strip square.
+fn notif_card_height() -> f32 {
+    let summary_line = FONT_SIZE_NORMAL * LINE_HEIGHT;
+    let body_line = FONT_SIZE_SMALL * LINE_HEIGHT;
+    let inner = summary_line.mul_add(1.0, 2.0 + body_line);
+    PADDING_NORMAL.mul_add(2.0, inner).max(53.0)
+}
+
+/// Height of the compact "<n> other notifications" overflow card.
+fn notif_overflow_card_height() -> f32 {
+    PADDING_NORMAL.mul_add(2.0, FONT_SIZE_SMALLER * LINE_HEIGHT)
+}
+
+/// Fraction of screen height the notification popup may occupy.
+pub const NOTIF_POPUP_MAX_FRACTION_NUM: u32 = 2;
+pub const NOTIF_POPUP_MAX_FRACTION_DEN: u32 = 5;
+
+/// Notification popup chrome (outer padding + layout safety margin). Added to
+/// the card stack to get the full window height.
+const fn notif_popup_chrome() -> f32 {
+    PADDING_LARGE.mul_add(2.0, 20.0)
+}
+
+/// Given `total` pending notifications and a `max_height` budget, decide how
+/// many cards to render in full and how many spill into the overflow summary.
+///
+/// Returns `(visible, overflow)` such that `visible + overflow == total` and
+/// the resulting popup fits within `max_height`. When `max_height` is 0 or
+/// unknown, falls back to rendering every card.
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
     clippy::cast_precision_loss,
     clippy::as_conversions
 )]
-pub fn notif_popup_height(notif_count: usize) -> u32 {
-    let container_padding = PADDING_LARGE * 2.0;
-    let n = notif_count.max(1) as f32;
+pub fn notif_popup_fit(total: usize, max_height: u32) -> (usize, usize) {
+    if total == 0 {
+        return (0, 0);
+    }
+    if max_height == 0 {
+        return (total, 0);
+    }
 
-    // Each notification card: two text lines + padding, at least icon strip size (53px)
-    let summary_line = FONT_SIZE_NORMAL * LINE_HEIGHT;
-    let body_line = FONT_SIZE_SMALL * LINE_HEIGHT;
-    let card_inner = summary_line.mul_add(1.0, 2.0 + body_line);
-    let card_height = PADDING_NORMAL.mul_add(2.0, card_inner).max(53.0);
+    let card = notif_card_height();
+    let overflow_card = notif_overflow_card_height();
+    let chrome = notif_popup_chrome();
+    let max_h = max_height as f32;
 
-    // N cards with SPACING_SMALLER gaps between them
-    let cards = (n - 1.0).max(0.0).mul_add(SPACING_SMALLER, n * card_height);
+    let cards_only = (total as f32).mul_add(card, chrome);
+    let all_h = (total.saturating_sub(1) as f32).mul_add(SPACING_SMALLER, cards_only);
+    if all_h <= max_h {
+        return (total, 0);
+    }
 
-    let safety = 20.0;
-    (container_padding + cards + safety).ceil() as u32
+    // Reserve space for the overflow card and its leading gap, then pack cards.
+    // Each visible card costs card + SPACING_SMALLER (the gap before it or
+    // before the overflow card — there are `visible` gaps total when at least
+    // one card is shown alongside the overflow entry).
+    let budget = max_h - chrome - overflow_card;
+    if budget <= 0.0 {
+        // Cannot fit even one card; still show at least the overflow note.
+        return (0, total);
+    }
+    let per_card = card + SPACING_SMALLER;
+    let k = (budget / per_card).floor() as usize;
+    let visible = k.min(total.saturating_sub(1));
+    let overflow = total.saturating_sub(visible);
+    (visible, overflow)
+}
+
+/// Compute the popup notification window height for the given card layout.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    clippy::as_conversions
+)]
+pub fn notif_popup_height(visible: usize, overflow: usize) -> u32 {
+    let card = notif_card_height();
+    let overflow_card = notif_overflow_card_height();
+
+    let mut h = PADDING_LARGE * 2.0;
+    if visible > 0 {
+        let n = visible as f32;
+        h += (n - 1.0).max(0.0).mul_add(SPACING_SMALLER, n * card);
+    }
+    if overflow > 0 {
+        if visible > 0 {
+            h += SPACING_SMALLER;
+        }
+        h += overflow_card;
+    }
+    if visible == 0 && overflow == 0 {
+        h += card; // minimum footprint
+    }
+    (h + 20.0).ceil() as u32
 }
 
 /// Compute the network panel window height for `ap_count` visible networks.
@@ -628,5 +703,66 @@ pub fn severity_color(value: f32, warn: f32, danger: f32, baseline: Color) -> Co
         M3_TERTIARY
     } else {
         baseline
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn notif_fit_shows_all_when_budget_is_large() {
+        // 10 notifications easily fit in 10_000 logical px.
+        assert_eq!(notif_popup_fit(10, 10_000), (10, 0));
+    }
+
+    #[test]
+    fn notif_fit_returns_zero_when_none_pending() {
+        assert_eq!(notif_popup_fit(0, 500), (0, 0));
+    }
+
+    #[test]
+    fn notif_fit_spills_into_overflow_when_budget_is_tight() {
+        // Height tuned to fit ~2 cards; expect an overflow summary for the rest.
+        let (visible, overflow) = notif_popup_fit(10, 250);
+        assert!(visible >= 1, "should show at least one full card");
+        assert!(overflow >= 1, "should have overflow when capped");
+        assert_eq!(visible + overflow, 10);
+
+        // And the resulting window height stays inside the cap.
+        assert!(notif_popup_height(visible, overflow) <= 250);
+    }
+
+    #[test]
+    fn notif_fit_degenerates_to_overflow_only_when_no_room_for_cards() {
+        // 60 logical px can't fit even a single 53-px card plus chrome.
+        let (visible, overflow) = notif_popup_fit(5, 60);
+        assert_eq!(visible, 0);
+        assert_eq!(overflow, 5);
+    }
+
+    #[test]
+    fn notif_fit_zero_budget_falls_back_to_showing_all() {
+        // Unknown monitor height (0) should not hide notifications.
+        assert_eq!(notif_popup_fit(3, 0), (3, 0));
+    }
+
+    #[test]
+    fn notif_popup_height_increases_monotonically_in_visible() {
+        let a = notif_popup_height(1, 0);
+        let b = notif_popup_height(2, 0);
+        let c = notif_popup_height(5, 0);
+        assert!(a < b);
+        assert!(b < c);
+    }
+
+    #[test]
+    fn notif_popup_height_includes_overflow_card() {
+        let without = notif_popup_height(2, 0);
+        let with = notif_popup_height(2, 3);
+        assert!(
+            with > without,
+            "overflow entry must add to popup height (without={without}, with={with})"
+        );
     }
 }

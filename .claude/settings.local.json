@@ -67,7 +67,9 @@
       "Bash(wc:*)",
       "Bash(jj commit:*)",
       "Bash(cargo search:*)",
-      "Bash(cargo info:*)"
+      "Bash(cargo info:*)",
+      "Read(//home/obayemi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/iced_widget-0.14.2/src/canvas/**)",
+      "Read(//home/obayemi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/iced_widget-0.14.2/**)"
     ]
   }
 }
