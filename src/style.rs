@@ -114,7 +114,6 @@ pub const ICON_WIFI_0: &str = "\u{F0B0}";
 pub const ICON_WIFI_OFF: &str = "\u{E648}";
 pub const ICON_CABLE: &str = "\u{EFE6}";
 pub const ICON_VPN: &str = "\u{E32A}";
-pub const ICON_DEPLOYED_CODE: &str = "\u{F720}";
 pub const ICON_NOTIFICATIONS: &str = "\u{E7F5}";
 pub const ICON_CLOSE: &str = "\u{E5CD}";
 pub const ICON_EXPAND_LESS: &str = "\u{E5CE}";

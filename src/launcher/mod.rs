@@ -14,6 +14,7 @@ use iced::widget::{
     button, column, container, image, mouse_area, row, scrollable, text, text_input, Column, Id,
     Space,
 };
+use iced::Background;
 use iced::{Alignment, Border, Color, Element, Length, Subscription, Task, Theme};
 use iced_layershell::to_layer_message;
 
@@ -273,7 +274,29 @@ impl Launcher {
             .id(search_input_id())
             .on_input(Message::SearchChanged)
             .size(style::FONT_SIZE_LARGE)
-            .padding(style::PADDING_NORMAL);
+            .padding(style::PADDING_NORMAL)
+            .style(|_theme, status| {
+                let border_color = match status {
+                    text_input::Status::Focused { .. } => style::M3_PRIMARY,
+                    text_input::Status::Hovered => style::M3_ON_SURFACE_VARIANT,
+                    _ => style::M3_OUTLINE_VARIANT,
+                };
+                text_input::Style {
+                    background: Background::Color(style::with_alpha(
+                        style::M3_SURFACE_CONTAINER,
+                        0.95,
+                    )),
+                    border: Border {
+                        radius: style::ROUNDING_EXTRA_SMALL.into(),
+                        width: 1.0,
+                        color: border_color,
+                    },
+                    icon: style::M3_ON_SURFACE_VARIANT,
+                    placeholder: style::M3_ON_SURFACE_VARIANT,
+                    value: style::M3_ON_SURFACE,
+                    selection: style::with_alpha(style::M3_PRIMARY, 0.3),
+                }
+            });
 
         let entries: Column<'_, Message> = self
             .filtered

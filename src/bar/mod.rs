@@ -3,7 +3,6 @@ pub mod audio_panel;
 pub mod battery_panel;
 pub mod bluetooth_panel;
 mod clock;
-mod logo;
 pub mod network_panel;
 mod status;
 pub mod sysinfo_panel;
@@ -93,7 +92,6 @@ pub fn view<'a>(app: &'a App, monitor: Option<&'a str>) -> Element<'a, Message> 
     let active_window = app.active_window.clone();
 
     let bar_content = column![
-        lazy((), |()| { logo::view() }),
         workspaces::view(&monitor_workspaces, active_ws, spring, ws_cache),
         Space::new().width(Length::Shrink).height(Length::Fill),
         lazy((active_title, has_font), move |_| {
