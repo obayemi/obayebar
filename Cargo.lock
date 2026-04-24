@@ -1571,9 +1571,8 @@ dependencies = [
 
 [[package]]
 name = "iced_exdevtools"
-version = "0.18.0-beta1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b806ea0a17bd591007c5ecdf28ee46127edcdb84a04709df25aae123064643b8"
+version = "0.18.0-beta4"
+source = "git+https://github.com/obayemi/exwlshelleventloop?branch=feat%2Fallow-clipboard-opt-out#ad2a46cdd82a56ec8380799e971be81a217551fc"
 dependencies = [
  "iced_debug",
  "iced_devtools",
@@ -1621,7 +1620,8 @@ dependencies = [
 
 [[package]]
 name = "iced_layershell"
-version = "0.18.0-beta1"
+version = "0.18.0-beta4"
+source = "git+https://github.com/obayemi/exwlshelleventloop?branch=feat%2Fallow-clipboard-opt-out#ad2a46cdd82a56ec8380799e971be81a217551fc"
 dependencies = [
  "enumflags2",
  "futures",
@@ -1646,9 +1646,8 @@ dependencies = [
 
 [[package]]
 name = "iced_layershell_macros"
-version = "0.18.0-beta1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2255ec9a118a07b851018a65e6582a9e6bd639e1ece39bca552bc3644d3334fb"
+version = "0.18.0-beta4"
+source = "git+https://github.com/obayemi/exwlshelleventloop?branch=feat%2Fallow-clipboard-opt-out#ad2a46cdd82a56ec8380799e971be81a217551fc"
 dependencies = [
  "darling",
  "manyhow",
@@ -2022,14 +2021,14 @@ dependencies = [
 
 [[package]]
 name = "layershellev"
-version = "0.18.0-beta1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5230a51ef75f0cb71ba0a2883fbe340cc0b2d9910a27713ef2aa365d29428a6"
+version = "0.18.0-beta4"
+source = "git+https://github.com/obayemi/exwlshelleventloop?branch=feat%2Fallow-clipboard-opt-out#ad2a46cdd82a56ec8380799e971be81a217551fc"
 dependencies = [
  "calloop 0.14.4",
  "calloop-wayland-source 0.4.1",
  "log",
  "raw-window-handle",
+ "smithay-client-toolkit 0.20.0",
  "tempfile",
  "thiserror 2.0.18",
  "waycrate_xkbkeycode",
@@ -3678,12 +3677,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0512da38f5e2b31201a93524adb8d3136276fa4fe4aafab4e1f727a82b534cc0"
 dependencies = [
  "bitflags 2.11.0",
+ "bytemuck",
  "calloop 0.14.4",
  "calloop-wayland-source 0.4.1",
  "cursor-icon",
  "libc",
  "log",
  "memmap2",
+ "pkg-config",
  "rustix 1.1.4",
  "thiserror 2.0.18",
  "wayland-backend",
@@ -3695,6 +3696,7 @@ dependencies = [
  "wayland-protocols-misc",
  "wayland-protocols-wlr",
  "wayland-scanner",
+ "xkbcommon",
  "xkeysym",
 ]
 
@@ -4404,14 +4406,12 @@ dependencies = [
 
 [[package]]
 name = "waycrate_xkbkeycode"
-version = "0.18.0-beta1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "65fadddbd29b3bd62010442bde6d00445eb0837853c1b57422e75d04c7583de8"
+version = "0.18.0-beta4"
+source = "git+https://github.com/obayemi/exwlshelleventloop?branch=feat%2Fallow-clipboard-opt-out#ad2a46cdd82a56ec8380799e971be81a217551fc"
 dependencies = [
  "calloop 0.14.4",
  "log",
  "memmap2",
- "smol_str 0.2.2",
  "wayland-backend",
  "wayland-client",
  "winit-common",
@@ -5304,6 +5304,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bec9e4a500ca8864c5b47b8b482a73d62e4237670e5b5f1d6b9e3cae50f28f2b"
 
 [[package]]
+name = "xkbcommon"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8d66ca9352cbd4eecbbc40871d8a11b4ac8107cfc528a6e14d7c19c69d0e1ac9"
+dependencies = [
+ "libc",
+ "memmap2",
+ "xkeysym",
+]
+
+[[package]]
 name = "xkbcommon-dl"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5321,6 +5332,9 @@ name = "xkeysym"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9cc00251562a284751c9973bace760d86c0276c471b4be569fe6b068ee97a56"
+dependencies = [
+ "bytemuck",
+]
 
 [[package]]
 name = "xml-rs"
