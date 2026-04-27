@@ -141,6 +141,7 @@ pub const ICON_KEY: &str = "\u{E73C}";
 pub const ICON_REFRESH: &str = "\u{E5D5}";
 pub const ICON_FOLDER: &str = "\u{E2C7}";
 pub const ICON_INFO: &str = "\u{E88E}";
+pub const ICON_CONTENT_PASTE: &str = "\u{E14F}";
 
 pub const AUDIO_PANEL_WIDTH: u32 = 320;
 pub const NETWORK_PANEL_WIDTH: u32 = 300;
@@ -148,7 +149,7 @@ pub const BATTERY_PANEL_WIDTH: u32 = 200;
 pub const BLUETOOTH_PANEL_WIDTH: u32 = 280;
 pub const SYSINFO_PANEL_WIDTH: u32 = 280;
 pub const GITLAB_PANEL_WIDTH: u32 = 360;
-pub const GITLAB_PANEL_HEIGHT: u32 = 480;
+pub const GITLAB_PANEL_HEIGHT: u32 = 540;
 /// Maximum number of todos rendered in the popup before the user must use
 /// "Show all" on gitlab.com.
 pub const GITLAB_PANEL_VISIBLE: usize = 10;

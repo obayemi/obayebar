@@ -127,19 +127,26 @@ fn auth_setup_view(info: &GitlabInfo) -> Element<'_, Message> {
     );
 
     let instructions = text(format!(
-        "Create a Personal Access Token with the read_api scope at {}/-/user_settings/personal_access_tokens, then save it (one line) to {} or export OBAYEBAR_GITLAB_TOKEN.",
-        info.host, path_label,
+        "1. Create a Personal Access Token with the read_api scope on GitLab and copy it.\n2. Click \"Paste token from clipboard\" below.\n\nAlternatively save it to {path_label} or export OBAYEBAR_GITLAB_TOKEN."
     ))
     .size(style::FONT_SIZE_SMALL)
     .color(style::M3_ON_SURFACE_VARIANT);
 
-    let create_url = format!("{}/-/user_settings/personal_access_tokens", info.host);
+    let create_url = format!(
+        "{}/-/user_settings/personal_access_tokens?name=obayebar&scopes=read_api",
+        info.host,
+    );
 
     let buttons = column![
         pill_action_button(
             style::ICON_KEY,
             "Create access token on gitlab",
             Message::GitlabOpenUrl(create_url),
+        ),
+        pill_action_button(
+            style::ICON_CONTENT_PASTE,
+            "Paste token from clipboard",
+            Message::GitlabPasteToken,
         ),
         pill_action_button(
             style::ICON_FOLDER,

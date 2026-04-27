@@ -255,6 +255,116 @@ pub fn request_refresh() {
     REFRESH.notify();
 }
 
+/// Read the Wayland clipboard, save the result as the GitLab token, and ask
+/// the polling loop to refresh. Best-effort; logs failures and surfaces them
+/// through the next emitted `GitlabInfo`.
+pub fn paste_token_from_clipboard() {
+    tokio::spawn(async move {
+        let token = match read_clipboard().await {
+            Ok(t) => t,
+            Err(e) => {
+                CLIPBOARD_ERROR.store(Some(e));
+                REFRESH.notify();
+                return;
+            }
+        };
+        let trimmed = token.trim();
+        if trimmed.is_empty() {
+            CLIPBOARD_ERROR.store(Some("Clipboard is empty".to_string()));
+            REFRESH.notify();
+            return;
+        }
+        if let Err(e) = write_token_file(trimmed).await {
+            CLIPBOARD_ERROR.store(Some(format!("Could not write token file: {e}")));
+            REFRESH.notify();
+            return;
+        }
+        CLIPBOARD_ERROR.clear();
+        REFRESH.notify();
+    });
+}
+
+/// Last clipboard-paste error, surfaced into the next `GitlabInfo` so the
+/// popup can display it without an out-of-band channel.
+static CLIPBOARD_ERROR: ClipboardError = ClipboardError::new();
+
+#[derive(Debug)]
+struct ClipboardError {
+    inner: std::sync::OnceLock<std::sync::Mutex<Option<String>>>,
+}
+
+impl ClipboardError {
+    const fn new() -> Self {
+        Self {
+            inner: std::sync::OnceLock::new(),
+        }
+    }
+    fn cell(&self) -> &std::sync::Mutex<Option<String>> {
+        self.inner.get_or_init(|| std::sync::Mutex::new(None))
+    }
+    fn store(&self, msg: Option<String>) {
+        if let Ok(mut guard) = self.cell().lock() {
+            *guard = msg;
+        }
+    }
+    fn clear(&self) {
+        self.store(None);
+    }
+    fn take(&self) -> Option<String> {
+        self.cell().lock().ok().and_then(|mut g| g.take())
+    }
+}
+
+async fn read_clipboard() -> Result<String, String> {
+    let candidates: &[(&str, &[&str])] = &[
+        ("wl-paste", &["--no-newline"]),
+        ("xclip", &["-selection", "clipboard", "-o"]),
+    ];
+    let mut last_err = String::new();
+    for (cmd, args) in candidates {
+        match tokio::process::Command::new(cmd).args(*args).output().await {
+            Ok(out) if out.status.success() => {
+                let s = String::from_utf8_lossy(&out.stdout).into_owned();
+                return Ok(s);
+            }
+            Ok(out) => {
+                last_err = format!(
+                    "{cmd} exited with status {} ({})",
+                    out.status,
+                    String::from_utf8_lossy(&out.stderr).trim(),
+                );
+            }
+            Err(e) => {
+                last_err = format!("{cmd}: {e}");
+            }
+        }
+    }
+    Err(if last_err.is_empty() {
+        "No clipboard tool available (install wl-clipboard or xclip)".to_string()
+    } else {
+        last_err
+    })
+}
+
+async fn write_token_file(token: &str) -> std::io::Result<()> {
+    let Some(path) = token_file_path() else {
+        return Err(std::io::Error::other("no config dir"));
+    };
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    tokio::fs::write(&path, format!("{token}\n")).await?;
+    // Best-effort: tighten permissions so other users can't read the token.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = tokio::fs::metadata(&path).await?.permissions();
+        perms.set_mode(0o600);
+        let _ = tokio::fs::set_permissions(&path, perms).await;
+    }
+    Ok(())
+}
+
 static REFRESH: RefreshSignal = RefreshSignal::new();
 
 #[derive(Debug)]
@@ -314,7 +424,7 @@ async fn run_loop(tx: tokio::sync::mpsc::UnboundedSender<GitlabInfo>) {
         // Re-read token each tick so the user's token-file edits take effect
         // without a restart.
         settings = load_settings();
-        let info = match fetch_todos(&client, &settings).await {
+        let mut info = match fetch_todos(&client, &settings).await {
             Ok((todos, total)) => GitlabInfo {
                 auth: AuthState::Authenticated,
                 todos,
@@ -344,6 +454,12 @@ async fn run_loop(tx: tokio::sync::mpsc::UnboundedSender<GitlabInfo>) {
                 host: settings.host.clone(),
             },
         };
+
+        // A failed clipboard paste (or one with extra context) wins over a
+        // generic "no token" message: it's the most recent user-visible action.
+        if let Some(msg) = CLIPBOARD_ERROR.take() {
+            info.error = Some(msg);
+        }
 
         if info != last {
             last = info.clone();

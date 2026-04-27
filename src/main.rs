@@ -210,6 +210,7 @@ pub enum Message {
     GitlabOpenUrl(String),
     GitlabOpenTokenFile,
     GitlabReloadToken,
+    GitlabPasteToken,
     TrayItems(Vec<TrayItemInfo>),
     TrayClick(String),
     Notif(NotifEvent),
@@ -520,6 +521,10 @@ impl App {
             }
             Message::GitlabReloadToken => {
                 services::gitlab::request_refresh();
+                Task::none()
+            }
+            Message::GitlabPasteToken => {
+                services::gitlab::paste_token_from_clipboard();
                 Task::none()
             }
             Message::BluetoothToggleDevice { path, connected } => {
