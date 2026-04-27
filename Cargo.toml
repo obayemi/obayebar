@@ -26,7 +26,7 @@ path = "src/bin/launcher.rs"
 
 [dependencies]
 iced = { version = "0.14.0", default-features = false, features = ["wgpu", "crisp", "linux-theme-detection", "wayland", "tokio", "canvas", "image-without-codecs", "lazy"] }
-iced_layershell = "0.18.0-beta1"
+iced_layershell = "0.18.0-beta4"
 iced_runtime = "0.14.0"
 tokio = { version = "1.52.1", features = ["full"] }
 zbus = { version = "5.14.0", default-features = false, features = ["tokio"] }
@@ -68,9 +68,3 @@ multiple_crate_versions = "allow"
 
 [profile.dev]
 codegen-backend = "cranelift"
-
-# Fork of iced_layershell with an opt-out for clipboard init
-# (env var ICED_LAYERSHELL_NO_CLIPBOARD). The bar sets the env var to
-# skip spawning the always-on smithay-clipboard worker thread.
-[patch.crates-io]
-iced_layershell = { git = "https://github.com/obayemi/exwlshelleventloop", branch = "feat/allow-clipboard-opt-out" }

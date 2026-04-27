@@ -52,21 +52,7 @@
           version = "0.1.0";
           inherit src;
 
-          # rustPlatform handles workspace-inherited deps correctly (where
-          # naersk does not), which is required by the patched iced_layershell
-          # fork: its members use `edition.workspace = true`.
-          cargoLock = {
-            lockFile = ./Cargo.lock;
-            outputHashes = {
-              # All crates fetched from the exwlshelleventloop fork share one
-              # source tree, so they share the same hash.
-              "iced_exdevtools-0.18.0-beta4" = "sha256-CA0KAv8FggttW6kbn4SzJDWsgYxzoWGeIqTUDNBrdFI=";
-              "iced_layershell-0.18.0-beta4" = "sha256-CA0KAv8FggttW6kbn4SzJDWsgYxzoWGeIqTUDNBrdFI=";
-              "iced_layershell_macros-0.18.0-beta4" = "sha256-CA0KAv8FggttW6kbn4SzJDWsgYxzoWGeIqTUDNBrdFI=";
-              "layershellev-0.18.0-beta4" = "sha256-CA0KAv8FggttW6kbn4SzJDWsgYxzoWGeIqTUDNBrdFI=";
-              "waycrate_xkbkeycode-0.18.0-beta4" = "sha256-CA0KAv8FggttW6kbn4SzJDWsgYxzoWGeIqTUDNBrdFI=";
-            };
-          };
+          cargoLock.lockFile = ./Cargo.lock;
 
           buildInputs = deps;
           nativeBuildInputs = nativeBuildInputs pkgs;

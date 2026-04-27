@@ -147,11 +147,6 @@ fn main() {
         .map(|()| log::set_max_level(max_level))
         .ok();
 
-    // The bar has no surface with keyboard interactivity, so the smithay-
-    // clipboard worker would never see a Ctrl+V anyway. The fork honours
-    // this opt-out and skips spawning the worker thread.
-    iced_layershell::disable_clipboard();
-
     let icon_fonts = style::load_icon_font();
 
     // The initial window is created by settings on the default output.
