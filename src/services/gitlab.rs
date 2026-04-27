@@ -45,7 +45,7 @@ pub struct GitlabInfo {
     pub host: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum AuthState {
     /// No token configured.
     #[default]
@@ -152,14 +152,6 @@ fn load_settings() -> Settings {
     }
 }
 
-fn parse_total(headers: &reqwest::header::HeaderMap, fallback: usize) -> usize {
-    headers
-        .get("x-total")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(fallback)
-}
-
 fn build_item(api: ApiTodo) -> TodoItem {
     let title = api
         .target
@@ -204,14 +196,17 @@ async fn fetch_todos(
         return Err(FetchError::Network(format!("HTTP {status}")));
     }
 
-    let headers = resp.headers().clone();
+    let total_header = resp
+        .headers()
+        .get("x-total")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<usize>().ok());
     let raw: Vec<ApiTodo> = resp
         .json()
         .await
         .map_err(|e| FetchError::Network(e.to_string()))?;
-    let len = raw.len();
+    let total = total_header.unwrap_or(raw.len());
     let items: Vec<TodoItem> = raw.into_iter().map(build_item).collect();
-    let total = parse_total(&headers, len);
     Ok((items, total))
 }
 
@@ -333,7 +328,7 @@ pub fn open_token_file() {
 /// Notify the polling loop to refresh on the next tick (e.g. after the user
 /// updated the token file).
 pub fn request_refresh() {
-    REFRESH.notify();
+    REFRESH.notify_waiters();
 }
 
 /// Read the system clipboard via `wl-paste`/`xclip`. Used to fill the token
@@ -370,12 +365,6 @@ pub async fn read_clipboard() -> Result<String, String> {
     })
 }
 
-/// Surface a paste error in the next emitted `GitlabInfo`.
-pub fn report_paste_error(msg: String) {
-    TOKEN_SAVE_ERROR.store(Some(msg));
-    REFRESH.notify();
-}
-
 /// Save `token` to the on-disk file. Returns `Ok(())` once the file is
 /// written and locked down to `0600`; `Err(message)` on empty input or I/O
 /// failure (the message is suitable for surfacing in the popup).
@@ -403,76 +392,33 @@ pub async fn forget_token() -> Result<(), String> {
     }
 }
 
-/// Last token-save error, surfaced into the next `GitlabInfo` so the popup
-/// can display it without an out-of-band channel.
-static TOKEN_SAVE_ERROR: TokenSaveError = TokenSaveError::new();
-
-#[derive(Debug)]
-struct TokenSaveError {
-    inner: std::sync::OnceLock<std::sync::Mutex<Option<String>>>,
-}
-
-impl TokenSaveError {
-    const fn new() -> Self {
-        Self {
-            inner: std::sync::OnceLock::new(),
-        }
-    }
-    fn cell(&self) -> &std::sync::Mutex<Option<String>> {
-        self.inner.get_or_init(|| std::sync::Mutex::new(None))
-    }
-    fn store(&self, msg: Option<String>) {
-        if let Ok(mut guard) = self.cell().lock() {
-            *guard = msg;
-        }
-    }
-    fn take(&self) -> Option<String> {
-        self.cell().lock().ok().and_then(|mut g| g.take())
-    }
+/// Open `path` truncating, creating it with `0600` perms in a single `open()`
+/// call on Unix. The bar is Wayland-only in practice but the non-Unix branch
+/// keeps `cargo check` green elsewhere.
+async fn open_token_file_for_write(path: &std::path::Path) -> std::io::Result<tokio::fs::File> {
+    let mut opts = tokio::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    opts.mode(0o600);
+    opts.open(path).await
 }
 
 async fn write_token_file(token: &str) -> std::io::Result<()> {
+    use tokio::io::AsyncWriteExt;
     let Some(path) = token_file_path() else {
         return Err(std::io::Error::other("no config dir"));
     };
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
-    tokio::fs::write(&path, format!("{token}\n")).await?;
-    // Best-effort: tighten permissions so other users can't read the token.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = tokio::fs::metadata(&path).await?.permissions();
-        perms.set_mode(0o600);
-        let _ = tokio::fs::set_permissions(&path, perms).await;
-    }
+    let mut file = open_token_file_for_write(&path).await?;
+    file.write_all(token.as_bytes()).await?;
+    file.write_all(b"\n").await?;
     Ok(())
 }
 
-static REFRESH: RefreshSignal = RefreshSignal::new();
-
-#[derive(Debug)]
-struct RefreshSignal {
-    notify: std::sync::OnceLock<tokio::sync::Notify>,
-}
-
-impl RefreshSignal {
-    const fn new() -> Self {
-        Self {
-            notify: std::sync::OnceLock::new(),
-        }
-    }
-    fn cell(&self) -> &tokio::sync::Notify {
-        self.notify.get_or_init(tokio::sync::Notify::new)
-    }
-    fn notify(&self) {
-        self.cell().notify_waiters();
-    }
-    async fn wait(&self) {
-        self.cell().notified().await;
-    }
-}
+static REFRESH: std::sync::LazyLock<tokio::sync::Notify> =
+    std::sync::LazyLock::new(tokio::sync::Notify::new);
 
 pub fn stream() -> impl Stream<Item = GitlabInfo> {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
@@ -500,7 +446,6 @@ async fn run_loop(tx: tokio::sync::mpsc::UnboundedSender<GitlabInfo>) {
         host: settings.host.clone(),
         ..GitlabInfo::default()
     };
-    // Emit initial "missing token" / placeholder state.
     if tx.send(last.clone()).is_err() {
         return;
     }
@@ -509,7 +454,7 @@ async fn run_loop(tx: tokio::sync::mpsc::UnboundedSender<GitlabInfo>) {
         // Re-read token each tick so the user's token-file edits take effect
         // without a restart.
         settings = load_settings();
-        let mut info = match fetch_todos(&client, &settings).await {
+        let info = match fetch_todos(&client, &settings).await {
             Ok((todos, total)) => GitlabInfo {
                 auth: AuthState::Authenticated,
                 todos,
@@ -531,20 +476,21 @@ async fn run_loop(tx: tokio::sync::mpsc::UnboundedSender<GitlabInfo>) {
                 error: Some("Token rejected by GitLab".to_string()),
                 host: settings.host.clone(),
             },
-            Err(FetchError::Network(msg)) => GitlabInfo {
-                auth: last.auth.clone(),
-                todos: last.todos.clone(),
-                total: last.total,
-                error: Some(msg),
-                host: settings.host.clone(),
-            },
+            // Transient network failure: keep the previous payload, just
+            // attach the new error string. Avoid cloning the cached todos
+            // by mutating `last` in place when nothing else changed.
+            Err(FetchError::Network(msg)) => {
+                if last.error.as_deref() != Some(msg.as_str()) || last.host != settings.host {
+                    last.error = Some(msg);
+                    last.host = settings.host.clone();
+                    if tx.send(last.clone()).is_err() {
+                        return;
+                    }
+                }
+                wait_next_tick().await;
+                continue;
+            }
         };
-
-        // A token-save failure wins over a generic "no token" message: it's
-        // the most recent user-visible action.
-        if let Some(msg) = TOKEN_SAVE_ERROR.take() {
-            info.error = Some(msg);
-        }
 
         if info != last {
             last = info.clone();
@@ -553,16 +499,20 @@ async fn run_loop(tx: tokio::sync::mpsc::UnboundedSender<GitlabInfo>) {
             }
         }
 
-        let interval = if PANEL.is_open() {
-            POLL_INTERVAL_OPEN
-        } else {
-            POLL_INTERVAL_CLOSED
-        };
-        tokio::select! {
-            () = tokio::time::sleep(interval) => {}
-            () = PANEL.changed() => {}
-            () = REFRESH.wait() => {}
-        }
+        wait_next_tick().await;
+    }
+}
+
+async fn wait_next_tick() {
+    let interval = if PANEL.is_open() {
+        POLL_INTERVAL_OPEN
+    } else {
+        POLL_INTERVAL_CLOSED
+    };
+    tokio::select! {
+        () = tokio::time::sleep(interval) => {}
+        () = PANEL.changed() => {}
+        () = REFRESH.notified() => {}
     }
 }
 
@@ -637,22 +587,5 @@ mod tests {
         let item = build_item(api);
         assert_eq!(item.title, "only body");
         assert_eq!(item.project, "group/repo");
-    }
-
-    #[test]
-    fn parse_total_uses_x_total_header_when_present() {
-        let mut h = reqwest::header::HeaderMap::new();
-        h.insert(
-            "x-total",
-            "42".parse()
-                .unwrap_or(reqwest::header::HeaderValue::from_static("0")),
-        );
-        assert_eq!(parse_total(&h, 7), 42);
-    }
-
-    #[test]
-    fn parse_total_falls_back_to_count_when_header_missing() {
-        let h = reqwest::header::HeaderMap::new();
-        assert_eq!(parse_total(&h, 7), 7);
     }
 }

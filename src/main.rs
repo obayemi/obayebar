@@ -541,13 +541,14 @@ impl App {
                 services::gitlab::read_clipboard(),
                 Message::GitlabTokenInputPasted,
             ),
-            Message::GitlabTokenInputPasted(result) => {
-                match result {
-                    Ok(text) => {
-                        self.gitlab_token_input = text.trim().to_string();
-                    }
-                    Err(msg) => services::gitlab::report_paste_error(msg),
-                }
+            Message::GitlabTokenInputPasted(Ok(text)) => {
+                self.gitlab_token_input = text.trim().to_string();
+                Task::none()
+            }
+            Message::GitlabTokenInputPasted(Err(msg))
+            | Message::GitlabTokenSaved(Err(msg))
+            | Message::GitlabTokenForgotten(Err(msg)) => {
+                self.gitlab.error = Some(msg);
                 Task::none()
             }
             Message::GitlabTokenSubmit => {
@@ -560,10 +561,6 @@ impl App {
             Message::GitlabTokenSaved(Ok(())) | Message::GitlabTokenForgotten(Ok(())) => {
                 services::gitlab::request_refresh();
                 self.close_all_panels()
-            }
-            Message::GitlabTokenSaved(Err(msg)) | Message::GitlabTokenForgotten(Err(msg)) => {
-                services::gitlab::report_paste_error(msg);
-                Task::none()
             }
             Message::GitlabForgetToken => Task::perform(
                 services::gitlab::forget_token(),

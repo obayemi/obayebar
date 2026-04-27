@@ -104,15 +104,12 @@ pub fn view<'a>(app: &'a App, monitor: Option<&'a str>) -> Element<'a, Message> 
     ];
 
     if app.gitlab_enabled {
-        let gitlab_info = app.gitlab.clone();
+        let auth = app.gitlab.auth;
+        let total = app.gitlab.total;
         let gitlab_monitor = monitor.map(String::from);
-        let gitlab_key = (
-            format!("{:?}", gitlab_info.auth),
-            gitlab_info.total,
-            gitlab_monitor.clone(),
-        );
+        let gitlab_key = (auth, total, gitlab_monitor.clone());
         bar_col = bar_col.push(lazy(gitlab_key, move |_| {
-            gitlab::view(&gitlab_info, gitlab_monitor.as_deref())
+            gitlab::view(auth, total, gitlab_monitor.clone())
         }));
     }
 

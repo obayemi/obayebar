@@ -56,10 +56,10 @@ fn todo_entry(item: &TodoItem) -> Element<'_, Message> {
         gitlab::format_action(&item.action),
         gitlab::format_target_type(&item.target_type),
     );
-    let title = if item.title.is_empty() {
-        "(no title)".to_string()
+    let title: &str = if item.title.is_empty() {
+        "(no title)"
     } else {
-        item.title.clone()
+        &item.title
     };
 
     let header = row![
@@ -67,7 +67,7 @@ fn todo_entry(item: &TodoItem) -> Element<'_, Message> {
             .size(style::FONT_SIZE_SMALL)
             .color(style::M3_TERTIARY),
         Space::new().width(Length::Fill),
-        text(item.project.clone())
+        text(item.project.as_str())
             .size(style::FONT_SIZE_SMALL)
             .color(style::M3_ON_SURFACE_VARIANT),
     ]
@@ -80,12 +80,12 @@ fn todo_entry(item: &TodoItem) -> Element<'_, Message> {
 
     let content = column![header, body].spacing(2.0).width(Length::Fill);
 
-    let entry = button(content)
+    button(content)
         .on_press(Message::GitlabOpenUrl(item.url.clone()))
         .style(hover_button_style(Color::TRANSPARENT, style::M3_ON_SURFACE))
         .padding(style::PADDING_ENTRY)
-        .width(Length::Fill);
-    entry.into()
+        .width(Length::Fill)
+        .into()
 }
 
 fn pill_action_button<'a>(
@@ -289,7 +289,7 @@ fn list_view(info: &GitlabInfo) -> Element<'_, Message> {
 
 #[allow(clippy::too_many_lines)]
 pub fn view<'a>(info: &'a GitlabInfo, token_input: &'a str) -> Element<'a, Message> {
-    let header = row![
+    let mut header = row![
         text(style::ICON_TASK_ALT)
             .font(style::ICON_FONT)
             .size(style::FONT_SIZE_LARGE)
@@ -298,16 +298,17 @@ pub fn view<'a>(info: &'a GitlabInfo, token_input: &'a str) -> Element<'a, Messa
             .size(style::FONT_SIZE_LARGE)
             .color(style::M3_ON_SURFACE),
         Space::new().width(Length::Fill),
-        text(if info.total == 0 {
-            String::new()
-        } else {
-            info.total.to_string()
-        })
-        .size(style::FONT_SIZE_NORMAL)
-        .color(style::M3_ON_SURFACE_VARIANT),
     ]
     .spacing(style::SPACING_SMALLER)
     .align_y(Alignment::Center);
+
+    if info.total > 0 {
+        header = header.push(
+            text(info.total.to_string())
+                .size(style::FONT_SIZE_NORMAL)
+                .color(style::M3_ON_SURFACE_VARIANT),
+        );
+    }
 
     let body: Element<'a, Message> = match info.auth {
         AuthState::Missing | AuthState::Invalid => auth_setup_view(info, token_input),
