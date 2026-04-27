@@ -179,7 +179,7 @@ fn auth_setup_view<'a>(info: &'a GitlabInfo, token_input: &str) -> Element<'a, M
         .color(style::M3_ON_SURFACE);
 
     let instructions = text(
-        "1. Create a Personal Access Token with the read_api scope on GitLab and copy it.\n2. Hit the paste icon to pull it from the clipboard, then Submit.",
+        "1. Create a Personal Access Token with the read_api scope on GitLab and copy it.\n2. Hit the paste icon to pull it from the clipboard, then Submit.\n\nThe token is saved to the system keyring when one is running, or to a 0600 file otherwise.",
     )
     .size(style::FONT_SIZE_SMALL)
     .color(style::M3_ON_SURFACE_VARIANT);

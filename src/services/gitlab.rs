@@ -3,7 +3,14 @@
 //! Authentication uses a Personal Access Token (PAT) with the `read_api`
 //! scope. The token is sourced, in order of precedence, from:
 //!   1. `OBAYEBAR_GITLAB_TOKEN` environment variable
-//!   2. `$XDG_CONFIG_HOME/obayebar/gitlab_token` (or `~/.config/...`)
+//!   2. The Secret Service keyring (`org.freedesktop.secrets`) under
+//!      attributes `service=obayebar`, `key=gitlab_token` — used when a
+//!      keyring daemon is running and its default collection is unlocked.
+//!   3. `$XDG_CONFIG_HOME/obayebar/gitlab_token` (or `~/.config/...`)
+//!
+//! Saving prefers the keyring; if the service isn't running (or its default
+//! collection is locked), the token falls back to the plain file. "Forget
+//! token" clears both.
 //!
 //! The host can be overridden via `OBAYEBAR_GITLAB_URL` (default
 //! `https://gitlab.com`) for self-hosted instances.
@@ -120,16 +127,85 @@ pub fn token_file_path() -> Option<PathBuf> {
     config_dir().map(|d| d.join("gitlab_token"))
 }
 
-/// Resolve token from env or the token file. Trims whitespace.
-fn load_token() -> Option<String> {
+/// Secret Service item attributes that uniquely identify our token.
+fn keyring_attrs() -> std::collections::HashMap<&'static str, &'static str> {
+    std::collections::HashMap::from([("service", "obayebar"), ("key", "gitlab_token")])
+}
+
+const KEYRING_LABEL: &str = "obayebar GitLab access token";
+
+/// Read the token from the Secret Service keyring's default collection.
+/// Only considers `unlocked` items so we never block on an unlock prompt.
+async fn keyring_load_token() -> Option<String> {
+    let ss = secret_service::SecretService::connect(secret_service::EncryptionType::Plain)
+        .await
+        .ok()?;
+    let items = ss.search_items(keyring_attrs()).await.ok()?;
+    let item = items.unlocked.into_iter().next()?;
+    let secret = item.get_secret().await.ok()?;
+    String::from_utf8(secret).ok()
+}
+
+/// Save the token into the Secret Service default collection. Returns
+/// `Err` (with a debug-level message) if the service isn't running or the
+/// collection is locked — callers should fall back to the file.
+async fn keyring_save_token(token: &str) -> Result<(), String> {
+    let ss = secret_service::SecretService::connect(secret_service::EncryptionType::Plain)
+        .await
+        .map_err(|e| e.to_string())?;
+    let collection = ss
+        .get_default_collection()
+        .await
+        .map_err(|e| e.to_string())?;
+    if collection.is_locked().await.map_err(|e| e.to_string())? {
+        return Err("default collection is locked".to_string());
+    }
+    collection
+        .create_item(
+            KEYRING_LABEL,
+            keyring_attrs(),
+            token.as_bytes(),
+            true,
+            "text/plain",
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Delete every matching item from both unlocked and locked sets. Locked
+/// items can be deleted without unlocking — only their secret value is
+/// gated behind unlock prompts.
+async fn keyring_clear_token() -> Result<(), String> {
+    let ss = secret_service::SecretService::connect(secret_service::EncryptionType::Plain)
+        .await
+        .map_err(|e| e.to_string())?;
+    let items = ss
+        .search_items(keyring_attrs())
+        .await
+        .map_err(|e| e.to_string())?;
+    for item in items.unlocked.into_iter().chain(items.locked) {
+        item.delete().await.map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Resolve token from env, then keyring, then file. Trims whitespace.
+async fn load_token() -> Option<String> {
     if let Ok(t) = std::env::var("OBAYEBAR_GITLAB_TOKEN") {
         let trimmed = t.trim();
         if !trimmed.is_empty() {
             return Some(trimmed.to_string());
         }
     }
+    if let Some(t) = keyring_load_token().await {
+        let trimmed = t.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
     let path = token_file_path()?;
-    let content = std::fs::read_to_string(&path).ok()?;
+    let content = tokio::fs::read_to_string(&path).await.ok()?;
     let trimmed = content.trim();
     if trimmed.is_empty() {
         None
@@ -138,7 +214,7 @@ fn load_token() -> Option<String> {
     }
 }
 
-fn load_settings() -> Settings {
+async fn load_settings() -> Settings {
     let host = std::env::var("OBAYEBAR_GITLAB_URL")
         .ok()
         .filter(|s| !s.trim().is_empty())
@@ -148,7 +224,7 @@ fn load_settings() -> Settings {
         );
     Settings {
         host,
-        token: load_token(),
+        token: load_token().await,
     }
 }
 
@@ -365,25 +441,31 @@ pub async fn read_clipboard() -> Result<String, String> {
     })
 }
 
-/// Save `token` to the on-disk file. Returns `Ok(())` once the file is
-/// written and locked down to `0600`; `Err(message)` on empty input or I/O
-/// failure (the message is suitable for surfacing in the popup).
+/// Save `token`, preferring the Secret Service keyring. Falls back to the
+/// `0600`-permissioned token file when the keyring isn't reachable.
 pub async fn save_token(token: String) -> Result<(), String> {
     let trimmed = token.trim();
     if trimmed.is_empty() {
         return Err("Token is empty".to_string());
     }
+    match keyring_save_token(trimmed).await {
+        Ok(()) => return Ok(()),
+        Err(e) => log::info!("gitlab: keyring unavailable ({e}), falling back to token file"),
+    }
     write_token_file(trimmed)
         .await
-        .map_err(|e| format!("Could not write token file: {e}"))?;
-    Ok(())
+        .map_err(|e| format!("Could not write token file: {e}"))
 }
 
-/// Delete the on-disk token file. Used by the popup's "Forget token" path
-/// so the next process restart re-enables the clipboard worker for re-entry.
+/// Forget the token from both the keyring and the on-disk file. Best-effort
+/// for the keyring (a missing daemon is not an error); strict for the file
+/// only if it exists.
 pub async fn forget_token() -> Result<(), String> {
+    if let Err(e) = keyring_clear_token().await {
+        log::debug!("gitlab: keyring clear skipped ({e})");
+    }
     let Some(path) = token_file_path() else {
-        return Err("No config dir".to_string());
+        return Ok(());
     };
     match tokio::fs::remove_file(&path).await {
         Ok(()) => Ok(()),
@@ -436,7 +518,7 @@ async fn run_loop(tx: tokio::sync::mpsc::UnboundedSender<GitlabInfo>) {
         return;
     };
 
-    let mut settings = load_settings();
+    let mut settings = load_settings().await;
     let mut last = GitlabInfo {
         auth: if settings.token.is_some() {
             AuthState::Authenticated
@@ -451,9 +533,9 @@ async fn run_loop(tx: tokio::sync::mpsc::UnboundedSender<GitlabInfo>) {
     }
 
     loop {
-        // Re-read token each tick so the user's token-file edits take effect
-        // without a restart.
-        settings = load_settings();
+        // Re-read token each tick so external edits (token file, keyring
+        // entries set elsewhere) take effect without a restart.
+        settings = load_settings().await;
         let info = match fetch_todos(&client, &settings).await {
             Ok((todos, total)) => GitlabInfo {
                 auth: AuthState::Authenticated,
