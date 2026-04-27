@@ -52,7 +52,18 @@
           version = "0.1.0";
           inherit src;
 
-          cargoLock.lockFile = ./Cargo.lock;
+          cargoLock = {
+            lockFile = ./Cargo.lock;
+            outputHashes = {
+              # Pinned via [patch.crates-io] in Cargo.toml. All crates come
+              # from the same exwlshelleventloop tree, so they share one hash.
+              "iced_exdevtools-0.18.0-beta4" = "sha256-CA0KAv8FggttW6kbn4SzJDWsgYxzoWGeIqTUDNBrdFI=";
+              "iced_layershell-0.18.0-beta4" = "sha256-CA0KAv8FggttW6kbn4SzJDWsgYxzoWGeIqTUDNBrdFI=";
+              "iced_layershell_macros-0.18.0-beta4" = "sha256-CA0KAv8FggttW6kbn4SzJDWsgYxzoWGeIqTUDNBrdFI=";
+              "layershellev-0.18.0-beta4" = "sha256-CA0KAv8FggttW6kbn4SzJDWsgYxzoWGeIqTUDNBrdFI=";
+              "waycrate_xkbkeycode-0.18.0-beta4" = "sha256-CA0KAv8FggttW6kbn4SzJDWsgYxzoWGeIqTUDNBrdFI=";
+            };
+          };
 
           buildInputs = deps;
           nativeBuildInputs = nativeBuildInputs pkgs;
@@ -93,24 +104,21 @@
 
           tomlFormat = pkgs.formats.toml { };
 
-          configAttrs = {
-            gitlab = lib.filterAttrs (_: v: v != null) {
-              enable = if cfg.gitlab.enable then true else null;
-              url = cfg.gitlab.url;
-            };
-          };
+          gitlabAttrs =
+            lib.optionalAttrs cfg.gitlab.enable { enable = true; }
+            // lib.optionalAttrs (cfg.gitlab.url != null) { inherit (cfg.gitlab) url; };
 
-          hasConfig = configAttrs.gitlab != { };
+          hasConfig = gitlabAttrs != { };
 
           execStart =
             if cfg.gitlab.tokenFile == null then
               "${cfg.package}/bin/obayebar"
             else
               let
-                tokenPath = toString cfg.gitlab.tokenFile;
+                tokenPath = lib.escapeShellArg (toString cfg.gitlab.tokenFile);
                 wrapper = pkgs.writeShellScript "obayebar-with-token" ''
-                  if [ -r ${lib.escapeShellArg tokenPath} ]; then
-                    OBAYEBAR_GITLAB_TOKEN="$(cat ${lib.escapeShellArg tokenPath})"
+                  if [ -r ${tokenPath} ]; then
+                    OBAYEBAR_GITLAB_TOKEN="$(cat ${tokenPath})"
                     export OBAYEBAR_GITLAB_TOKEN
                   fi
                   exec ${cfg.package}/bin/obayebar
@@ -173,7 +181,7 @@
             home.packages = [ cfg.package ];
 
             xdg.configFile."obayebar/config.toml" = lib.mkIf hasConfig {
-              source = tomlFormat.generate "obayebar-config.toml" configAttrs;
+              source = tomlFormat.generate "obayebar-config.toml" { gitlab = gitlabAttrs; };
             };
 
             systemd.user.services.obayebar = lib.mkIf cfg.systemd.enable {

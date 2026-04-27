@@ -186,7 +186,7 @@ fn auth_setup_view<'a>(info: &'a GitlabInfo, token_input: &str) -> Element<'a, M
 
     let create_url = format!(
         "{}/-/user_settings/personal_access_tokens?name=obayebar&scopes=read_api",
-        info.host,
+        crate::services::gitlab::host(),
     );
 
     let submit_disabled = token_input.trim().is_empty();
@@ -316,7 +316,7 @@ pub fn view<'a>(info: &'a GitlabInfo, token_input: &'a str) -> Element<'a, Messa
         AuthState::Authenticated => list_view(info),
     };
 
-    let show_all_url = format!("{}{}", info.host, TODO_PAGE_PATH);
+    let show_all_url = format!("{}{}", crate::services::gitlab::host(), TODO_PAGE_PATH);
     let footer = row![
         Space::new().width(Length::Fill),
         pill_action_button(

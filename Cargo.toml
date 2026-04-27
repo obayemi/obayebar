@@ -68,3 +68,11 @@ multiple_crate_versions = "allow"
 
 [profile.dev]
 codegen-backend = "cranelift"
+
+# Upstream master ships an `iced_layershell::disable_clipboard()` opt-out that
+# avoids spawning the always-on smithay-clipboard worker thread. The bar has
+# no keyboard-interactive surface so the worker would never see a Ctrl+V
+# anyway. The opt-out is post-0.18.0-beta4 and not yet on crates.io — pin to
+# the commit until the next release.
+[patch.crates-io]
+iced_layershell = { git = "https://github.com/waycrate/exwlshelleventloop", rev = "f2a0e4f67ac5fa075615da24d3a099240146d2c0" }

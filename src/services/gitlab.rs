@@ -12,15 +12,10 @@
 //! collection is locked), the token falls back to the plain file. "Forget
 //! token" clears both.
 //!
-//! Host resolution (decreasing precedence): `--gitlab-url` CLI flag,
-//! `OBAYEBAR_GITLAB_URL` env var, `[gitlab].url` in
-//! `$XDG_CONFIG_HOME/obayebar/config.toml`, and finally the default
-//! `https://gitlab.com`.
+//! Host resolution lives in `crate::config`.
 
 use std::path::PathBuf;
 use std::time::Duration;
-
-use crate::config::config_dir;
 
 use crate::services::dbus_util::PanelSignal;
 use futures_util::Stream;
@@ -29,7 +24,6 @@ use serde::Deserialize;
 /// Browser destination for the "Show all" button.
 pub const TODO_PAGE_PATH: &str = "/dashboard/todos";
 
-const DEFAULT_HOST: &str = "https://gitlab.com";
 const POLL_INTERVAL_OPEN: Duration = Duration::from_secs(30);
 const POLL_INTERVAL_CLOSED: Duration = Duration::from_mins(2);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
@@ -52,8 +46,11 @@ pub struct GitlabInfo {
     pub total: usize,
     /// Last error message, if the most recent fetch failed.
     pub error: Option<String>,
-    /// Resolved host (e.g. `https://gitlab.com`), useful for the "Show all" link.
-    pub host: String,
+}
+
+/// Resolved host for "Show all" / token-creation URLs. Static after `main`.
+pub fn host() -> &'static str {
+    crate::config::resolved().gitlab_host()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -109,16 +106,16 @@ struct ApiProject {
     path_with_namespace: Option<String>,
 }
 
-/// Resolved GitLab connection settings.
+/// Resolved GitLab connection settings. The host is process-static, see
+/// [`host`].
 #[derive(Debug, Clone)]
 struct Settings {
-    host: String,
     token: Option<String>,
 }
 
 /// Path the user can drop a token file at; surfaced in the popup.
 pub fn token_file_path() -> Option<PathBuf> {
-    config_dir().map(|d| d.join("gitlab_token"))
+    obayebar::xdg::config_dir().map(|d| d.join("gitlab_token"))
 }
 
 /// Secret Service item attributes that uniquely identify our token.
@@ -210,30 +207,8 @@ async fn load_token() -> Option<String> {
 
 async fn load_settings() -> Settings {
     Settings {
-        host: resolve_host(),
         token: load_token().await,
     }
-}
-
-/// Resolve the GitLab host with CLI > env > config > default precedence.
-fn resolve_host() -> String {
-    if let Some(url) = crate::config::cli().gitlab_url.as_deref() {
-        return normalize_host(url);
-    }
-    if let Ok(env_url) = std::env::var("OBAYEBAR_GITLAB_URL") {
-        let trimmed = env_url.trim();
-        if !trimmed.is_empty() {
-            return normalize_host(trimmed);
-        }
-    }
-    if let Some(url) = crate::config::config().gitlab.url.as_deref() {
-        return normalize_host(url);
-    }
-    DEFAULT_HOST.to_string()
-}
-
-fn normalize_host(s: &str) -> String {
-    s.trim().trim_end_matches('/').to_string()
 }
 
 fn build_item(api: ApiTodo) -> TodoItem {
@@ -262,7 +237,7 @@ async fn fetch_todos(
     settings: &Settings,
 ) -> Result<(Vec<TodoItem>, usize), FetchError> {
     let token = settings.token.as_deref().ok_or(FetchError::Missing)?;
-    let url = format!("{}/api/v4/todos", settings.host);
+    let url = format!("{}/api/v4/todos", host());
     let resp = client
         .get(&url)
         .query(&[("state", "pending"), ("per_page", &PER_PAGE.to_string())])
@@ -533,7 +508,6 @@ async fn run_loop(tx: tokio::sync::mpsc::UnboundedSender<GitlabInfo>) {
         } else {
             AuthState::Missing
         },
-        host: settings.host.clone(),
         ..GitlabInfo::default()
     };
     if tx.send(last.clone()).is_err() {
@@ -550,29 +524,25 @@ async fn run_loop(tx: tokio::sync::mpsc::UnboundedSender<GitlabInfo>) {
                 todos,
                 total,
                 error: None,
-                host: settings.host.clone(),
             },
             Err(FetchError::Missing) => GitlabInfo {
                 auth: AuthState::Missing,
                 todos: Vec::new(),
                 total: 0,
                 error: None,
-                host: settings.host.clone(),
             },
             Err(FetchError::Invalid) => GitlabInfo {
                 auth: AuthState::Invalid,
                 todos: Vec::new(),
                 total: 0,
                 error: Some("Token rejected by GitLab".to_string()),
-                host: settings.host.clone(),
             },
             // Transient network failure: keep the previous payload, just
             // attach the new error string. Avoid cloning the cached todos
             // by mutating `last` in place when nothing else changed.
             Err(FetchError::Network(msg)) => {
-                if last.error.as_deref() != Some(msg.as_str()) || last.host != settings.host {
+                if last.error.as_deref() != Some(msg.as_str()) {
                     last.error = Some(msg);
-                    last.host = settings.host.clone();
                     if tx.send(last.clone()).is_err() {
                         return;
                     }

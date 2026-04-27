@@ -72,25 +72,7 @@ pub fn resolve_all_icon_paths(entries: &[DesktopEntry]) -> HashMap<String, PathB
 
 // --- Persistence ---
 
-fn cache_dir() -> Option<PathBuf> {
-    let base = std::env::var("XDG_CACHE_HOME")
-        .ok()
-        .or_else(|| std::env::var("HOME").ok().map(|h| format!("{h}/.cache")))
-        .map(PathBuf::from)?;
-    Some(base.join("obayebar"))
-}
-
-fn data_dir() -> Option<PathBuf> {
-    let base = std::env::var("XDG_DATA_HOME")
-        .ok()
-        .or_else(|| {
-            std::env::var("HOME")
-                .ok()
-                .map(|h| format!("{h}/.local/share"))
-        })
-        .map(PathBuf::from)?;
-    Some(base.join("obayebar"))
-}
+use crate::xdg::{cache_dir, data_dir};
 
 /// Directory for pre-resized RGBA icon data.
 #[must_use]

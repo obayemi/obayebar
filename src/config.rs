@@ -1,55 +1,47 @@
-//! Persistent configuration loaded from `$XDG_CONFIG_HOME/obayebar/config.toml`.
+//! TOML config from `$XDG_CONFIG_HOME/obayebar/config.toml` plus CLI overrides.
 //!
-//! The TOML file is optional — if missing or malformed, defaults are used and
-//! a warning is logged. CLI flags (parsed in `main.rs`) layer on top via
-//! `Config::merge_cli`, with CLI taking precedence over the file.
-//!
-//! For per-feature env vars (e.g. `OBAYEBAR_GITLAB_URL`), precedence is
-//! resolved at the consumer site rather than baked into `Config`, so the env
-//! var keeps overriding the file but loses to an explicit CLI flag.
+//! Per-field precedence: CLI flag > env var (where applicable) > config file > default.
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
 use serde::Deserialize;
 
-/// Top-level configuration. Add new feature sub-tables as fields here.
+use obayebar::xdg;
+
+const DEFAULT_GITLAB_HOST: &str = "https://gitlab.com";
+const ENV_GITLAB_URL: &str = "OBAYEBAR_GITLAB_URL";
+
+/// File-shaped configuration, deserialized from TOML.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub gitlab: GitlabConfig,
 }
 
-/// Settings for the GitLab todos panel.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct GitlabConfig {
-    /// Whether to render the GitLab panel on the bar.
     pub enable: bool,
-    /// Base URL of the GitLab instance (e.g. `https://gitlab.example.com`).
-    /// `None` falls back to `OBAYEBAR_GITLAB_URL` then `https://gitlab.com`.
     pub url: Option<String>,
 }
 
-/// Resolve the obayebar config directory: `$XDG_CONFIG_HOME/obayebar` if set,
-/// otherwise `~/.config/obayebar`. Returns `None` when neither var is set.
-pub fn config_dir() -> Option<PathBuf> {
-    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-        if !xdg.is_empty() {
-            return Some(PathBuf::from(xdg).join("obayebar"));
-        }
-    }
-    let home = std::env::var("HOME").ok()?;
-    Some(PathBuf::from(home).join(".config").join("obayebar"))
+/// CLI flags that override file values.
+#[derive(Debug, Default, Clone)]
+pub struct CliOverrides {
+    pub gitlab_enable: Option<bool>,
+    pub gitlab_url: Option<String>,
 }
 
-fn config_file_path() -> Option<PathBuf> {
-    config_dir().map(|d| d.join("config.toml"))
+/// File + CLI + env, with each field's precedence resolved at construction.
+/// Static, populated once from `main`.
+#[derive(Debug, Default, Clone)]
+pub struct Resolved {
+    gitlab_enable: bool,
+    gitlab_host: String,
 }
 
 impl Config {
-    /// Load the config from disk. Missing file → defaults. Parse error →
-    /// warn and fall back to defaults so a typo doesn't take the bar down.
     #[must_use]
     pub fn load() -> Self {
         let Some(path) = config_file_path() else {
@@ -63,61 +55,68 @@ impl Config {
                 return Self::default();
             }
         };
-        match toml::from_str::<Self>(&content) {
-            Ok(cfg) => cfg,
-            Err(e) => {
-                log::warn!("config: ignoring {} ({e})", path.display());
-                Self::default()
-            }
-        }
+        toml::from_str::<Self>(&content).unwrap_or_else(|e| {
+            log::warn!("config: ignoring {} ({e})", path.display());
+            Self::default()
+        })
     }
+}
 
-    /// Apply CLI overrides for fields with no env-var sibling. URL is *not*
-    /// merged here — it's kept on `CliOverrides` so the gitlab service can
-    /// preserve env-over-file precedence (CLI > env > file > default).
+impl Resolved {
     #[must_use]
-    pub const fn merge_cli(mut self, cli: &CliOverrides) -> Self {
-        if let Some(enable) = cli.gitlab_enable {
-            self.gitlab.enable = enable;
+    pub fn from_parts(file: &Config, cli: &CliOverrides) -> Self {
+        Self {
+            gitlab_enable: cli.gitlab_enable.unwrap_or(file.gitlab.enable),
+            gitlab_host: resolve_gitlab_host(file, cli),
         }
-        self
+    }
+
+    #[must_use]
+    pub const fn gitlab_enable(&self) -> bool {
+        self.gitlab_enable
+    }
+
+    #[must_use]
+    pub fn gitlab_host(&self) -> &str {
+        &self.gitlab_host
     }
 }
 
-/// Subset of CLI args that influence the resolved config. Kept here (rather
-/// than referencing `main`'s `CliArgs` directly) so this module stays
-/// dependency-free and unit-testable.
-#[derive(Debug, Default, Clone)]
-pub struct CliOverrides {
-    pub gitlab_enable: Option<bool>,
-    pub gitlab_url: Option<String>,
+fn resolve_gitlab_host(file: &Config, cli: &CliOverrides) -> String {
+    if let Some(url) = cli.gitlab_url.as_deref() {
+        return normalize_host(url);
+    }
+    if let Ok(env_url) = std::env::var(ENV_GITLAB_URL) {
+        let trimmed = env_url.trim();
+        if !trimmed.is_empty() {
+            return normalize_host(trimmed);
+        }
+    }
+    if let Some(url) = file.gitlab.url.as_deref() {
+        return normalize_host(url);
+    }
+    DEFAULT_GITLAB_HOST.to_string()
 }
 
-static CONFIG: OnceLock<Config> = OnceLock::new();
-static CLI: OnceLock<CliOverrides> = OnceLock::new();
-
-/// Install the resolved config and CLI overrides exactly once. Subsequent
-/// calls are ignored.
-pub fn install(cfg: Config, cli: CliOverrides) {
-    let _ = CONFIG.set(cfg);
-    let _ = CLI.set(cli);
+fn normalize_host(s: &str) -> String {
+    s.trim().trim_end_matches('/').to_string()
 }
 
-/// Read the resolved config. Returns defaults if `install` was never called
-/// (e.g. in unit tests that don't go through `main`).
-pub fn config() -> &'static Config {
-    static DEFAULT: OnceLock<Config> = OnceLock::new();
-    CONFIG
+fn config_file_path() -> Option<PathBuf> {
+    xdg::config_dir().map(|d| d.join("config.toml"))
+}
+
+static RESOLVED: OnceLock<Resolved> = OnceLock::new();
+
+pub fn install(file: &Config, cli: &CliOverrides) {
+    let _ = RESOLVED.set(Resolved::from_parts(file, cli));
+}
+
+pub fn resolved() -> &'static Resolved {
+    static DEFAULT: OnceLock<Resolved> = OnceLock::new();
+    RESOLVED
         .get()
-        .unwrap_or_else(|| DEFAULT.get_or_init(Config::default))
-}
-
-/// Read the raw CLI overrides. Used by feature modules that resolve
-/// precedence against env vars (e.g. gitlab host).
-pub fn cli() -> &'static CliOverrides {
-    static DEFAULT: OnceLock<CliOverrides> = OnceLock::new();
-    CLI.get()
-        .unwrap_or_else(|| DEFAULT.get_or_init(CliOverrides::default))
+        .unwrap_or_else(|| DEFAULT.get_or_init(Resolved::default))
 }
 
 #[cfg(test)]
@@ -155,38 +154,53 @@ mod tests {
 
     #[test]
     fn unknown_field_is_rejected() {
-        // deny_unknown_fields surfaces typos so they don't silently no-op.
         let err = toml::from_str::<Config>("[gitlab]\nenabled = true\n");
         assert!(err.is_err(), "expected typo to be rejected, got {err:?}");
     }
 
     #[test]
-    fn cli_overrides_enable() {
-        let cfg = Config::default().merge_cli(&CliOverrides {
-            gitlab_enable: Some(true),
-            gitlab_url: None,
-        });
-        assert!(cfg.gitlab.enable);
+    fn cli_enable_beats_file() {
+        let file = parse("[gitlab]\nenable = false\n");
+        let r = Resolved::from_parts(
+            &file,
+            &CliOverrides {
+                gitlab_enable: Some(true),
+                gitlab_url: None,
+            },
+        );
+        assert!(r.gitlab_enable());
     }
 
     #[test]
-    fn cli_url_does_not_overwrite_file_field() {
-        // URL precedence is resolved at the consumer site (gitlab service)
-        // so env vars stay in the chain. merge_cli must leave gitlab.url
-        // pointing at the file value.
+    fn cli_url_beats_file() {
         let file = parse("[gitlab]\nurl = \"https://from-file\"\n");
-        let merged = file.merge_cli(&CliOverrides {
-            gitlab_enable: None,
-            gitlab_url: Some("https://from-cli".to_string()),
-        });
-        assert_eq!(merged.gitlab.url.as_deref(), Some("https://from-file"));
+        let r = Resolved::from_parts(
+            &file,
+            &CliOverrides {
+                gitlab_enable: None,
+                gitlab_url: Some("https://from-cli".to_string()),
+            },
+        );
+        assert_eq!(r.gitlab_host(), "https://from-cli");
     }
 
     #[test]
-    fn cli_absent_keeps_file_values() {
-        let file = parse("[gitlab]\nenable = true\nurl = \"https://from-file\"\n");
-        let merged = file.merge_cli(&CliOverrides::default());
-        assert!(merged.gitlab.enable);
-        assert_eq!(merged.gitlab.url.as_deref(), Some("https://from-file"));
+    fn file_url_used_when_cli_absent() {
+        let file = parse("[gitlab]\nurl = \"https://from-file\"\n");
+        let r = Resolved::from_parts(&file, &CliOverrides::default());
+        assert_eq!(r.gitlab_host(), "https://from-file");
+    }
+
+    #[test]
+    fn default_host_when_nothing_set() {
+        let r = Resolved::from_parts(&Config::default(), &CliOverrides::default());
+        assert_eq!(r.gitlab_host(), "https://gitlab.com");
+    }
+
+    #[test]
+    fn host_trailing_slash_trimmed() {
+        let file = parse("[gitlab]\nurl = \"https://example.com/\"\n");
+        let r = Resolved::from_parts(&file, &CliOverrides::default());
+        assert_eq!(r.gitlab_host(), "https://example.com");
     }
 }

@@ -91,28 +91,17 @@ fn parse_cli() -> CliArgs {
     let mut args = CliArgs::default();
     let mut iter = std::env::args().skip(1);
     while let Some(arg) = iter.next() {
-        match arg.as_str() {
-            "--gitlab" => args.gitlab_enable = Some(true),
-            "--gitlab-url" => {
-                let Some(value) = iter.next() else {
-                    eprintln!("obayebar: --gitlab-url requires a value");
-                    print_usage();
-                    std::process::exit(2);
-                };
-                if value.is_empty() {
-                    eprintln!("obayebar: --gitlab-url value cannot be empty");
-                    std::process::exit(2);
-                }
-                args.gitlab_url = Some(value);
+        let url_value = match arg.as_str() {
+            "--gitlab" => {
+                args.gitlab_enable = Some(true);
+                continue;
             }
-            other if other.starts_with("--gitlab-url=") => {
-                let value = other.trim_start_matches("--gitlab-url=");
-                if value.is_empty() {
-                    eprintln!("obayebar: --gitlab-url value cannot be empty");
-                    std::process::exit(2);
-                }
-                args.gitlab_url = Some(value.to_string());
-            }
+            "--gitlab-url" => iter.next().unwrap_or_else(|| {
+                eprintln!("obayebar: --gitlab-url requires a value");
+                print_usage();
+                std::process::exit(2);
+            }),
+            s if s.starts_with("--gitlab-url=") => s["--gitlab-url=".len()..].to_string(),
             "-h" | "--help" => {
                 print_usage();
                 std::process::exit(0);
@@ -126,7 +115,12 @@ fn parse_cli() -> CliArgs {
                 print_usage();
                 std::process::exit(2);
             }
+        };
+        if url_value.is_empty() {
+            eprintln!("obayebar: --gitlab-url value cannot be empty");
+            std::process::exit(2);
         }
+        args.gitlab_url = Some(url_value);
     }
     args
 }
@@ -138,14 +132,17 @@ fn main() {
         gitlab_enable: args.gitlab_enable,
         gitlab_url: args.gitlab_url,
     };
-    let resolved = config::Config::load().merge_cli(&cli);
-    config::install(resolved, cli);
+    config::install(&config::Config::load(), &cli);
 
     let logger = env_logger::Builder::from_default_env().build();
     let max_level = logger.filter();
     log::set_boxed_logger(Box::new(FatalErrorLogger { inner: logger }))
         .map(|()| log::set_max_level(max_level))
         .ok();
+
+    // The bar has no surface with keyboard interactivity, so the smithay-
+    // clipboard worker would never see a Ctrl+V anyway. Skip spawning it.
+    iced_layershell::disable_clipboard();
 
     let icon_fonts = style::load_icon_font();
 
@@ -296,7 +293,7 @@ impl App {
                 bluetooth_panel: panel::Panel::new(),
                 sysinfo_panel: panel::Panel::new(),
                 gitlab_panel: panel::Panel::new(),
-                gitlab_enabled: config::config().gitlab.enable,
+                gitlab_enabled: config::resolved().gitlab_enable(),
                 gitlab: GitlabInfo::default(),
                 gitlab_token_input: String::new(),
                 workspaces: Vec::new(),
