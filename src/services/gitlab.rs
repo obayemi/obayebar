@@ -12,11 +12,15 @@
 //! collection is locked), the token falls back to the plain file. "Forget
 //! token" clears both.
 //!
-//! The host can be overridden via `OBAYEBAR_GITLAB_URL` (default
-//! `https://gitlab.com`) for self-hosted instances.
+//! Host resolution (decreasing precedence): `--gitlab-url` CLI flag,
+//! `OBAYEBAR_GITLAB_URL` env var, `[gitlab].url` in
+//! `$XDG_CONFIG_HOME/obayebar/config.toml`, and finally the default
+//! `https://gitlab.com`.
 
 use std::path::PathBuf;
 use std::time::Duration;
+
+use crate::config::config_dir;
 
 use crate::services::dbus_util::PanelSignal;
 use futures_util::Stream;
@@ -112,16 +116,6 @@ struct Settings {
     token: Option<String>,
 }
 
-fn config_dir() -> Option<PathBuf> {
-    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-        if !xdg.is_empty() {
-            return Some(PathBuf::from(xdg).join("obayebar"));
-        }
-    }
-    let home = std::env::var("HOME").ok()?;
-    Some(PathBuf::from(home).join(".config").join("obayebar"))
-}
-
 /// Path the user can drop a token file at; surfaced in the popup.
 pub fn token_file_path() -> Option<PathBuf> {
     config_dir().map(|d| d.join("gitlab_token"))
@@ -215,17 +209,31 @@ async fn load_token() -> Option<String> {
 }
 
 async fn load_settings() -> Settings {
-    let host = std::env::var("OBAYEBAR_GITLAB_URL")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .map_or_else(
-            || DEFAULT_HOST.to_string(),
-            |s| s.trim_end_matches('/').to_string(),
-        );
     Settings {
-        host,
+        host: resolve_host(),
         token: load_token().await,
     }
+}
+
+/// Resolve the GitLab host with CLI > env > config > default precedence.
+fn resolve_host() -> String {
+    if let Some(url) = crate::config::cli().gitlab_url.as_deref() {
+        return normalize_host(url);
+    }
+    if let Ok(env_url) = std::env::var("OBAYEBAR_GITLAB_URL") {
+        let trimmed = env_url.trim();
+        if !trimmed.is_empty() {
+            return normalize_host(trimmed);
+        }
+    }
+    if let Some(url) = crate::config::config().gitlab.url.as_deref() {
+        return normalize_host(url);
+    }
+    DEFAULT_HOST.to_string()
+}
+
+fn normalize_host(s: &str) -> String {
+    s.trim().trim_end_matches('/').to_string()
 }
 
 fn build_item(api: ApiTodo) -> TodoItem {

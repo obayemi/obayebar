@@ -1,4 +1,5 @@
 mod bar;
+mod config;
 mod notifications;
 mod panel;
 mod services;
@@ -61,22 +62,57 @@ impl log::Log for FatalErrorLogger {
 }
 
 /// Parsed CLI arguments. Kept intentionally small — extend with care.
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone)]
 struct CliArgs {
-    gitlab: bool,
+    /// `Some(true)` when `--gitlab` was passed; `None` means "use config".
+    gitlab_enable: Option<bool>,
+    /// `--gitlab-url <URL>`; `None` means "use env or config".
+    gitlab_url: Option<String>,
 }
 
 fn print_usage() {
     println!(
-        "obayebar — wayland status bar\n\nUsage: obayebar [OPTIONS]\n\nOptions:\n  --gitlab        Show the GitLab todos module on the bar\n  -h, --help      Print this help\n  -V, --version   Print version\n"
+        "obayebar — wayland status bar\n\
+         \n\
+         Usage: obayebar [OPTIONS]\n\
+         \n\
+         Options:\n  \
+           --gitlab              Show the GitLab todos module on the bar\n  \
+           --gitlab-url <URL>    Base URL of the GitLab instance (overrides config / env)\n  \
+           -h, --help            Print this help\n  \
+           -V, --version         Print version\n\
+         \n\
+         Persistent settings can also be placed in $XDG_CONFIG_HOME/obayebar/config.toml\n\
+         (see [gitlab].enable / [gitlab].url).\n"
     );
 }
 
 fn parse_cli() -> CliArgs {
     let mut args = CliArgs::default();
-    for arg in std::env::args().skip(1) {
+    let mut iter = std::env::args().skip(1);
+    while let Some(arg) = iter.next() {
         match arg.as_str() {
-            "--gitlab" => args.gitlab = true,
+            "--gitlab" => args.gitlab_enable = Some(true),
+            "--gitlab-url" => {
+                let Some(value) = iter.next() else {
+                    eprintln!("obayebar: --gitlab-url requires a value");
+                    print_usage();
+                    std::process::exit(2);
+                };
+                if value.is_empty() {
+                    eprintln!("obayebar: --gitlab-url value cannot be empty");
+                    std::process::exit(2);
+                }
+                args.gitlab_url = Some(value);
+            }
+            other if other.starts_with("--gitlab-url=") => {
+                let value = other.trim_start_matches("--gitlab-url=");
+                if value.is_empty() {
+                    eprintln!("obayebar: --gitlab-url value cannot be empty");
+                    std::process::exit(2);
+                }
+                args.gitlab_url = Some(value.to_string());
+            }
             "-h" | "--help" => {
                 print_usage();
                 std::process::exit(0);
@@ -95,16 +131,15 @@ fn parse_cli() -> CliArgs {
     args
 }
 
-static CLI_ARGS: std::sync::OnceLock<CliArgs> = std::sync::OnceLock::new();
-static DEFAULT_CLI_ARGS: CliArgs = CliArgs { gitlab: false };
-
-fn cli_args() -> CliArgs {
-    *CLI_ARGS.get().unwrap_or(&DEFAULT_CLI_ARGS)
-}
-
 fn main() {
     let args = parse_cli();
-    let _ = CLI_ARGS.set(args);
+
+    let cli = config::CliOverrides {
+        gitlab_enable: args.gitlab_enable,
+        gitlab_url: args.gitlab_url,
+    };
+    let resolved = config::Config::load().merge_cli(&cli);
+    config::install(resolved, cli);
 
     let logger = env_logger::Builder::from_default_env().build();
     let max_level = logger.filter();
@@ -266,7 +301,7 @@ impl App {
                 bluetooth_panel: panel::Panel::new(),
                 sysinfo_panel: panel::Panel::new(),
                 gitlab_panel: panel::Panel::new(),
-                gitlab_enabled: cli_args().gitlab,
+                gitlab_enabled: config::config().gitlab.enable,
                 gitlab: GitlabInfo::default(),
                 gitlab_token_input: String::new(),
                 workspaces: Vec::new(),
