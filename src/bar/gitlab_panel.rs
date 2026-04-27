@@ -122,7 +122,7 @@ fn pill_action_button<'a>(
 }
 
 fn token_input_row<'a>(value: &str) -> Element<'a, Message> {
-    let input = text_input("Paste or type your access token", value)
+    let input = text_input("Tap the paste icon →", value)
         .on_input(Message::GitlabTokenInputChanged)
         .on_submit(Message::GitlabTokenSubmit)
         .secure(true)
@@ -179,7 +179,7 @@ fn auth_setup_view<'a>(info: &'a GitlabInfo, token_input: &str) -> Element<'a, M
         .color(style::M3_ON_SURFACE);
 
     let instructions = text(
-        "1. Create a Personal Access Token with the read_api scope on GitLab and copy it.\n2. Paste it below (Ctrl+V or the paste button) and press Submit (or Enter).",
+        "1. Create a Personal Access Token with the read_api scope on GitLab and copy it.\n2. Hit the paste icon to pull it from the clipboard, then Submit.",
     )
     .size(style::FONT_SIZE_SMALL)
     .color(style::M3_ON_SURFACE_VARIANT);

@@ -120,12 +120,6 @@ pub fn token_file_path() -> Option<PathBuf> {
     config_dir().map(|d| d.join("gitlab_token"))
 }
 
-/// `true` when a token is reachable from env or the on-disk file. Used at
-/// startup to decide whether to keep the clipboard worker alive.
-pub fn token_is_configured() -> bool {
-    load_token().is_some()
-}
-
 /// Resolve token from env or the token file. Trims whitespace.
 fn load_token() -> Option<String> {
     if let Ok(t) = std::env::var("OBAYEBAR_GITLAB_TOKEN") {

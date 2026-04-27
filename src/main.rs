@@ -112,14 +112,10 @@ fn main() {
         .map(|()| log::set_max_level(max_level))
         .ok();
 
-    // Skip the always-on smithay-clipboard worker unless the GitLab popup
-    // actually needs Ctrl+V to onboard a token. After the user submits, we
-    // exec ourselves so the next instance hits the `is_configured` branch
-    // and stays clipboard-free.
-    let need_clipboard = args.gitlab && !services::gitlab::token_is_configured();
-    if !need_clipboard {
-        iced_layershell::disable_clipboard();
-    }
+    // The bar has no surface with keyboard interactivity, so the smithay-
+    // clipboard worker would never see a Ctrl+V anyway. The fork honours
+    // this opt-out and skips spawning the worker thread.
+    iced_layershell::disable_clipboard();
 
     let icon_fonts = style::load_icon_font();
 
@@ -516,7 +512,7 @@ impl App {
             Message::GitlabPanelOpen(monitor) => {
                 let close = self.close_all_panels();
                 services::gitlab::set_panel_open(true);
-                let open = self.gitlab_panel.open_keyboard(
+                let open = self.gitlab_panel.open(
                     style::GITLAB_PANEL_WIDTH,
                     style::GITLAB_PANEL_HEIGHT,
                     monitor,
@@ -562,7 +558,8 @@ impl App {
                 )
             }
             Message::GitlabTokenSaved(Ok(())) | Message::GitlabTokenForgotten(Ok(())) => {
-                restart_self()
+                services::gitlab::request_refresh();
+                self.close_all_panels()
             }
             Message::GitlabTokenSaved(Err(msg)) | Message::GitlabTokenForgotten(Err(msg)) => {
                 services::gitlab::report_paste_error(msg);
@@ -938,21 +935,4 @@ fn close_window(id: window::Id) -> Task<Message> {
     iced_runtime::task::effect(iced_runtime::Action::Window(
         iced_runtime::window::Action::Close(id),
     ))
-}
-
-/// Replace the running process with a fresh copy of itself, preserving CLI
-/// args. Used after the user (re-)configures the GitLab token so the next
-/// instance starts without the smithay-clipboard worker thread.
-///
-/// Diverges: returns only on `exec()` failure, in which case it falls back
-/// to spawn+exit so the user still ends up on a fresh process.
-fn restart_self() -> ! {
-    use std::os::unix::process::CommandExt;
-    let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("obayebar"));
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    log::info!("obayebar: re-execing self ({} arg(s))", args.len());
-    let err = std::process::Command::new(&exe).args(&args).exec();
-    log::error!("obayebar: exec failed: {err}, falling back to spawn+exit");
-    let _ = std::process::Command::new(&exe).args(&args).spawn();
-    std::process::exit(0)
 }
