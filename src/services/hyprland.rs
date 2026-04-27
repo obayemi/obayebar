@@ -164,6 +164,23 @@ pub fn focus_window(app_name: &str) {
     });
 }
 
+/// Focus the most recent window whose initial class matches `class` (case
+/// insensitive). Hyprland's `focuswindow` switches to the window's workspace,
+/// which is what we want after launching a browser.
+pub fn focus_window_class(class: &str) {
+    let class = class.to_string();
+    tokio::spawn(async move {
+        let Some(dir) = socket_dir() else {
+            return;
+        };
+        let sock_path = dir.join(".socket.sock");
+        if let Ok(mut stream) = UnixStream::connect(&sock_path).await {
+            let cmd = format!("dispatch focuswindow class:^(?i){class}$");
+            let _ = stream.write_all(cmd.as_bytes()).await;
+        }
+    });
+}
+
 enum State {
     Starting,
     Streaming(BufReader<UnixStream>),

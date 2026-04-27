@@ -222,13 +222,94 @@ enum FetchError {
     Network(String),
 }
 
-/// Open the URL in the user's preferred browser. Best-effort, fire-and-forget.
+/// Open the URL in the user's preferred browser, then ask Hyprland to focus
+/// the browser's window so the user lands on the new tab instead of having
+/// the bar's workspace stay active. Best-effort, fire-and-forget.
 pub fn open_in_browser(url: String) {
     tokio::spawn(async move {
         if let Err(e) = tokio::process::Command::new("xdg-open").arg(&url).spawn() {
             log::warn!("gitlab: xdg-open failed: {e}");
+            return;
         }
+        // Resolve the browser's window class up front; this is independent
+        // of how long the browser takes to handle the URL.
+        let Some(class) = default_browser_class().await else {
+            log::debug!("gitlab: no default browser class detected, skipping focus");
+            return;
+        };
+        // Give the browser a moment to either raise its window (already
+        // running) or spawn (cold start). 400ms covers most fast paths;
+        // cold-start cases lose focus and the user clicks manually.
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        crate::services::hyprland::focus_window_class(&class);
     });
+}
+
+/// Best-effort lookup of the window class for the default `https` handler.
+/// Reads `xdg-mime` to find the .desktop file, then prefers `StartupWMClass`
+/// over the desktop file basename.
+async fn default_browser_class() -> Option<String> {
+    let out = tokio::process::Command::new("xdg-mime")
+        .args(["query", "default", "x-scheme-handler/https"])
+        .output()
+        .await
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let desktop_id = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if desktop_id.is_empty() {
+        return None;
+    }
+    if let Some(class) = read_startup_wm_class(&desktop_id).await {
+        return Some(class);
+    }
+    desktop_id
+        .strip_suffix(".desktop")
+        .map(std::string::ToString::to_string)
+}
+
+async fn read_startup_wm_class(desktop_id: &str) -> Option<String> {
+    for dir in xdg_data_dirs() {
+        let path = format!("{dir}/applications/{desktop_id}");
+        let Ok(content) = tokio::fs::read_to_string(&path).await else {
+            continue;
+        };
+        let mut in_entry = false;
+        for line in content.lines() {
+            let line = line.trim();
+            if let Some(section) = line.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+                in_entry = section == "Desktop Entry";
+                continue;
+            }
+            if !in_entry {
+                continue;
+            }
+            if let Some(value) = line.strip_prefix("StartupWMClass=") {
+                let value = value.trim();
+                if !value.is_empty() {
+                    return Some(value.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+fn xdg_data_dirs() -> Vec<String> {
+    let mut dirs = Vec::new();
+    if let Ok(home) = std::env::var("HOME") {
+        dirs.push(format!("{home}/.local/share"));
+    }
+    if let Ok(xdg_data) = std::env::var("XDG_DATA_DIRS") {
+        for dir in xdg_data.split(':').filter(|s| !s.is_empty()) {
+            dirs.push(dir.to_string());
+        }
+    } else {
+        dirs.push("/usr/local/share".to_string());
+        dirs.push("/usr/share".to_string());
+    }
+    dirs
 }
 
 /// Open the user's editor on the token file path, creating the directory first.
