@@ -3,6 +3,8 @@ pub mod audio_panel;
 pub mod battery_panel;
 pub mod bluetooth_panel;
 mod clock;
+mod gitlab;
+pub mod gitlab_panel;
 pub mod network_panel;
 mod status;
 pub mod sysinfo_panel;
@@ -91,7 +93,7 @@ pub fn view<'a>(app: &'a App, monitor: Option<&'a str>) -> Element<'a, Message> 
     let active_font = app.vector_font.clone();
     let active_window = app.active_window.clone();
 
-    let bar_content = column![
+    let mut bar_col = column![
         workspaces::view(&monitor_workspaces, active_ws, spring, ws_cache),
         Space::new().width(Length::Shrink).height(Length::Fill),
         lazy((active_title, has_font), move |_| {
@@ -99,8 +101,24 @@ pub fn view<'a>(app: &'a App, monitor: Option<&'a str>) -> Element<'a, Message> 
         }),
         Space::new().width(Length::Shrink).height(Length::Fill),
         lazy(tray_items, |items| { tray::view(items) }),
-        lazy(clock_key, move |_| { clock::view(&time) }),
-        lazy(status_key, move |_| {
+    ];
+
+    if app.gitlab_enabled {
+        let gitlab_info = app.gitlab.clone();
+        let gitlab_monitor = monitor.map(String::from);
+        let gitlab_key = (
+            format!("{:?}", gitlab_info.auth),
+            gitlab_info.total,
+            gitlab_monitor.clone(),
+        );
+        bar_col = bar_col.push(lazy(gitlab_key, move |_| {
+            gitlab::view(&gitlab_info, gitlab_monitor.as_deref())
+        }));
+    }
+
+    let bar_content = bar_col
+        .push(lazy(clock_key, move |_| clock::view(&time)))
+        .push(lazy(status_key, move |_| {
             let monitor_ref = monitor_owned.as_deref();
             status::view(
                 &battery,
@@ -110,13 +128,12 @@ pub fn view<'a>(app: &'a App, monitor: Option<&'a str>) -> Element<'a, Message> 
                 &sysinfo,
                 monitor_ref,
             )
-        }),
-    ]
-    .spacing(style::SPACING_NORMAL)
-    .padding(style::BAR_PADDING)
-    .align_x(iced::Alignment::Center)
-    .width(Length::Fill)
-    .height(Length::Fill);
+        }))
+        .spacing(style::SPACING_NORMAL)
+        .padding(style::BAR_PADDING)
+        .align_x(iced::Alignment::Center)
+        .width(Length::Fill)
+        .height(Length::Fill);
 
     // Caelestia uses m3surface background with transparency.base (0.85) alpha
     let bar = container(bar_content)

@@ -135,12 +135,23 @@ pub const ICON_DESKTOP: &str = "\u{E30C}";
 pub const ICON_NOTIFICATIONS_NONE: &str = "\u{E7F5}";
 pub const ICON_SETTINGS: &str = "\u{E8B8}";
 pub const ICON_AUTORENEW: &str = "\u{E863}";
+pub const ICON_TASK_ALT: &str = "\u{E2E6}";
+pub const ICON_OPEN_IN_NEW: &str = "\u{E89E}";
+pub const ICON_KEY: &str = "\u{E73C}";
+pub const ICON_REFRESH: &str = "\u{E5D5}";
+pub const ICON_FOLDER: &str = "\u{E2C7}";
+pub const ICON_INFO: &str = "\u{E88E}";
 
 pub const AUDIO_PANEL_WIDTH: u32 = 320;
 pub const NETWORK_PANEL_WIDTH: u32 = 300;
 pub const BATTERY_PANEL_WIDTH: u32 = 200;
 pub const BLUETOOTH_PANEL_WIDTH: u32 = 280;
 pub const SYSINFO_PANEL_WIDTH: u32 = 280;
+pub const GITLAB_PANEL_WIDTH: u32 = 360;
+pub const GITLAB_PANEL_HEIGHT: u32 = 480;
+/// Maximum number of todos rendered in the popup before the user must use
+/// "Show all" on gitlab.com.
+pub const GITLAB_PANEL_VISIBLE: usize = 10;
 /// Visual gap between the bar and popup panels, rendered as transparent padding
 /// inside the panel window so the `mouse_area` covers the gap.
 pub const PANEL_GAP: f32 = 8.0;

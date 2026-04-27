@@ -20,6 +20,7 @@ use iced_layershell::to_layer_message;
 use services::audio::{AudioCommand, AudioInfo};
 use services::battery::BatteryInfo;
 use services::bluetooth::BluetoothInfo;
+use services::gitlab::GitlabInfo;
 use services::hyprland::{HyprEvent, HyprState, MonitorGeom, WindowInfo, WorkspaceInfo};
 use services::network::NetworkInfo;
 use services::notifications::{NotifEvent, NotificationData};
@@ -59,7 +60,52 @@ impl log::Log for FatalErrorLogger {
     }
 }
 
+/// Parsed CLI arguments. Kept intentionally small — extend with care.
+#[derive(Debug, Default, Clone, Copy)]
+struct CliArgs {
+    gitlab: bool,
+}
+
+fn print_usage() {
+    println!(
+        "obayebar — wayland status bar\n\nUsage: obayebar [OPTIONS]\n\nOptions:\n  --gitlab        Show the GitLab todos module on the bar\n  -h, --help      Print this help\n  -V, --version   Print version\n"
+    );
+}
+
+fn parse_cli() -> CliArgs {
+    let mut args = CliArgs::default();
+    for arg in std::env::args().skip(1) {
+        match arg.as_str() {
+            "--gitlab" => args.gitlab = true,
+            "-h" | "--help" => {
+                print_usage();
+                std::process::exit(0);
+            }
+            "-V" | "--version" => {
+                println!("obayebar {}", env!("CARGO_PKG_VERSION"));
+                std::process::exit(0);
+            }
+            other => {
+                eprintln!("obayebar: unknown argument '{other}'");
+                print_usage();
+                std::process::exit(2);
+            }
+        }
+    }
+    args
+}
+
+static CLI_ARGS: std::sync::OnceLock<CliArgs> = std::sync::OnceLock::new();
+static DEFAULT_CLI_ARGS: CliArgs = CliArgs { gitlab: false };
+
+fn cli_args() -> CliArgs {
+    *CLI_ARGS.get().unwrap_or(&DEFAULT_CLI_ARGS)
+}
+
 fn main() {
+    let args = parse_cli();
+    let _ = CLI_ARGS.set(args);
+
     let logger = env_logger::Builder::from_default_env().build();
     let max_level = logger.filter();
     log::set_boxed_logger(Box::new(FatalErrorLogger { inner: logger }))
@@ -123,6 +169,9 @@ pub struct App {
     battery_panel: panel::Panel,
     bluetooth_panel: panel::Panel,
     sysinfo_panel: panel::Panel,
+    gitlab_panel: panel::Panel,
+    pub gitlab_enabled: bool,
+    pub gitlab: GitlabInfo,
 
     pub workspaces: Vec<WorkspaceInfo>,
     /// Per-monitor active workspace: `monitor_name` -> `active_workspace_id`
@@ -156,6 +205,11 @@ pub enum Message {
     Network(NetworkInfo),
     SysInfo(SysInfo),
     Audio(AudioInfo),
+    Gitlab(GitlabInfo),
+    GitlabPanelOpen(Option<String>),
+    GitlabOpenUrl(String),
+    GitlabOpenTokenFile,
+    GitlabReloadToken,
     TrayItems(Vec<TrayItemInfo>),
     TrayClick(String),
     Notif(NotifEvent),
@@ -201,6 +255,9 @@ impl App {
                 battery_panel: panel::Panel::new(),
                 bluetooth_panel: panel::Panel::new(),
                 sysinfo_panel: panel::Panel::new(),
+                gitlab_panel: panel::Panel::new(),
+                gitlab_enabled: cli_args().gitlab,
+                gitlab: GitlabInfo::default(),
                 workspaces: Vec::new(),
                 active_workspaces: HashMap::new(),
                 monitor_geoms: HashMap::new(),
@@ -435,6 +492,36 @@ impl App {
                     .open(style::SYSINFO_PANEL_WIDTH, height, monitor);
                 Task::batch([close, open])
             }
+            Message::Gitlab(info) => {
+                if self.gitlab != info {
+                    self.gitlab = info;
+                }
+                Task::none()
+            }
+            Message::GitlabPanelOpen(monitor) => {
+                let close = self.close_all_panels();
+                services::gitlab::set_panel_open(true);
+                let open = self.gitlab_panel.open(
+                    style::GITLAB_PANEL_WIDTH,
+                    style::GITLAB_PANEL_HEIGHT,
+                    monitor,
+                );
+                Task::batch([close, open])
+            }
+            Message::GitlabOpenUrl(url) => {
+                if !url.is_empty() {
+                    services::gitlab::open_in_browser(url);
+                }
+                self.close_all_panels()
+            }
+            Message::GitlabOpenTokenFile => {
+                services::gitlab::open_token_file();
+                Task::none()
+            }
+            Message::GitlabReloadToken => {
+                services::gitlab::request_refresh();
+                Task::none()
+            }
             Message::BluetoothToggleDevice { path, connected } => {
                 services::bluetooth::toggle_device_connection(&path, connected);
                 Task::none()
@@ -623,6 +710,8 @@ impl App {
             bar::bluetooth_panel::view(&self.bluetooth)
         } else if self.sysinfo_panel.is_window(id) {
             bar::sysinfo_panel::view(&self.sysinfo)
+        } else if self.gitlab_panel.is_window(id) {
+            bar::gitlab_panel::view(&self.gitlab)
         } else {
             let monitor = self.monitor_for_bar(id);
             bar::view(self, monitor)
@@ -643,6 +732,10 @@ impl App {
             Subscription::run(services::sysinfo::stream).map(Message::SysInfo),
             Subscription::run(services::notifications::stream).map(Message::Notif),
         ];
+
+        if self.gitlab_enabled {
+            subs.push(Subscription::run(services::gitlab::stream).map(Message::Gitlab));
+        }
 
         // Wake at the earliest pending popup expiry so we can retire it.
         // The subscription's identity is the instant itself: when a new popup
@@ -673,12 +766,14 @@ impl App {
         services::network::set_panel_open(false);
         services::bluetooth::set_panel_open(false);
         services::sysinfo::set_panel_open(false);
+        services::gitlab::set_panel_open(false);
         Task::batch([
             self.audio_panel.close(),
             self.network_panel.close(),
             self.battery_panel.close(),
             self.bluetooth_panel.close(),
             self.sysinfo_panel.close(),
+            self.gitlab_panel.close(),
         ])
     }
 

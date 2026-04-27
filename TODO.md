@@ -4,3 +4,4 @@
 - [x] faster launcher run
 - [x] launcher navigation with arrows scrolls the viewport
 - [x] resize the notification pannel dynamically according to the current number of notifications (or fix the thing). also do implement a limit to the number of notification that can be displayed, if the notification should take more than 2/5 of the screen, show a message "<n> other notifications" instead
+- [x] gitlab todos module (enable with `--gitlab`, token via `OBAYEBAR_GITLAB_TOKEN` or `$XDG_CONFIG_HOME/obayebar/gitlab_token`)
