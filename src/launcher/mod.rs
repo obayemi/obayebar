@@ -315,6 +315,13 @@ impl Launcher {
             scrollable(entries)
                 .id(scrollable_id())
                 .on_scroll(Message::ScrollChanged)
+                .direction(scrollable::Direction::Vertical(
+                    scrollable::Scrollbar::new()
+                        .width(6.0)
+                        .scroller_width(6.0)
+                        .spacing(style::SPACING_SMALL),
+                ))
+                .style(scrollable_style)
                 .height(Length::Fill),
         ]
         .spacing(style::SPACING_NORMAL)
@@ -655,6 +662,50 @@ fn decode_raster(data: &[u8], path: &std::path::Path) -> Option<Vec<u8>> {
         ::image::imageops::FilterType::Triangle,
     );
     Some(resized.to_rgba8().into_raw())
+}
+
+fn scrollable_style(_theme: &Theme, status: scrollable::Status) -> scrollable::Style {
+    let scroller_color = match status {
+        scrollable::Status::Hovered {
+            is_vertical_scrollbar_hovered: true,
+            ..
+        }
+        | scrollable::Status::Dragged {
+            is_vertical_scrollbar_dragged: true,
+            ..
+        } => style::M3_PRIMARY,
+        scrollable::Status::Hovered { .. } => style::M3_ON_SURFACE_VARIANT,
+        _ => style::M3_OUTLINE,
+    };
+    let rail = scrollable::Rail {
+        background: Some(Background::Color(style::with_alpha(
+            style::M3_SURFACE_CONTAINER,
+            0.5,
+        ))),
+        border: Border {
+            radius: 3.0.into(),
+            ..Border::default()
+        },
+        scroller: scrollable::Scroller {
+            background: Background::Color(scroller_color),
+            border: Border {
+                radius: 3.0.into(),
+                ..Border::default()
+            },
+        },
+    };
+    scrollable::Style {
+        container: container::Style::default(),
+        vertical_rail: rail,
+        horizontal_rail: rail,
+        gap: None,
+        auto_scroll: scrollable::AutoScroll {
+            background: Background::Color(style::with_alpha(style::M3_SURFACE_CONTAINER, 0.9)),
+            border: Border::default(),
+            shadow: iced::Shadow::default(),
+            icon: style::M3_ON_SURFACE,
+        },
+    }
 }
 
 pub fn theme(_launcher: &Launcher, theme: &Theme) -> iced::theme::Style {
