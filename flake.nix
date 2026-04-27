@@ -3,12 +3,11 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
-    naersk.url = "github:nix-community/naersk";
     flake-utils.url = "github:numtide/flake-utils";
     rust-overlay.url = "github:oxalica/rust-overlay";
   };
 
-  outputs = { self, nixpkgs, naersk, flake-utils, rust-overlay }:
+  outputs = { self, nixpkgs, flake-utils, rust-overlay }:
     let
       buildInputs = pkgs: with pkgs; [
         wayland
@@ -42,17 +41,39 @@
           rustNightly = pkgs.rust-bin.selectLatestNightlyWith (toolchain:
             toolchain.default
           );
-          naersk' = pkgs.callPackage naersk {
+          rustPlatform = pkgs.makeRustPlatform {
             cargo = rustNightly;
             rustc = rustNightly;
           };
           deps = buildInputs pkgs;
         in
-        naersk'.buildPackage {
+        rustPlatform.buildRustPackage {
           pname = "obayebar";
+          version = "0.1.0";
           inherit src;
+
+          # rustPlatform handles workspace-inherited deps correctly (where
+          # naersk does not), which is required by the patched iced_layershell
+          # fork: its members use `edition.workspace = true`.
+          cargoLock = {
+            lockFile = ./Cargo.lock;
+            outputHashes = {
+              # All crates fetched from the exwlshelleventloop fork share one
+              # source tree, so they share the same hash.
+              "iced_exdevtools-0.18.0-beta4" = "sha256-CA0KAv8FggttW6kbn4SzJDWsgYxzoWGeIqTUDNBrdFI=";
+              "iced_layershell-0.18.0-beta4" = "sha256-CA0KAv8FggttW6kbn4SzJDWsgYxzoWGeIqTUDNBrdFI=";
+              "iced_layershell_macros-0.18.0-beta4" = "sha256-CA0KAv8FggttW6kbn4SzJDWsgYxzoWGeIqTUDNBrdFI=";
+              "layershellev-0.18.0-beta4" = "sha256-CA0KAv8FggttW6kbn4SzJDWsgYxzoWGeIqTUDNBrdFI=";
+              "waycrate_xkbkeycode-0.18.0-beta4" = "sha256-CA0KAv8FggttW6kbn4SzJDWsgYxzoWGeIqTUDNBrdFI=";
+            };
+          };
+
           buildInputs = deps;
           nativeBuildInputs = nativeBuildInputs pkgs;
+
+          # Tests aren't free to run during the package build (no display,
+          # no dbus); the dev workflow uses `cargo test` directly.
+          doCheck = false;
 
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath deps;
           LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
