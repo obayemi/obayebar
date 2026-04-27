@@ -120,6 +120,12 @@ pub fn token_file_path() -> Option<PathBuf> {
     config_dir().map(|d| d.join("gitlab_token"))
 }
 
+/// `true` when a token is reachable from env or the on-disk file. Used at
+/// startup to decide whether to keep the clipboard worker alive.
+pub fn token_is_configured() -> bool {
+    load_token().is_some()
+}
+
 /// Resolve token from env or the token file. Trims whitespace.
 fn load_token() -> Option<String> {
     if let Ok(t) = std::env::var("OBAYEBAR_GITLAB_TOKEN") {
@@ -255,67 +261,11 @@ pub fn request_refresh() {
     REFRESH.notify();
 }
 
-/// Read the Wayland clipboard, save the result as the GitLab token, and ask
-/// the polling loop to refresh. Best-effort; logs failures and surfaces them
-/// through the next emitted `GitlabInfo`.
-pub fn paste_token_from_clipboard() {
-    tokio::spawn(async move {
-        let token = match read_clipboard().await {
-            Ok(t) => t,
-            Err(e) => {
-                CLIPBOARD_ERROR.store(Some(e));
-                REFRESH.notify();
-                return;
-            }
-        };
-        let trimmed = token.trim();
-        if trimmed.is_empty() {
-            CLIPBOARD_ERROR.store(Some("Clipboard is empty".to_string()));
-            REFRESH.notify();
-            return;
-        }
-        if let Err(e) = write_token_file(trimmed).await {
-            CLIPBOARD_ERROR.store(Some(format!("Could not write token file: {e}")));
-            REFRESH.notify();
-            return;
-        }
-        CLIPBOARD_ERROR.clear();
-        REFRESH.notify();
-    });
-}
-
-/// Last clipboard-paste error, surfaced into the next `GitlabInfo` so the
-/// popup can display it without an out-of-band channel.
-static CLIPBOARD_ERROR: ClipboardError = ClipboardError::new();
-
-#[derive(Debug)]
-struct ClipboardError {
-    inner: std::sync::OnceLock<std::sync::Mutex<Option<String>>>,
-}
-
-impl ClipboardError {
-    const fn new() -> Self {
-        Self {
-            inner: std::sync::OnceLock::new(),
-        }
-    }
-    fn cell(&self) -> &std::sync::Mutex<Option<String>> {
-        self.inner.get_or_init(|| std::sync::Mutex::new(None))
-    }
-    fn store(&self, msg: Option<String>) {
-        if let Ok(mut guard) = self.cell().lock() {
-            *guard = msg;
-        }
-    }
-    fn clear(&self) {
-        self.store(None);
-    }
-    fn take(&self) -> Option<String> {
-        self.cell().lock().ok().and_then(|mut g| g.take())
-    }
-}
-
-async fn read_clipboard() -> Result<String, String> {
+/// Read the system clipboard via `wl-paste`/`xclip`. Used to fill the token
+/// input on demand without keeping the iced clipboard worker thread alive.
+/// Returns `Ok(text)` (possibly empty after trimming) or an error message
+/// suitable for the popup's error line.
+pub async fn read_clipboard() -> Result<String, String> {
     let candidates: &[(&str, &[&str])] = &[
         ("wl-paste", &["--no-newline"]),
         ("xclip", &["-selection", "clipboard", "-o"]),
@@ -324,8 +274,7 @@ async fn read_clipboard() -> Result<String, String> {
     for (cmd, args) in candidates {
         match tokio::process::Command::new(cmd).args(*args).output().await {
             Ok(out) if out.status.success() => {
-                let s = String::from_utf8_lossy(&out.stdout).into_owned();
-                return Ok(s);
+                return Ok(String::from_utf8_lossy(&out.stdout).into_owned());
             }
             Ok(out) => {
                 last_err = format!(
@@ -344,6 +293,67 @@ async fn read_clipboard() -> Result<String, String> {
     } else {
         last_err
     })
+}
+
+/// Surface a paste error in the next emitted `GitlabInfo`.
+pub fn report_paste_error(msg: String) {
+    TOKEN_SAVE_ERROR.store(Some(msg));
+    REFRESH.notify();
+}
+
+/// Save `token` to the on-disk file. Returns `Ok(())` once the file is
+/// written and locked down to `0600`; `Err(message)` on empty input or I/O
+/// failure (the message is suitable for surfacing in the popup).
+pub async fn save_token(token: String) -> Result<(), String> {
+    let trimmed = token.trim();
+    if trimmed.is_empty() {
+        return Err("Token is empty".to_string());
+    }
+    write_token_file(trimmed)
+        .await
+        .map_err(|e| format!("Could not write token file: {e}"))?;
+    Ok(())
+}
+
+/// Delete the on-disk token file. Used by the popup's "Forget token" path
+/// so the next process restart re-enables the clipboard worker for re-entry.
+pub async fn forget_token() -> Result<(), String> {
+    let Some(path) = token_file_path() else {
+        return Err("No config dir".to_string());
+    };
+    match tokio::fs::remove_file(&path).await {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("Could not remove token file: {e}")),
+    }
+}
+
+/// Last token-save error, surfaced into the next `GitlabInfo` so the popup
+/// can display it without an out-of-band channel.
+static TOKEN_SAVE_ERROR: TokenSaveError = TokenSaveError::new();
+
+#[derive(Debug)]
+struct TokenSaveError {
+    inner: std::sync::OnceLock<std::sync::Mutex<Option<String>>>,
+}
+
+impl TokenSaveError {
+    const fn new() -> Self {
+        Self {
+            inner: std::sync::OnceLock::new(),
+        }
+    }
+    fn cell(&self) -> &std::sync::Mutex<Option<String>> {
+        self.inner.get_or_init(|| std::sync::Mutex::new(None))
+    }
+    fn store(&self, msg: Option<String>) {
+        if let Ok(mut guard) = self.cell().lock() {
+            *guard = msg;
+        }
+    }
+    fn take(&self) -> Option<String> {
+        self.cell().lock().ok().and_then(|mut g| g.take())
+    }
 }
 
 async fn write_token_file(token: &str) -> std::io::Result<()> {
@@ -455,9 +465,9 @@ async fn run_loop(tx: tokio::sync::mpsc::UnboundedSender<GitlabInfo>) {
             },
         };
 
-        // A failed clipboard paste (or one with extra context) wins over a
-        // generic "no token" message: it's the most recent user-visible action.
-        if let Some(msg) = CLIPBOARD_ERROR.take() {
+        // A token-save failure wins over a generic "no token" message: it's
+        // the most recent user-visible action.
+        if let Some(msg) = TOKEN_SAVE_ERROR.take() {
             info.error = Some(msg);
         }
 

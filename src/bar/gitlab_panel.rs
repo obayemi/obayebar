@@ -1,7 +1,7 @@
 use super::widgets::{hover_button_style, panel_with_exit, separator};
 use crate::services::gitlab::{self, AuthState, GitlabInfo, TodoItem, TODO_PAGE_PATH};
 use crate::Message;
-use iced::widget::{button, column, container, row, scrollable, text, Space};
+use iced::widget::{button, column, container, row, scrollable, text, text_input, Space};
 use iced::{Alignment, Background, Border, Color, Element, Length};
 use obayebar::style;
 
@@ -88,30 +88,87 @@ fn todo_entry(item: &TodoItem) -> Element<'_, Message> {
     entry.into()
 }
 
-fn pill_action_button<'a>(icon: &'a str, label: &'a str, msg: Message) -> Element<'a, Message> {
+fn pill_action_button<'a>(
+    icon: &'a str,
+    label: &'a str,
+    msg: Option<Message>,
+) -> Element<'a, Message> {
+    let enabled = msg.is_some();
+    let text_color = if enabled {
+        style::M3_ON_SURFACE
+    } else {
+        style::M3_ON_SURFACE_VARIANT
+    };
     let row = row![
         text(icon)
             .font(style::ICON_FONT)
             .size(style::FONT_SIZE_NORMAL)
-            .color(style::M3_ON_SURFACE),
-        text(label)
-            .size(style::FONT_SIZE_NORMAL)
-            .color(style::M3_ON_SURFACE),
+            .color(text_color),
+        text(label).size(style::FONT_SIZE_NORMAL).color(text_color),
     ]
     .spacing(style::SPACING_SMALL)
     .align_y(Alignment::Center);
 
-    button(row)
-        .on_press(msg)
+    let mut btn = button(row)
         .style(hover_button_style(
             style::with_alpha(style::M3_SURFACE_CONTAINER_HIGH, 0.9),
-            style::M3_ON_SURFACE,
+            text_color,
         ))
-        .padding(style::PADDING_ENTRY)
+        .padding(style::PADDING_ENTRY);
+    if let Some(m) = msg {
+        btn = btn.on_press(m);
+    }
+    btn.into()
+}
+
+fn token_input_row<'a>(value: &str) -> Element<'a, Message> {
+    let input = text_input("Paste or type your access token", value)
+        .on_input(Message::GitlabTokenInputChanged)
+        .on_submit(Message::GitlabTokenSubmit)
+        .secure(true)
+        .size(style::FONT_SIZE_NORMAL)
+        .padding(style::PADDING_SMALL)
+        .width(Length::Fill)
+        .style(|_theme, status| {
+            let border_color = match status {
+                text_input::Status::Focused { .. } => style::M3_PRIMARY,
+                text_input::Status::Hovered => style::M3_ON_SURFACE_VARIANT,
+                _ => style::M3_OUTLINE_VARIANT,
+            };
+            text_input::Style {
+                background: Background::Color(style::with_alpha(style::M3_SURFACE_CONTAINER, 0.95)),
+                border: Border {
+                    radius: style::ROUNDING_EXTRA_SMALL.into(),
+                    width: 1.0,
+                    color: border_color,
+                },
+                icon: style::M3_ON_SURFACE_VARIANT,
+                placeholder: style::M3_ON_SURFACE_VARIANT,
+                value: style::M3_ON_SURFACE,
+                selection: style::with_alpha(style::M3_PRIMARY, 0.3),
+            }
+        });
+
+    let paste = button(
+        text(style::ICON_CONTENT_PASTE)
+            .font(style::ICON_FONT)
+            .size(style::FONT_SIZE_NORMAL)
+            .color(style::M3_ON_SURFACE),
+    )
+    .on_press(Message::GitlabTokenInputPaste)
+    .style(hover_button_style(
+        style::with_alpha(style::M3_SURFACE_CONTAINER_HIGH, 0.9),
+        style::M3_ON_SURFACE,
+    ))
+    .padding(style::PADDING_SMALL);
+
+    row![input, paste]
+        .spacing(style::SPACING_SMALL)
+        .align_y(Alignment::Center)
         .into()
 }
 
-fn auth_setup_view(info: &GitlabInfo) -> Element<'_, Message> {
+fn auth_setup_view<'a>(info: &'a GitlabInfo, token_input: &str) -> Element<'a, Message> {
     let title = if matches!(info.auth, AuthState::Invalid) {
         "GitLab token rejected"
     } else {
@@ -121,14 +178,9 @@ fn auth_setup_view(info: &GitlabInfo) -> Element<'_, Message> {
         .size(style::FONT_SIZE_NORMAL)
         .color(style::M3_ON_SURFACE);
 
-    let path_label = gitlab::token_file_path().map_or_else(
-        || "$XDG_CONFIG_HOME/obayebar/gitlab_token".to_string(),
-        |p| p.display().to_string(),
-    );
-
-    let instructions = text(format!(
-        "1. Create a Personal Access Token with the read_api scope on GitLab and copy it.\n2. Click \"Paste token from clipboard\" below.\n\nAlternatively save it to {path_label} or export OBAYEBAR_GITLAB_TOKEN."
-    ))
+    let instructions = text(
+        "1. Create a Personal Access Token with the read_api scope on GitLab and copy it.\n2. Paste it below (Ctrl+V or the paste button) and press Submit (or Enter).",
+    )
     .size(style::FONT_SIZE_SMALL)
     .color(style::M3_ON_SURFACE_VARIANT);
 
@@ -137,26 +189,39 @@ fn auth_setup_view(info: &GitlabInfo) -> Element<'_, Message> {
         info.host,
     );
 
+    let submit_disabled = token_input.trim().is_empty();
+    let submit = pill_action_button(
+        style::ICON_CHECK_CIRCLE,
+        "Submit",
+        if submit_disabled {
+            None
+        } else {
+            Some(Message::GitlabTokenSubmit)
+        },
+    );
+
     let buttons = column![
         pill_action_button(
             style::ICON_KEY,
             "Create access token on gitlab",
-            Message::GitlabOpenUrl(create_url),
+            Some(Message::GitlabOpenUrl(create_url)),
         ),
-        pill_action_button(
-            style::ICON_CONTENT_PASTE,
-            "Paste token from clipboard",
-            Message::GitlabPasteToken,
-        ),
+        token_input_row(token_input),
+        submit,
         pill_action_button(
             style::ICON_FOLDER,
             "Open token file",
-            Message::GitlabOpenTokenFile,
+            Some(Message::GitlabOpenTokenFile),
         ),
         pill_action_button(
             style::ICON_REFRESH,
             "Reload token",
-            Message::GitlabReloadToken,
+            Some(Message::GitlabReloadToken),
+        ),
+        pill_action_button(
+            style::ICON_DELETE,
+            "Forget token & restart",
+            Some(Message::GitlabForgetToken),
         ),
     ]
     .spacing(style::SPACING_SMALL)
@@ -223,7 +288,7 @@ fn list_view(info: &GitlabInfo) -> Element<'_, Message> {
 }
 
 #[allow(clippy::too_many_lines)]
-pub fn view(info: &GitlabInfo) -> Element<'_, Message> {
+pub fn view<'a>(info: &'a GitlabInfo, token_input: &'a str) -> Element<'a, Message> {
     let header = row![
         text(style::ICON_TASK_ALT)
             .font(style::ICON_FONT)
@@ -244,8 +309,8 @@ pub fn view(info: &GitlabInfo) -> Element<'_, Message> {
     .spacing(style::SPACING_SMALLER)
     .align_y(Alignment::Center);
 
-    let body: Element<'_, Message> = match info.auth {
-        AuthState::Missing | AuthState::Invalid => auth_setup_view(info),
+    let body: Element<'a, Message> = match info.auth {
+        AuthState::Missing | AuthState::Invalid => auth_setup_view(info, token_input),
         AuthState::Authenticated if info.todos.is_empty() => empty_view(),
         AuthState::Authenticated => list_view(info),
     };
@@ -256,7 +321,7 @@ pub fn view(info: &GitlabInfo) -> Element<'_, Message> {
         pill_action_button(
             style::ICON_OPEN_IN_NEW,
             "Show all",
-            Message::GitlabOpenUrl(show_all_url),
+            Some(Message::GitlabOpenUrl(show_all_url)),
         ),
     ]
     .align_y(Alignment::Center);

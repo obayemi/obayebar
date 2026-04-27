@@ -112,10 +112,14 @@ fn main() {
         .map(|()| log::set_max_level(max_level))
         .ok();
 
-    // The bar has no text input and doesn't need clipboard. The forked
-    // iced_layershell (vendor/iced_layershell) exposes this opt-out to
-    // skip spawning the always-on smithay-clipboard worker thread.
-    iced_layershell::disable_clipboard();
+    // Skip the always-on smithay-clipboard worker unless the GitLab popup
+    // actually needs Ctrl+V to onboard a token. After the user submits, we
+    // exec ourselves so the next instance hits the `is_configured` branch
+    // and stays clipboard-free.
+    let need_clipboard = args.gitlab && !services::gitlab::token_is_configured();
+    if !need_clipboard {
+        iced_layershell::disable_clipboard();
+    }
 
     let icon_fonts = style::load_icon_font();
 
@@ -172,6 +176,9 @@ pub struct App {
     gitlab_panel: panel::Panel,
     pub gitlab_enabled: bool,
     pub gitlab: GitlabInfo,
+    /// Working buffer for the token input field in the GitLab popup. Persists
+    /// across panel close/reopen so a stray mouse-exit doesn't lose typing.
+    pub gitlab_token_input: String,
 
     pub workspaces: Vec<WorkspaceInfo>,
     /// Per-monitor active workspace: `monitor_name` -> `active_workspace_id`
@@ -210,7 +217,13 @@ pub enum Message {
     GitlabOpenUrl(String),
     GitlabOpenTokenFile,
     GitlabReloadToken,
-    GitlabPasteToken,
+    GitlabTokenInputChanged(String),
+    GitlabTokenInputPaste,
+    GitlabTokenInputPasted(Result<String, String>),
+    GitlabTokenSubmit,
+    GitlabTokenSaved(Result<(), String>),
+    GitlabForgetToken,
+    GitlabTokenForgotten(Result<(), String>),
     TrayItems(Vec<TrayItemInfo>),
     TrayClick(String),
     Notif(NotifEvent),
@@ -259,6 +272,7 @@ impl App {
                 gitlab_panel: panel::Panel::new(),
                 gitlab_enabled: cli_args().gitlab,
                 gitlab: GitlabInfo::default(),
+                gitlab_token_input: String::new(),
                 workspaces: Vec::new(),
                 active_workspaces: HashMap::new(),
                 monitor_geoms: HashMap::new(),
@@ -502,7 +516,7 @@ impl App {
             Message::GitlabPanelOpen(monitor) => {
                 let close = self.close_all_panels();
                 services::gitlab::set_panel_open(true);
-                let open = self.gitlab_panel.open(
+                let open = self.gitlab_panel.open_keyboard(
                     style::GITLAB_PANEL_WIDTH,
                     style::GITLAB_PANEL_HEIGHT,
                     monitor,
@@ -523,10 +537,41 @@ impl App {
                 services::gitlab::request_refresh();
                 Task::none()
             }
-            Message::GitlabPasteToken => {
-                services::gitlab::paste_token_from_clipboard();
+            Message::GitlabTokenInputChanged(value) => {
+                self.gitlab_token_input = value;
                 Task::none()
             }
+            Message::GitlabTokenInputPaste => Task::perform(
+                services::gitlab::read_clipboard(),
+                Message::GitlabTokenInputPasted,
+            ),
+            Message::GitlabTokenInputPasted(result) => {
+                match result {
+                    Ok(text) => {
+                        self.gitlab_token_input = text.trim().to_string();
+                    }
+                    Err(msg) => services::gitlab::report_paste_error(msg),
+                }
+                Task::none()
+            }
+            Message::GitlabTokenSubmit => {
+                let token = std::mem::take(&mut self.gitlab_token_input);
+                Task::perform(
+                    services::gitlab::save_token(token),
+                    Message::GitlabTokenSaved,
+                )
+            }
+            Message::GitlabTokenSaved(Ok(())) | Message::GitlabTokenForgotten(Ok(())) => {
+                restart_self()
+            }
+            Message::GitlabTokenSaved(Err(msg)) | Message::GitlabTokenForgotten(Err(msg)) => {
+                services::gitlab::report_paste_error(msg);
+                Task::none()
+            }
+            Message::GitlabForgetToken => Task::perform(
+                services::gitlab::forget_token(),
+                Message::GitlabTokenForgotten,
+            ),
             Message::BluetoothToggleDevice { path, connected } => {
                 services::bluetooth::toggle_device_connection(&path, connected);
                 Task::none()
@@ -716,7 +761,7 @@ impl App {
         } else if self.sysinfo_panel.is_window(id) {
             bar::sysinfo_panel::view(&self.sysinfo)
         } else if self.gitlab_panel.is_window(id) {
-            bar::gitlab_panel::view(&self.gitlab)
+            bar::gitlab_panel::view(&self.gitlab, &self.gitlab_token_input)
         } else {
             let monitor = self.monitor_for_bar(id);
             bar::view(self, monitor)
@@ -893,4 +938,21 @@ fn close_window(id: window::Id) -> Task<Message> {
     iced_runtime::task::effect(iced_runtime::Action::Window(
         iced_runtime::window::Action::Close(id),
     ))
+}
+
+/// Replace the running process with a fresh copy of itself, preserving CLI
+/// args. Used after the user (re-)configures the GitLab token so the next
+/// instance starts without the smithay-clipboard worker thread.
+///
+/// Diverges: returns only on `exec()` failure, in which case it falls back
+/// to spawn+exit so the user still ends up on a fresh process.
+fn restart_self() -> ! {
+    use std::os::unix::process::CommandExt;
+    let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("obayebar"));
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    log::info!("obayebar: re-execing self ({} arg(s))", args.len());
+    let err = std::process::Command::new(&exe).args(&args).exec();
+    log::error!("obayebar: exec failed: {err}, falling back to spawn+exit");
+    let _ = std::process::Command::new(&exe).args(&args).spawn();
+    std::process::exit(0)
 }
