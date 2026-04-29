@@ -59,4 +59,17 @@ impl Panel {
             .take()
             .map_or_else(iced::Task::none, super::close_window)
     }
+
+    /// Drop the panel's tracked window id without dispatching a Close action.
+    /// Returns true if `id` matched this panel — the caller should run its
+    /// own state cleanup as if `close()` had been invoked.
+    pub fn forget_if(&mut self, id: window::Id) -> bool {
+        if self.id == Some(id) {
+            self.id = None;
+            self.open = false;
+            true
+        } else {
+            false
+        }
+    }
 }

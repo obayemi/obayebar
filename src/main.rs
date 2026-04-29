@@ -273,6 +273,7 @@ pub enum Message {
     AudioSetDefaultSink(u32),
     AudioOpenPavucontrol,
     SetPowerProfile(String),
+    WindowClosed(window::Id),
 }
 
 impl App {
@@ -655,6 +656,7 @@ impl App {
                 });
                 Task::none()
             }
+            Message::WindowClosed(id) => self.handle_window_closed(id),
             _ => Task::none(),
         }
     }
@@ -741,22 +743,7 @@ impl App {
             if self.monitors_with_bars.contains(&monitor) {
                 continue;
             }
-            self.monitors_with_bars.push(monitor.clone());
-
-            let id = window::Id::unique();
-            self.extra_bar_windows.insert(id, monitor.clone());
-            tasks.push(Task::done(Message::NewLayerShell {
-                settings: NewLayerShellSettings {
-                    anchor: Anchor::Left | Anchor::Top | Anchor::Bottom,
-                    layer: Layer::Top,
-                    exclusive_zone: Some(i32::try_from(style::BAR_WIDTH).unwrap_or(54)),
-                    size: Some((style::BAR_WIDTH, 0)),
-                    output_option: OutputOption::OutputName(monitor),
-                    keyboard_interactivity: KeyboardInteractivity::None,
-                    ..NewLayerShellSettings::default()
-                },
-                id,
-            }));
+            tasks.push(self.spawn_bar_for(monitor));
         }
 
         // Re-fit notification popup: focused monitor or its geometry may have
@@ -766,6 +753,83 @@ impl App {
         }
 
         Task::batch(tasks)
+    }
+
+    /// Spawn a layer-shell bar pinned to `monitor` and register it in
+    /// `extra_bar_windows` / `monitors_with_bars`. Used both for first-time
+    /// monitor discovery and for re-spawning after the compositor closes a
+    /// surface (e.g. when an output disappears across screen sleep).
+    fn spawn_bar_for(&mut self, monitor: String) -> Task<Message> {
+        self.monitors_with_bars.push(monitor.clone());
+        let id = window::Id::unique();
+        self.extra_bar_windows.insert(id, monitor.clone());
+        Task::done(Message::NewLayerShell {
+            settings: NewLayerShellSettings {
+                anchor: Anchor::Left | Anchor::Top | Anchor::Bottom,
+                layer: Layer::Top,
+                exclusive_zone: Some(i32::try_from(style::BAR_WIDTH).unwrap_or(54)),
+                size: Some((style::BAR_WIDTH, 0)),
+                output_option: OutputOption::OutputName(monitor),
+                keyboard_interactivity: KeyboardInteractivity::None,
+                ..NewLayerShellSettings::default()
+            },
+            id,
+        })
+    }
+
+    /// Drop tracking for `monitor`'s bar — the surface is gone (compositor
+    /// closed it) so its workspace cache/spring should not linger either.
+    fn drop_bar_state(&mut self, monitor: &str) {
+        self.monitors_with_bars.retain(|m| m != monitor);
+        self.ws_spring.remove(monitor);
+        self.ws_cache.remove(monitor);
+    }
+
+    /// Handle a window closed by the compositor. Layer surfaces are torn down
+    /// when their `wl_output` disappears (e.g. monitor disconnect or screen
+    /// sleep on some setups); without this, our tracking stays out of sync
+    /// and bars get stranded on a single monitor when outputs come back.
+    fn handle_window_closed(&mut self, id: window::Id) -> Task<Message> {
+        if self.notif_popup_id == Some(id) {
+            self.notif_popup_id = None;
+            return self.ensure_popup_window();
+        }
+        if self.audio_panel.forget_if(id)
+            || self.network_panel.forget_if(id)
+            || self.battery_panel.forget_if(id)
+            || self.bluetooth_panel.forget_if(id)
+            || self.sysinfo_panel.forget_if(id)
+            || self.gitlab_panel.forget_if(id)
+        {
+            services::network::set_panel_open(false);
+            services::bluetooth::set_panel_open(false);
+            services::sysinfo::set_panel_open(false);
+            services::gitlab::set_panel_open(false);
+            return Task::none();
+        }
+
+        // Bar window: figure out which monitor lost its surface, drop the
+        // tracking, and re-spawn pinned to that output if it still exists.
+        let monitor = if let Some(name) = self.extra_bar_windows.remove(&id) {
+            Some(name)
+        } else if self.initial_monitor.is_some() {
+            // No id stored for the settings-created window, so any unmatched
+            // close must be it. After this it's gone for good — recreate via
+            // NewLayerShell like every other bar.
+            self.initial_monitor.take()
+        } else {
+            None
+        };
+
+        let Some(monitor) = monitor else {
+            return Task::none();
+        };
+        self.drop_bar_state(&monitor);
+        if self.monitor_geoms.contains_key(&monitor) {
+            self.spawn_bar_for(monitor)
+        } else {
+            Task::none()
+        }
     }
 
     fn view(&self, id: window::Id) -> Element<'_, Message> {
@@ -802,6 +866,7 @@ impl App {
             Subscription::run(services::bluetooth::stream).map(Message::Bluetooth),
             Subscription::run(services::sysinfo::stream).map(Message::SysInfo),
             Subscription::run(services::notifications::stream).map(Message::Notif),
+            iced::window::close_events().map(Message::WindowClosed),
         ];
 
         if self.gitlab_enabled {
