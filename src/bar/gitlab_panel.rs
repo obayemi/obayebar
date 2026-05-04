@@ -168,6 +168,35 @@ fn token_input_row<'a>(value: &str) -> Element<'a, Message> {
         .into()
 }
 
+/// Read the kernel hostname; falls back to a blank string when unavailable.
+fn hostname() -> String {
+    std::fs::read_to_string("/proc/sys/kernel/hostname")
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
+}
+
+/// Build the GitLab "create token" URL, prefilled with a host-scoped name and
+/// a one-year expiry. The token name uses `obayebar-<hostname>` so multiple
+/// machines authorized for the same account remain distinguishable.
+fn create_token_url() -> String {
+    let host = hostname();
+    let name = if host.is_empty() {
+        "obayebar".to_string()
+    } else {
+        format!("obayebar-{host}")
+    };
+    let host_url = crate::services::gitlab::host();
+    let base =
+        format!("{host_url}/-/user_settings/personal_access_tokens?name={name}&scopes=read_api");
+    match chrono::Local::now()
+        .date_naive()
+        .checked_add_months(chrono::Months::new(12))
+    {
+        Some(d) => format!("{base}&expires_at={}", d.format("%Y-%m-%d")),
+        None => base,
+    }
+}
+
 fn auth_setup_view<'a>(info: &'a GitlabInfo, token_input: &str) -> Element<'a, Message> {
     let title = if matches!(info.auth, AuthState::Invalid) {
         "GitLab token rejected"
@@ -184,10 +213,7 @@ fn auth_setup_view<'a>(info: &'a GitlabInfo, token_input: &str) -> Element<'a, M
     .size(style::FONT_SIZE_SMALL)
     .color(style::M3_ON_SURFACE_VARIANT);
 
-    let create_url = format!(
-        "{}/-/user_settings/personal_access_tokens?name=obayebar&scopes=read_api",
-        crate::services::gitlab::host(),
-    );
+    let create_url = create_token_url();
 
     let submit_disabled = token_input.trim().is_empty();
     let submit = pill_action_button(
