@@ -6,13 +6,15 @@ use crate::services::sysinfo::SysInfo;
 use crate::Message;
 use iced::widget::canvas::{self, Frame, Geometry, Path, Stroke};
 use iced::widget::{column, container, mouse_area, text};
-use iced::{Alignment, Color, Element, Length, Pixels, Point, Rectangle, Renderer, Theme};
+use iced::{mouse, Alignment, Color, Element, Length, Pixels, Point, Rectangle, Renderer, Theme};
 use obayebar::style;
 
 /// Threshold above which usage is considered elevated.
 const ELEVATED_THRESHOLD: f32 = 70.0;
 /// Threshold above which usage is considered critical.
 const CRITICAL_THRESHOLD: f32 = 90.0;
+/// Volume change per scroll line on the bar audio icon.
+const VOLUME_SCROLL_STEP: f32 = 0.05;
 
 /// Canvas size for the split icon (matches single icon visual size).
 const SPLIT_SIZE: f32 = style::FONT_SIZE_LARGE + 6.0;
@@ -181,6 +183,7 @@ pub fn view(
         .spacing(style::SPACING_SMALLER / 2.0)
         .align_x(Alignment::Center);
 
+    let audio_volume = audio.volume;
     let audio_icon = mouse_area(
         text(audio.icon_name)
             .font(style::ICON_FONT)
@@ -189,7 +192,15 @@ pub fn view(
             .align_x(Alignment::Center),
     )
     .on_enter(Message::AudioPanelOpen(monitor.map(String::from)))
-    .on_press(Message::AudioOpenPavucontrol);
+    .on_press(Message::AudioOpenPavucontrol)
+    .on_scroll(move |delta| {
+        let dy = match delta {
+            mouse::ScrollDelta::Lines { y, .. } => y,
+            mouse::ScrollDelta::Pixels { y, .. } => y / 120.0,
+        };
+        let new_vol = (audio_volume + dy * VOLUME_SCROLL_STEP).clamp(0.0, 1.0);
+        Message::AudioSetVolume(new_vol)
+    });
 
     let network_icon = mouse_area(
         text(network.icon_name)
