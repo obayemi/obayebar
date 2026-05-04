@@ -6,6 +6,7 @@ mod services;
 
 use obayebar::style;
 
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -179,6 +180,13 @@ pub struct App {
     extra_bar_windows: HashMap<window::Id, String>,
     /// The monitor that the initial (settings-created) window is on
     initial_monitor: Option<String>,
+    /// Window id of the settings-created initial bar. We don't generate this
+    /// id ourselves, so we capture it lazily on the first `view()` call for
+    /// an unknown bar surface — only an exact match should be treated as the
+    /// initial bar in close-event handling. Without this, popup/panel close
+    /// events (which clear their tracking before the close fires) get
+    /// misclassified as the initial bar and trigger spurious bar respawns.
+    initial_bar_id: Cell<Option<window::Id>>,
     /// Set of monitors that already have bars
     monitors_with_bars: Vec<String>,
     /// Per-monitor workspace indicator spring animation
@@ -282,6 +290,7 @@ impl App {
             Self {
                 extra_bar_windows: HashMap::new(),
                 initial_monitor: None,
+                initial_bar_id: Cell::new(None),
                 monitors_with_bars: Vec::new(),
                 ws_spring: HashMap::new(),
                 ws_cache: HashMap::new(),
@@ -810,12 +819,13 @@ impl App {
 
         // Bar window: figure out which monitor lost its surface, drop the
         // tracking, and re-spawn pinned to that output if it still exists.
+        // Unknown ids are popup/panel surfaces whose tracking we cleared
+        // before initiating close — treat them as no-ops, not as the initial
+        // bar, otherwise every notification dismissal spawns a new bar.
         let monitor = if let Some(name) = self.extra_bar_windows.remove(&id) {
             Some(name)
-        } else if self.initial_monitor.is_some() {
-            // No id stored for the settings-created window, so any unmatched
-            // close must be it. After this it's gone for good — recreate via
-            // NewLayerShell like every other bar.
+        } else if self.initial_bar_id.get() == Some(id) {
+            self.initial_bar_id.set(None);
             self.initial_monitor.take()
         } else {
             None
@@ -848,6 +858,11 @@ impl App {
         } else if self.gitlab_panel.is_window(id) {
             bar::gitlab_panel::view(&self.gitlab, &self.gitlab_token_input)
         } else {
+            // Capture the settings-created bar's id the first time we render
+            // it so close events can be matched exactly rather than guessed.
+            if !self.extra_bar_windows.contains_key(&id) && self.initial_bar_id.get().is_none() {
+                self.initial_bar_id.set(Some(id));
+            }
             let monitor = self.monitor_for_bar(id);
             bar::view(self, monitor)
         }
