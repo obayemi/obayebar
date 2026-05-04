@@ -176,7 +176,9 @@ fn main() {
 #[derive(Debug)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct App {
-    /// Map of bar window ID -> monitor name (for extra monitors only)
+    /// Map of bar window ID -> monitor name (for extra monitors only).
+    /// This — together with `initial_monitor` — is the canonical record of
+    /// which monitors have a bar. Any other view must derive from these two.
     extra_bar_windows: HashMap<window::Id, String>,
     /// The monitor that the initial (settings-created) window is on
     initial_monitor: Option<String>,
@@ -187,8 +189,6 @@ pub struct App {
     /// events (which clear their tracking before the close fires) get
     /// misclassified as the initial bar and trigger spurious bar respawns.
     initial_bar_id: Cell<Option<window::Id>>,
-    /// Set of monitors that already have bars
-    monitors_with_bars: Vec<String>,
     /// Per-monitor workspace indicator spring animation
     ws_spring: HashMap<String, SpringState>,
     /// Per-monitor workspace canvas cache (cleared on data change)
@@ -291,7 +291,6 @@ impl App {
                 extra_bar_windows: HashMap::new(),
                 initial_monitor: None,
                 initial_bar_id: Cell::new(None),
-                monitors_with_bars: Vec::new(),
                 ws_spring: HashMap::new(),
                 ws_cache: HashMap::new(),
                 ws_cache_fallback: canvas::Cache::default(),
@@ -330,12 +329,21 @@ impl App {
         "obayebar".into()
     }
 
-    /// Get the monitor name for a bar window ID
+    /// Get the monitor name for a bar window ID. Returns `None` if `id` is
+    /// not a tracked bar surface.
     fn monitor_for_bar(&self, id: window::Id) -> Option<&str> {
-        self.extra_bar_windows
-            .get(&id)
-            .map(String::as_str)
-            .or(self.initial_monitor.as_deref())
+        if let Some(monitor) = self.extra_bar_windows.get(&id) {
+            return Some(monitor);
+        }
+        if self.initial_bar_id.get() == Some(id) {
+            return self.initial_monitor.as_deref();
+        }
+        // First-render fallback: `view()` captures the initial bar's id on
+        // its first call; until then, an unknown id can only be that bar.
+        if self.initial_bar_id.get().is_none() {
+            return self.initial_monitor.as_deref();
+        }
+        None
     }
 
     /// Get the active workspace ID for a `monitor`
@@ -711,49 +719,13 @@ impl App {
         self.active_workspaces = state.active_workspaces;
 
         // The initial settings window lands on the focused monitor.
-        // Assign it on first state update.
-        if self.initial_monitor.is_none() {
-            self.initial_monitor = Some(state.focused_monitor.clone());
-            self.monitors_with_bars.push(state.focused_monitor);
+        // Assign it on first state update so reconciliation can match the
+        // bar against an expected monitor instead of treating it as missing.
+        if self.initial_monitor.is_none() && self.extra_bar_windows.is_empty() {
+            self.initial_monitor = Some(state.focused_monitor);
         }
 
-        let mut tasks = Vec::new();
-
-        // Close bars for monitors that are no longer connected
-        let removed: Vec<String> = self
-            .monitors_with_bars
-            .iter()
-            .filter(|m| !state.monitors.contains(m))
-            .cloned()
-            .collect();
-        for monitor in &removed {
-            // Close extra bar windows for removed monitors
-            let ids_to_remove: Vec<window::Id> = self
-                .extra_bar_windows
-                .iter()
-                .filter(|(_, m)| *m == monitor)
-                .map(|(id, _)| *id)
-                .collect();
-            for id in ids_to_remove {
-                self.extra_bar_windows.remove(&id);
-                tasks.push(close_window(id));
-            }
-            // If the initial monitor was removed, reassign to a remaining monitor
-            if self.initial_monitor.as_deref() == Some(monitor) {
-                self.initial_monitor = state.monitors.first().cloned();
-            }
-            self.ws_spring.remove(monitor);
-            self.ws_cache.remove(monitor);
-        }
-        self.monitors_with_bars.retain(|m| !removed.contains(m));
-
-        // Create bars for any monitors we haven't seen yet
-        for monitor in state.monitors {
-            if self.monitors_with_bars.contains(&monitor) {
-                continue;
-            }
-            tasks.push(self.spawn_bar_for(monitor));
-        }
+        let mut tasks = vec![self.reconcile_bars()];
 
         // Re-fit notification popup: focused monitor or its geometry may have
         // changed, which affects the 2/5-of-screen cap.
@@ -765,11 +737,9 @@ impl App {
     }
 
     /// Spawn a layer-shell bar pinned to `monitor` and register it in
-    /// `extra_bar_windows` / `monitors_with_bars`. Used both for first-time
-    /// monitor discovery and for re-spawning after the compositor closes a
-    /// surface (e.g. when an output disappears across screen sleep).
+    /// `extra_bar_windows`. Internal primitive — call sites must go through
+    /// `reconcile_bars` so the per-monitor invariants stay enforced.
     fn spawn_bar_for(&mut self, monitor: String) -> Task<Message> {
-        self.monitors_with_bars.push(monitor.clone());
         let id = window::Id::unique();
         self.extra_bar_windows.insert(id, monitor.clone());
         Task::done(Message::NewLayerShell {
@@ -786,18 +756,92 @@ impl App {
         })
     }
 
-    /// Drop tracking for `monitor`'s bar — the surface is gone (compositor
+    /// Drop per-monitor workspace state — the surface is gone (compositor
     /// closed it) so its workspace cache/spring should not linger either.
     fn drop_bar_state(&mut self, monitor: &str) {
-        self.monitors_with_bars.retain(|m| m != monitor);
         self.ws_spring.remove(monitor);
         self.ws_cache.remove(monitor);
     }
 
-    /// Handle a window closed by the compositor. Layer surfaces are torn down
-    /// when their `wl_output` disappears (e.g. monitor disconnect or screen
-    /// sleep on some setups); without this, our tracking stays out of sync
-    /// and bars get stranded on a single monitor when outputs come back.
+    /// Enforce the bar-distribution invariants over the set of currently
+    /// connected monitors (those with known geometry):
+    ///
+    /// 1. Every connected monitor has a bar pinned to it.
+    /// 2. No bar is left over for a disconnected monitor.
+    /// 3. No two bars share the same monitor.
+    ///
+    /// This is the single source of truth for redistribution. Every code
+    /// path that touches monitor presence or bar window lifetimes must
+    /// finish by calling this so the model stays coherent regardless of how
+    /// it got there. The function is idempotent — calling it twice in a
+    /// row is a no-op.
+    fn reconcile_bars(&mut self) -> Task<Message> {
+        let expected: std::collections::HashSet<String> =
+            self.monitor_geoms.keys().cloned().collect();
+        let plan = plan_bar_reconcile(
+            &expected,
+            self.initial_monitor.as_deref(),
+            &self.extra_bar_windows,
+        );
+
+        let mut tasks = Vec::new();
+
+        if plan.drop_initial {
+            self.initial_monitor = None;
+            self.initial_bar_id.set(None);
+        }
+        for id in &plan.close_extras {
+            self.extra_bar_windows.remove(id);
+            tasks.push(close_window(*id));
+        }
+        for monitor in &plan.drop_state_for {
+            self.drop_bar_state(monitor);
+        }
+        for monitor in plan.spawn_monitors {
+            tasks.push(self.spawn_bar_for(monitor));
+        }
+
+        debug_assert!(self.bar_invariants_hold());
+
+        Task::batch(tasks)
+    }
+
+    /// Debug-only check that the three bar-distribution invariants hold.
+    /// Used after `reconcile_bars` to catch reconciler bugs at the source.
+    #[cfg(debug_assertions)]
+    #[allow(clippy::arithmetic_side_effects)]
+    fn bar_invariants_hold(&self) -> bool {
+        use std::collections::HashMap;
+        let mut counts: HashMap<&str, u32> = HashMap::new();
+        if let Some(m) = &self.initial_monitor {
+            *counts.entry(m).or_insert(0) += 1;
+        }
+        for m in self.extra_bar_windows.values() {
+            *counts.entry(m).or_insert(0) += 1;
+        }
+        for (monitor, count) in &counts {
+            if !self.monitor_geoms.contains_key(*monitor) {
+                log::error!("bar invariant: stale bar tracked for {monitor}");
+                return false;
+            }
+            if *count > 1 {
+                log::error!("bar invariant: {count} bars on monitor {monitor}");
+                return false;
+            }
+        }
+        for monitor in self.monitor_geoms.keys() {
+            if !counts.contains_key(monitor.as_str()) {
+                log::error!("bar invariant: monitor {monitor} has no bar");
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Handle a window closed by the compositor. Layer surfaces are torn
+    /// down when their `wl_output` disappears (monitor disconnect, screen
+    /// sleep, etc.); without this, our tracking would drift and bars get
+    /// stranded on a single output when others come back.
     fn handle_window_closed(&mut self, id: window::Id) -> Task<Message> {
         if self.notif_popup_id == Some(id) {
             self.notif_popup_id = None;
@@ -817,26 +861,32 @@ impl App {
             return Task::none();
         }
 
-        // Bar window: figure out which monitor lost its surface, drop the
-        // tracking, and re-spawn pinned to that output if it still exists.
-        // Unknown ids are popup/panel surfaces whose tracking we cleared
-        // before initiating close — treat them as no-ops, not as the initial
-        // bar, otherwise every notification dismissal spawns a new bar.
-        let monitor = if let Some(name) = self.extra_bar_windows.remove(&id) {
-            Some(name)
+        // Bar window: drop our tracking for the closed surface, then let
+        // `reconcile_bars` decide whether to respawn (monitor still around)
+        // or do nothing (monitor gone). Unknown ids are popup/panel
+        // surfaces whose tracking we cleared before initiating close —
+        // treat them as no-ops so notification dismissals don't spawn bars.
+        let closed_a_bar = if let Some(monitor) = self.extra_bar_windows.remove(&id) {
+            if !self.extra_bar_windows.values().any(|m| m == &monitor)
+                && self.initial_monitor.as_deref() != Some(&monitor)
+            {
+                self.drop_bar_state(&monitor);
+            }
+            true
         } else if self.initial_bar_id.get() == Some(id) {
             self.initial_bar_id.set(None);
-            self.initial_monitor.take()
+            if let Some(monitor) = self.initial_monitor.take() {
+                if !self.extra_bar_windows.values().any(|m| m == &monitor) {
+                    self.drop_bar_state(&monitor);
+                }
+            }
+            true
         } else {
-            None
+            false
         };
 
-        let Some(monitor) = monitor else {
-            return Task::none();
-        };
-        self.drop_bar_state(&monitor);
-        if self.monitor_geoms.contains_key(&monitor) {
-            self.spawn_bar_for(monitor)
+        if closed_a_bar {
+            self.reconcile_bars()
         } else {
             Task::none()
         }
@@ -1039,4 +1089,216 @@ fn close_window(id: window::Id) -> Task<Message> {
     iced_runtime::task::effect(iced_runtime::Action::Window(
         iced_runtime::window::Action::Close(id),
     ))
+}
+
+/// Decision output from `plan_bar_reconcile`: what changes the caller must
+/// apply for the three bar-distribution invariants to hold.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct BarReconcilePlan {
+    /// Initial bar tracking should be cleared (its monitor disappeared).
+    drop_initial: bool,
+    /// Extra bar window ids to close (sorted by id for determinism).
+    close_extras: Vec<window::Id>,
+    /// Monitors that lose their last bar in this plan and whose per-monitor
+    /// state (workspace cache/spring) should be dropped (sorted).
+    drop_state_for: Vec<String>,
+    /// Monitors that need a fresh bar spawned (sorted).
+    spawn_monitors: Vec<String>,
+}
+
+/// Compute the redistribution plan for a given bar tracking state. Pure —
+/// returns the operations needed to restore the three invariants without
+/// touching any iced types or running side effects.
+fn plan_bar_reconcile(
+    expected: &std::collections::HashSet<String>,
+    initial_monitor: Option<&str>,
+    extras: &HashMap<window::Id, String>,
+) -> BarReconcilePlan {
+    use std::collections::HashSet;
+
+    let drop_initial = initial_monitor.is_some_and(|m| !expected.contains(m));
+    let live_initial = if drop_initial { None } else { initial_monitor };
+
+    let mut sorted_extras: Vec<(window::Id, &str)> =
+        extras.iter().map(|(id, m)| (*id, m.as_str())).collect();
+    sorted_extras.sort_by_key(|(id, _)| *id);
+
+    // First pass: walk extras in id order, keeping the first bar seen per
+    // monitor and marking the rest (or any on a stale monitor) for close.
+    let mut have: HashSet<&str> = live_initial.into_iter().collect();
+    let mut close_extras: Vec<window::Id> = Vec::new();
+    for (id, monitor) in &sorted_extras {
+        if !expected.contains(*monitor) || !have.insert(monitor) {
+            close_extras.push(*id);
+        }
+    }
+
+    // A monitor loses its last bar when it had one before the plan but has
+    // none after. `have` is the post-plan set; the pre-plan set is `extras`
+    // values plus the original `initial_monitor`.
+    let pre_have: HashSet<&str> = extras
+        .values()
+        .map(String::as_str)
+        .chain(initial_monitor)
+        .collect();
+    let mut drop_state_for: Vec<String> = pre_have
+        .difference(&have)
+        .map(|s| (*s).to_string())
+        .collect();
+    drop_state_for.sort();
+
+    let mut spawn_monitors: Vec<String> = expected
+        .iter()
+        .filter(|m| !have.contains(m.as_str()))
+        .cloned()
+        .collect();
+    spawn_monitors.sort();
+
+    BarReconcilePlan {
+        drop_initial,
+        close_extras,
+        drop_state_for,
+        spawn_monitors,
+    }
+}
+
+#[cfg(test)]
+mod reconcile_tests {
+    use super::{plan_bar_reconcile, BarReconcilePlan};
+    use iced::window;
+    use std::collections::{HashMap, HashSet};
+
+    fn expected<const N: usize>(monitors: [&str; N]) -> HashSet<String> {
+        monitors.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    fn extras<const N: usize>(entries: [(window::Id, &str); N]) -> HashMap<window::Id, String> {
+        entries
+            .iter()
+            .map(|(id, m)| (*id, (*m).to_string()))
+            .collect()
+    }
+
+    fn id(n: u64) -> window::Id {
+        // window::Id::unique() is process-global; tests need deterministic ids.
+        // The crate's Id wraps a u64, but its only public ctor is `unique()`.
+        // Generate fresh ones in a loop and use them in seen-order.
+        let _ = n;
+        window::Id::unique()
+    }
+
+    #[test]
+    fn empty_state_with_one_monitor_spawns_one_bar() {
+        let plan = plan_bar_reconcile(&expected(["DP-1"]), None, &HashMap::new());
+        assert!(!plan.drop_initial);
+        assert!(plan.close_extras.is_empty());
+        assert_eq!(plan.spawn_monitors, vec!["DP-1".to_string()]);
+        assert!(plan.drop_state_for.is_empty());
+    }
+
+    #[test]
+    fn initial_only_no_extras_is_idempotent() {
+        let plan = plan_bar_reconcile(&expected(["DP-1"]), Some("DP-1"), &HashMap::new());
+        assert_eq!(plan, BarReconcilePlan::default());
+    }
+
+    #[test]
+    fn missing_monitor_gets_a_bar_initial_kept() {
+        let plan = plan_bar_reconcile(
+            &expected(["DP-1", "HDMI-A-1"]),
+            Some("DP-1"),
+            &HashMap::new(),
+        );
+        assert_eq!(plan.spawn_monitors, vec!["HDMI-A-1".to_string()]);
+        assert!(!plan.drop_initial);
+        assert!(plan.close_extras.is_empty());
+    }
+
+    #[test]
+    fn stale_extra_is_closed_and_state_dropped() {
+        let a = id(1);
+        let plan = plan_bar_reconcile(
+            &expected(["DP-1"]),
+            Some("DP-1"),
+            &extras([(a, "HDMI-A-1")]),
+        );
+        assert_eq!(plan.close_extras, vec![a]);
+        assert_eq!(plan.drop_state_for, vec!["HDMI-A-1".to_string()]);
+        assert!(plan.spawn_monitors.is_empty());
+    }
+
+    #[test]
+    fn duplicate_extras_keep_first_close_rest() {
+        let mut ids = [id(1), id(2), id(3)];
+        ids.sort();
+        let plan = plan_bar_reconcile(
+            &expected(["HDMI-A-1"]),
+            None,
+            &extras([
+                (ids[0], "HDMI-A-1"),
+                (ids[1], "HDMI-A-1"),
+                (ids[2], "HDMI-A-1"),
+            ]),
+        );
+        assert_eq!(plan.close_extras, vec![ids[1], ids[2]]);
+        // Monitor still has one bar (ids[0]), so no state drop.
+        assert!(plan.drop_state_for.is_empty());
+        assert!(plan.spawn_monitors.is_empty());
+    }
+
+    #[test]
+    fn extra_duplicating_initial_is_closed() {
+        let a = id(1);
+        let plan = plan_bar_reconcile(&expected(["DP-1"]), Some("DP-1"), &extras([(a, "DP-1")]));
+        assert_eq!(plan.close_extras, vec![a]);
+        assert!(plan.drop_state_for.is_empty());
+        assert!(plan.spawn_monitors.is_empty());
+        assert!(!plan.drop_initial);
+    }
+
+    #[test]
+    fn initial_monitor_disappearing_drops_initial_and_keeps_remaining() {
+        let a = id(1);
+        let plan = plan_bar_reconcile(
+            &expected(["HDMI-A-1"]),
+            Some("DP-1"),
+            &extras([(a, "HDMI-A-1")]),
+        );
+        assert!(plan.drop_initial);
+        assert!(plan.close_extras.is_empty());
+        assert_eq!(plan.drop_state_for, vec!["DP-1".to_string()]);
+        assert!(plan.spawn_monitors.is_empty());
+    }
+
+    #[test]
+    fn no_monitors_means_close_everything() {
+        let a = id(1);
+        let b = id(2);
+        let plan = plan_bar_reconcile(
+            &HashSet::new(),
+            Some("DP-1"),
+            &extras([(a, "DP-1"), (b, "HDMI-A-1")]),
+        );
+        assert!(plan.drop_initial);
+        let mut closed = plan.close_extras.clone();
+        closed.sort();
+        let mut want = vec![a, b];
+        want.sort();
+        assert_eq!(closed, want);
+        assert_eq!(
+            plan.drop_state_for,
+            vec!["DP-1".to_string(), "HDMI-A-1".to_string()]
+        );
+        assert!(plan.spawn_monitors.is_empty());
+    }
+
+    #[test]
+    fn duplicate_keeps_initial_and_closes_extra_even_if_extra_id_lower() {
+        // Initial bar is always preferred over an extra on the same monitor
+        // (we can't close the initial by id from this side), regardless of
+        // id ordering.
+        let a = id(1);
+        let plan = plan_bar_reconcile(&expected(["DP-1"]), Some("DP-1"), &extras([(a, "DP-1")]));
+        assert_eq!(plan.close_extras, vec![a]);
+    }
 }
