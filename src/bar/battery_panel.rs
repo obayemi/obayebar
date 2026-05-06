@@ -1,64 +1,19 @@
-use super::widgets::{gauge_arc, hover_button_style, panel_with_exit, separator, GAUGE_ARC_SPAN};
+use super::widgets::{hover_button_style, panel_with_exit, separator, GaugeProgram};
 use crate::services::battery::BatteryInfo;
 use crate::Message;
-use iced::widget::canvas::{self, Frame, Geometry, Stroke};
+use iced::widget::canvas;
 use iced::widget::{button, column, container, row, text, Stack};
-use iced::{Alignment, Element, Length, Point, Rectangle, Renderer, Theme};
+use iced::{Alignment, Element, Length};
 use obayebar::style;
 
 const GAUGE_SIZE: f32 = 140.0;
 const ARC_WIDTH: f32 = 10.0;
 
-struct GaugeProgram {
-    percentage: f64,
-    charging: bool,
-}
-
-impl canvas::Program<Message> for GaugeProgram {
-    type State = ();
-
-    fn draw(
-        &self,
-        _state: &Self::State,
-        renderer: &Renderer,
-        _theme: &Theme,
-        bounds: Rectangle,
-        _cursor: iced::mouse::Cursor,
-    ) -> Vec<Geometry<Renderer>> {
-        let mut frame = Frame::new(renderer, bounds.size());
-        let center = Point::new(bounds.width / 2.0, bounds.height / 2.0);
-        let radius = (bounds.width.min(bounds.height) / 2.0) - ARC_WIDTH;
-
-        // Background track
-        frame.stroke(
-            &gauge_arc(center, radius, 0.0, GAUGE_ARC_SPAN),
-            Stroke::default()
-                .with_width(ARC_WIDTH)
-                .with_color(style::with_alpha(style::M3_ON_SURFACE, 0.12)),
-        );
-
-        // Foreground arc (percentage)
-        #[allow(clippy::cast_possible_truncation)]
-        let fill_angle = GAUGE_ARC_SPAN * (self.percentage as f32 / 100.0);
-        let color = if self.charging {
-            style::M3_PRIMARY
-        } else if self.percentage <= 20.0 {
-            style::M3_ERROR
-        } else {
-            style::M3_PRIMARY
-        };
-
-        if fill_angle > 0.01 {
-            frame.stroke(
-                &gauge_arc(center, radius, 0.0, fill_angle),
-                Stroke::default()
-                    .with_width(ARC_WIDTH)
-                    .with_color(color)
-                    .with_line_cap(iced::widget::canvas::LineCap::Round),
-            );
-        }
-
-        vec![frame.into_geometry()]
+fn battery_gauge_color(percentage: f64, charging: bool) -> iced::Color {
+    if !charging && percentage <= 20.0 {
+        style::M3_ERROR
+    } else {
+        style::M3_PRIMARY
     }
 }
 
@@ -156,9 +111,11 @@ fn gauge_widget(battery: &BatteryInfo) -> Element<'_, Message> {
         .align_x(Alignment::Center)
         .spacing(2.0);
 
+    #[allow(clippy::cast_possible_truncation)]
     let gauge_canvas = canvas::Canvas::new(GaugeProgram {
-        percentage: battery.percentage,
-        charging: battery.charging,
+        percent: battery.percentage as f32,
+        color: battery_gauge_color(battery.percentage, battery.charging),
+        arc_width: ARC_WIDTH,
     })
     .width(Length::Fixed(GAUGE_SIZE))
     .height(Length::Fixed(GAUGE_SIZE));

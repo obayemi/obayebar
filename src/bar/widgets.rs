@@ -1,9 +1,11 @@
 //! Shared iced widget builders used across panels.
 
 use crate::Message;
-use iced::widget::canvas::{path::Arc, Path};
+use iced::widget::canvas::{self, path::Arc, Frame, Geometry, LineCap, Path, Stroke};
 use iced::widget::{button, container, mouse_area, text, toggler, Space};
-use iced::{Alignment, Border, Color, Element, Length, Padding, Point, Radians};
+use iced::{
+    Alignment, Border, Color, Element, Length, Padding, Point, Radians, Rectangle, Renderer, Theme,
+};
 use obayebar::style;
 
 /// Start angle of the 3/4-circle gauge arc (bottom-left, at 135 degrees).
@@ -22,6 +24,54 @@ pub fn gauge_arc(center: Point, radius: f32, start_offset: f32, sweep: f32) -> P
             end_angle: Radians(start_angle + sweep),
         });
     })
+}
+
+/// Canvas program for the 3/4-circle percentage gauge shared by the battery
+/// and sysinfo panels: a faint background track plus a colored foreground arc
+/// proportional to `percent` (0–100). Stroke width is fixed by `arc_width` so
+/// callers can match it to the radius they pick.
+#[derive(Debug)]
+pub struct GaugeProgram {
+    pub percent: f32,
+    pub color: Color,
+    pub arc_width: f32,
+}
+
+impl canvas::Program<Message> for GaugeProgram {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &Self::State,
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: iced::mouse::Cursor,
+    ) -> Vec<Geometry<Renderer>> {
+        let mut frame = Frame::new(renderer, bounds.size());
+        let center = Point::new(bounds.width / 2.0, bounds.height / 2.0);
+        let radius = (bounds.width.min(bounds.height) / 2.0) - self.arc_width;
+
+        frame.stroke(
+            &gauge_arc(center, radius, 0.0, GAUGE_ARC_SPAN),
+            Stroke::default()
+                .with_width(self.arc_width)
+                .with_color(style::with_alpha(style::M3_ON_SURFACE, 0.12)),
+        );
+
+        let fill_angle = GAUGE_ARC_SPAN * (self.percent / 100.0);
+        if fill_angle > 0.01 {
+            frame.stroke(
+                &gauge_arc(center, radius, 0.0, fill_angle),
+                Stroke::default()
+                    .with_width(self.arc_width)
+                    .with_color(self.color)
+                    .with_line_cap(LineCap::Round),
+            );
+        }
+
+        vec![frame.into_geometry()]
+    }
 }
 
 /// 1px horizontal line used between panel sections.

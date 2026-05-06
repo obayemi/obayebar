@@ -1,57 +1,13 @@
-use super::widgets::{gauge_arc, panel_with_exit, GAUGE_ARC_SPAN};
+use super::widgets::{panel_with_exit, GaugeProgram};
 use crate::services::sysinfo::{self, SysInfo};
 use crate::Message;
-use iced::widget::canvas::{self, Frame, Geometry, LineCap, Stroke};
+use iced::widget::canvas;
 use iced::widget::{column, container, row, text, Stack};
-use iced::{Alignment, Element, Length, Point, Rectangle, Renderer, Theme};
+use iced::{Alignment, Element, Length};
 use obayebar::style;
 
 const GAUGE_SIZE: f32 = 90.0;
 const ARC_WIDTH: f32 = 7.0;
-
-struct UsageGaugeProgram {
-    percent: f32,
-    color: iced::Color,
-}
-
-impl canvas::Program<Message> for UsageGaugeProgram {
-    type State = ();
-
-    fn draw(
-        &self,
-        _state: &Self::State,
-        renderer: &Renderer,
-        _theme: &Theme,
-        bounds: Rectangle,
-        _cursor: iced::mouse::Cursor,
-    ) -> Vec<Geometry<Renderer>> {
-        let mut frame = Frame::new(renderer, bounds.size());
-        let center = Point::new(bounds.width / 2.0, bounds.height / 2.0);
-        let radius = (bounds.width.min(bounds.height) / 2.0) - ARC_WIDTH;
-
-        // Background track
-        frame.stroke(
-            &gauge_arc(center, radius, 0.0, GAUGE_ARC_SPAN),
-            Stroke::default()
-                .with_width(ARC_WIDTH)
-                .with_color(style::with_alpha(style::M3_ON_SURFACE, 0.12)),
-        );
-
-        // Foreground arc
-        let fill_angle = GAUGE_ARC_SPAN * (self.percent / 100.0);
-        if fill_angle > 0.01 {
-            frame.stroke(
-                &gauge_arc(center, radius, 0.0, fill_angle),
-                Stroke::default()
-                    .with_width(ARC_WIDTH)
-                    .with_color(self.color)
-                    .with_line_cap(LineCap::Round),
-            );
-        }
-
-        vec![frame.into_geometry()]
-    }
-}
 
 fn usage_color(percent: f32) -> iced::Color {
     style::severity_color(percent, 70.0, 90.0, style::M3_PRIMARY)
@@ -87,9 +43,13 @@ fn gauge_widget<'a>(
         .align_x(Alignment::Center)
         .spacing(1.0);
 
-    let gauge_canvas = canvas::Canvas::new(UsageGaugeProgram { percent, color })
-        .width(Length::Fixed(GAUGE_SIZE))
-        .height(Length::Fixed(GAUGE_SIZE));
+    let gauge_canvas = canvas::Canvas::new(GaugeProgram {
+        percent,
+        color,
+        arc_width: ARC_WIDTH,
+    })
+    .width(Length::Fixed(GAUGE_SIZE))
+    .height(Length::Fixed(GAUGE_SIZE));
 
     let gauge = container(Stack::with_children(vec![
         gauge_canvas.into(),
