@@ -9,15 +9,6 @@ use obayebar::style;
 const ICON_STRIP_SIZE: f32 = 53.0;
 
 fn notification_card(notif: &NotificationData, hovered: bool) -> Element<'_, Message> {
-    let container_style = match (notif.urgency == Urgency::Critical, hovered) {
-        (true, true) => {
-            style::notification_critical_container_hovered as fn(&iced::Theme) -> container::Style
-        }
-        (true, false) => style::notification_critical_container,
-        (false, true) => style::notification_container_hovered,
-        (false, false) => style::notification_container,
-    };
-
     let icon_strip = build_icon_strip(notif);
     let notif_id = notif.id;
 
@@ -27,7 +18,10 @@ fn notification_card(notif: &NotificationData, hovered: bool) -> Element<'_, Mes
             .height(Length::Shrink),
     )
     .width(Length::Fill)
-    .style(container_style);
+    .style(style::notification_card_style(
+        notif.urgency == Urgency::Critical,
+        hovered,
+    ));
 
     mouse_area(card)
         .on_press(Message::NotifActivate(notif_id))
@@ -150,7 +144,7 @@ fn overflow_card(count: usize) -> Element<'static, Message> {
     .padding([style::PADDING_NORMAL, style::PADDING_NORMAL])
     .width(Length::Fill)
     .align_x(Alignment::Center)
-    .style(style::notification_container)
+    .style(style::notification_card_style(false, false))
     .into()
 }
 

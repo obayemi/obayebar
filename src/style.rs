@@ -593,53 +593,19 @@ pub fn pill_container(theme: &iced::Theme) -> container::Style {
     }
 }
 
-/// Notification card container
-pub fn notification_container(theme: &iced::Theme) -> container::Style {
-    let _ = theme;
-    container::Style {
-        background: Some(Background::Color(with_alpha(M3_SURFACE_CONTAINER, 0.95))),
-        border: Border {
-            radius: ROUNDING_EXTRA_SMALL.into(),
-            ..Border::default()
-        },
-        ..container::Style::default()
-    }
-}
-
-/// Notification card container (hovered)
-pub fn notification_container_hovered(theme: &iced::Theme) -> container::Style {
-    let _ = theme;
-    container::Style {
-        background: Some(Background::Color(with_alpha(
-            M3_SURFACE_CONTAINER_HIGHEST,
-            0.98,
-        ))),
-        border: Border {
-            radius: ROUNDING_EXTRA_SMALL.into(),
-            ..Border::default()
-        },
-        ..container::Style::default()
-    }
-}
-
-/// Critical notification container
-pub fn notification_critical_container(theme: &iced::Theme) -> container::Style {
-    let _ = theme;
-    container::Style {
-        background: Some(Background::Color(with_alpha(M3_SECONDARY_CONTAINER, 0.95))),
-        border: Border {
-            radius: ROUNDING_EXTRA_SMALL.into(),
-            ..Border::default()
-        },
-        ..container::Style::default()
-    }
-}
-
-/// Critical notification container (hovered)
-pub fn notification_critical_container_hovered(theme: &iced::Theme) -> container::Style {
-    let _ = theme;
-    container::Style {
-        background: Some(Background::Color(with_alpha(M3_TERTIARY_CONTAINER, 0.98))),
+/// Notification card container, parameterised by urgency and hover state.
+pub fn notification_card_style(
+    critical: bool,
+    hovered: bool,
+) -> impl Fn(&iced::Theme) -> container::Style {
+    let (color, alpha) = match (critical, hovered) {
+        (false, false) => (M3_SURFACE_CONTAINER, 0.95),
+        (false, true) => (M3_SURFACE_CONTAINER_HIGHEST, 0.98),
+        (true, false) => (M3_SECONDARY_CONTAINER, 0.95),
+        (true, true) => (M3_TERTIARY_CONTAINER, 0.98),
+    };
+    move |_theme| container::Style {
+        background: Some(Background::Color(with_alpha(color, alpha))),
         border: Border {
             radius: ROUNDING_EXTRA_SMALL.into(),
             ..Border::default()
