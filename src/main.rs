@@ -19,6 +19,7 @@ use iced_layershell::reexport::{
 };
 use iced_layershell::settings::{LayerShellSettings, Settings};
 use iced_layershell::to_layer_message;
+use panel::PanelKind;
 use services::audio::{AudioCommand, AudioInfo};
 use services::battery::BatteryInfo;
 use services::bluetooth::BluetoothInfo;
@@ -199,12 +200,10 @@ pub struct App {
     pub vector_font: Option<ab_glyph::FontArc>,
 
     notif_popup_id: Option<window::Id>,
-    audio_panel: panel::Panel,
-    network_panel: panel::Panel,
-    battery_panel: panel::Panel,
-    bluetooth_panel: panel::Panel,
-    sysinfo_panel: panel::Panel,
-    gitlab_panel: panel::Panel,
+    /// One entry per `PanelKind`. Lazily populated on first open via
+    /// `Panel::default`; the only invariant is that at most one panel is open
+    /// at a time (enforced by `close_all_panels` before each `open`).
+    panels: HashMap<PanelKind, panel::Panel>,
     pub gitlab_enabled: bool,
     pub gitlab: GitlabInfo,
     /// Working buffer for the token input field in the GitLab popup. Persists
@@ -244,7 +243,6 @@ pub enum Message {
     SysInfo(SysInfo),
     Audio(AudioInfo),
     Gitlab(GitlabInfo),
-    GitlabPanelOpen(Option<String>),
     GitlabOpenUrl(String),
     GitlabOpenTokenFile,
     GitlabReloadToken,
@@ -262,11 +260,7 @@ pub enum Message {
     NotifActivate(u32),
     NotifHoverEnter(u32),
     NotifHoverExit(u32),
-    AudioPanelOpen(Option<String>),
-    NetworkPanelOpen(Option<String>),
-    BatteryPanelOpen(Option<String>),
-    BluetoothPanelOpen(Option<String>),
-    SysinfoPanelOpen(Option<String>),
+    PanelOpen(PanelKind, Option<String>),
     Bluetooth(BluetoothInfo),
     BluetoothToggleDevice { path: String, connected: bool },
     BluetoothSetPowered(bool),
@@ -296,12 +290,7 @@ impl App {
                 ws_cache_fallback: canvas::Cache::default(),
                 vector_font: style::load_vector_font(),
                 notif_popup_id: None,
-                audio_panel: panel::Panel::new(),
-                network_panel: panel::Panel::new(),
-                battery_panel: panel::Panel::new(),
-                bluetooth_panel: panel::Panel::new(),
-                sysinfo_panel: panel::Panel::new(),
-                gitlab_panel: panel::Panel::new(),
+                panels: HashMap::new(),
                 gitlab_enabled: config::resolved().gitlab_enable(),
                 gitlab: GitlabInfo::default(),
                 gitlab_token_input: String::new(),
@@ -483,86 +472,12 @@ impl App {
                 }
                 self.maybe_close_popup_window()
             }
-            Message::AudioPanelOpen(monitor) => {
-                let close = self.close_all_panels();
-                let height = style::audio_panel_height(self.audio.sinks.len());
-                let open = self
-                    .audio_panel
-                    .open(style::AUDIO_PANEL_WIDTH, height, monitor);
-                Task::batch([close, open])
-            }
-            Message::NetworkPanelOpen(monitor) => {
-                let close = self.close_all_panels();
-                let ap_count = self.network.access_points.len().clamp(1, 8);
-                let conn_groups = connection_type_groups(&self.network.active_connections);
-                let height =
-                    style::network_panel_height(ap_count, &conn_groups, self.network.wifi_enabled);
-                services::network::set_panel_open(true);
-                let open = self
-                    .network_panel
-                    .open(style::NETWORK_PANEL_WIDTH, height, monitor);
-                Task::batch([close, open])
-            }
-            Message::BatteryPanelOpen(monitor) => {
-                let close = self.close_all_panels();
-                let height = style::battery_panel_height(self.battery.power_profiles.is_some());
-                let open = self
-                    .battery_panel
-                    .open(style::BATTERY_PANEL_WIDTH, height, monitor);
-                Task::batch([close, open])
-            }
-            Message::BluetoothPanelOpen(monitor) => {
-                let close = self.close_all_panels();
-                let paired = self
-                    .bluetooth
-                    .devices
-                    .iter()
-                    .filter(|d| d.paired)
-                    .count()
-                    .clamp(1, 8);
-                let nearby = self
-                    .bluetooth
-                    .devices
-                    .iter()
-                    .filter(|d| !d.paired)
-                    .count()
-                    .min(8);
-                let height = style::bluetooth_panel_height(
-                    paired,
-                    nearby,
-                    self.bluetooth.powered,
-                    self.bluetooth.discovering,
-                );
-                services::bluetooth::set_panel_open(true);
-                let open = self
-                    .bluetooth_panel
-                    .open(style::BLUETOOTH_PANEL_WIDTH, height, monitor);
-                Task::batch([close, open])
-            }
-            Message::SysinfoPanelOpen(monitor) => {
-                let close = self.close_all_panels();
-                let height = style::sysinfo_panel_height();
-                services::sysinfo::set_panel_open(true);
-                let open = self
-                    .sysinfo_panel
-                    .open(style::SYSINFO_PANEL_WIDTH, height, monitor);
-                Task::batch([close, open])
-            }
+            Message::PanelOpen(kind, monitor) => self.open_panel(kind, monitor),
             Message::Gitlab(info) => {
                 if self.gitlab != info {
                     self.gitlab = info;
                 }
                 Task::none()
-            }
-            Message::GitlabPanelOpen(monitor) => {
-                let close = self.close_all_panels();
-                services::gitlab::set_panel_open(true);
-                let open = self.gitlab_panel.open(
-                    style::GITLAB_PANEL_WIDTH,
-                    style::GITLAB_PANEL_HEIGHT,
-                    monitor,
-                );
-                Task::batch([close, open])
             }
             Message::GitlabOpenUrl(url) => {
                 if !url.is_empty() {
@@ -847,17 +762,10 @@ impl App {
             self.notif_popup_id = None;
             return self.ensure_popup_window();
         }
-        if self.audio_panel.forget_if(id)
-            || self.network_panel.forget_if(id)
-            || self.battery_panel.forget_if(id)
-            || self.bluetooth_panel.forget_if(id)
-            || self.sysinfo_panel.forget_if(id)
-            || self.gitlab_panel.forget_if(id)
-        {
-            services::network::set_panel_open(false);
-            services::bluetooth::set_panel_open(false);
-            services::sysinfo::set_panel_open(false);
-            services::gitlab::set_panel_open(false);
+        if let Some(kind) = self.forget_panel_window(id) {
+            if let Some(setter) = kind.signal_setter() {
+                setter(false);
+            }
             return Task::none();
         }
 
@@ -894,28 +802,22 @@ impl App {
 
     fn view(&self, id: window::Id) -> Element<'_, Message> {
         if Some(id) == self.notif_popup_id {
-            notifications::popup_view(self)
-        } else if self.audio_panel.is_window(id) {
-            bar::audio_panel::view(&self.audio)
-        } else if self.network_panel.is_window(id) {
-            bar::network_panel::view(&self.network, self.connecting_ssid.as_deref())
-        } else if self.battery_panel.is_window(id) {
-            bar::battery_panel::view(&self.battery)
-        } else if self.bluetooth_panel.is_window(id) {
-            bar::bluetooth_panel::view(&self.bluetooth)
-        } else if self.sysinfo_panel.is_window(id) {
-            bar::sysinfo_panel::view(&self.sysinfo)
-        } else if self.gitlab_panel.is_window(id) {
-            bar::gitlab_panel::view(&self.gitlab, &self.gitlab_token_input)
-        } else {
-            // Capture the settings-created bar's id the first time we render
-            // it so close events can be matched exactly rather than guessed.
-            if !self.extra_bar_windows.contains_key(&id) && self.initial_bar_id.get().is_none() {
-                self.initial_bar_id.set(Some(id));
-            }
-            let monitor = self.monitor_for_bar(id);
-            bar::view(self, monitor)
+            return notifications::popup_view(self);
         }
+        if let Some(kind) = self
+            .panels
+            .iter()
+            .find_map(|(k, p)| p.is_window(id).then_some(*k))
+        {
+            return self.view_panel(kind);
+        }
+        // Capture the settings-created bar's id the first time we render
+        // it so close events can be matched exactly rather than guessed.
+        if !self.extra_bar_windows.contains_key(&id) && self.initial_bar_id.get().is_none() {
+            self.initial_bar_id.set(Some(id));
+        }
+        let monitor = self.monitor_for_bar(id);
+        bar::view(self, monitor)
     }
 
     fn subscription(&self) -> Subscription<Message> {
@@ -964,18 +866,92 @@ impl App {
     }
 
     fn close_all_panels(&mut self) -> Task<Message> {
-        services::network::set_panel_open(false);
-        services::bluetooth::set_panel_open(false);
-        services::sysinfo::set_panel_open(false);
-        services::gitlab::set_panel_open(false);
-        Task::batch([
-            self.audio_panel.close(),
-            self.network_panel.close(),
-            self.battery_panel.close(),
-            self.bluetooth_panel.close(),
-            self.sysinfo_panel.close(),
-            self.gitlab_panel.close(),
-        ])
+        for kind in PanelKind::ALL {
+            if let Some(setter) = kind.signal_setter() {
+                setter(false);
+            }
+        }
+        let tasks: Vec<_> = self.panels.values_mut().map(panel::Panel::close).collect();
+        Task::batch(tasks)
+    }
+
+    /// Compute the layer-shell surface size for `kind` from current state.
+    /// Width is fixed; height adapts to dynamic content (sink count, AP count,
+    /// paired/nearby split, …).
+    fn panel_dimensions(&self, kind: PanelKind) -> (u32, u32) {
+        let height = match kind {
+            PanelKind::Audio => style::audio_panel_height(self.audio.sinks.len()),
+            PanelKind::Network => {
+                let ap_count = self.network.access_points.len().clamp(1, 8);
+                let conn_groups = connection_type_groups(&self.network.active_connections);
+                style::network_panel_height(ap_count, &conn_groups, self.network.wifi_enabled)
+            }
+            PanelKind::Battery => {
+                style::battery_panel_height(self.battery.power_profiles.is_some())
+            }
+            PanelKind::Bluetooth => {
+                let paired = self
+                    .bluetooth
+                    .devices
+                    .iter()
+                    .filter(|d| d.paired)
+                    .count()
+                    .clamp(1, 8);
+                let nearby = self
+                    .bluetooth
+                    .devices
+                    .iter()
+                    .filter(|d| !d.paired)
+                    .count()
+                    .min(8);
+                style::bluetooth_panel_height(
+                    paired,
+                    nearby,
+                    self.bluetooth.powered,
+                    self.bluetooth.discovering,
+                )
+            }
+            PanelKind::Sysinfo => style::sysinfo_panel_height(),
+            PanelKind::Gitlab => style::GITLAB_PANEL_HEIGHT,
+        };
+        (kind.width(), height)
+    }
+
+    /// Render the body of `kind`'s popup. The dispatch table for `view()`.
+    fn view_panel(&self, kind: PanelKind) -> Element<'_, Message> {
+        match kind {
+            PanelKind::Audio => bar::audio_panel::view(&self.audio),
+            PanelKind::Network => {
+                bar::network_panel::view(&self.network, self.connecting_ssid.as_deref())
+            }
+            PanelKind::Battery => bar::battery_panel::view(&self.battery),
+            PanelKind::Bluetooth => bar::bluetooth_panel::view(&self.bluetooth),
+            PanelKind::Sysinfo => bar::sysinfo_panel::view(&self.sysinfo),
+            PanelKind::Gitlab => bar::gitlab_panel::view(&self.gitlab, &self.gitlab_token_input),
+        }
+    }
+
+    /// Open `kind`'s popup, replacing whichever panel is currently shown.
+    fn open_panel(&mut self, kind: PanelKind, monitor: Option<String>) -> Task<Message> {
+        let close = self.close_all_panels();
+        let (width, height) = self.panel_dimensions(kind);
+        if let Some(setter) = kind.signal_setter() {
+            setter(true);
+        }
+        let open = self
+            .panels
+            .entry(kind)
+            .or_default()
+            .open(width, height, monitor);
+        Task::batch([close, open])
+    }
+
+    /// If `id` matches an open panel surface, drop the tracking and return
+    /// which kind it was. Returns `None` for non-panel windows.
+    fn forget_panel_window(&mut self, id: window::Id) -> Option<PanelKind> {
+        self.panels
+            .iter_mut()
+            .find_map(|(k, p)| p.forget_if(id).then_some(*k))
     }
 
     fn expire_popups(&mut self) -> Task<Message> {

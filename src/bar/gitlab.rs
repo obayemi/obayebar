@@ -1,3 +1,4 @@
+use crate::panel::PanelKind;
 use crate::services::gitlab::AuthState;
 use crate::Message;
 use iced::widget::{column, container, mouse_area, text, Column};
@@ -36,7 +37,7 @@ pub fn view<'a>(auth: AuthState, count: usize, monitor: Option<String>) -> Eleme
         );
     }
 
-    let open_msg = Message::GitlabPanelOpen(monitor);
+    let open_msg = Message::PanelOpen(PanelKind::Gitlab, monitor);
     let clickable = mouse_area(stack)
         .on_press(open_msg.clone())
         .on_enter(open_msg);

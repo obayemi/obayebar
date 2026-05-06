@@ -1,3 +1,4 @@
+use crate::panel::PanelKind;
 use crate::services::audio::AudioInfo;
 use crate::services::battery::BatteryInfo;
 use crate::services::bluetooth::BluetoothInfo;
@@ -191,7 +192,10 @@ pub fn view(
             .color(style::M3_SECONDARY)
             .align_x(Alignment::Center),
     )
-    .on_enter(Message::AudioPanelOpen(monitor.map(String::from)))
+    .on_enter(Message::PanelOpen(
+        PanelKind::Audio,
+        monitor.map(String::from),
+    ))
     .on_press(Message::AudioOpenPavucontrol)
     .on_scroll(move |delta| {
         let dy = match delta {
@@ -209,7 +213,10 @@ pub fn view(
             .color(style::M3_SECONDARY)
             .align_x(Alignment::Center),
     )
-    .on_enter(Message::NetworkPanelOpen(monitor.map(String::from)));
+    .on_enter(Message::PanelOpen(
+        PanelKind::Network,
+        monitor.map(String::from),
+    ));
 
     let bluetooth_icon = mouse_area(
         text(bluetooth.icon_name)
@@ -218,10 +225,15 @@ pub fn view(
             .color(style::M3_SECONDARY)
             .align_x(Alignment::Center),
     )
-    .on_enter(Message::BluetoothPanelOpen(monitor.map(String::from)));
+    .on_enter(Message::PanelOpen(
+        PanelKind::Bluetooth,
+        monitor.map(String::from),
+    ));
 
-    let sysinfo_icon = mouse_area(sysinfo_icon_view(sysinfo))
-        .on_enter(Message::SysinfoPanelOpen(monitor.map(String::from)));
+    let sysinfo_icon = mouse_area(sysinfo_icon_view(sysinfo)).on_enter(Message::PanelOpen(
+        PanelKind::Sysinfo,
+        monitor.map(String::from),
+    ));
 
     icons = icons.push(audio_icon);
     icons = icons.push(bluetooth_icon);
@@ -241,7 +253,10 @@ pub fn view(
                 .color(battery_color)
                 .align_x(Alignment::Center),
         )
-        .on_enter(Message::BatteryPanelOpen(monitor.map(String::from)));
+        .on_enter(Message::PanelOpen(
+            PanelKind::Battery,
+            monitor.map(String::from),
+        ));
         icons = icons.push(battery_icon);
     }
 
