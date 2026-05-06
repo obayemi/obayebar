@@ -179,14 +179,9 @@ async fn run_battery_loop(
     let upower_proxy = build_upower_proxy(conn).await.ok_or(())?;
 
     // Subscribe to PropertiesChanged on UPower device
-    let upower_props_proxy = zbus::fdo::PropertiesProxy::builder(conn)
-        .destination("org.freedesktop.UPower")
-        .map_err(|_| ())?
-        .path("/org/freedesktop/UPower/devices/DisplayDevice")
-        .map_err(|_| ())?
-        .build()
+    let upower_props_proxy = dbus_util::properties_proxy(conn, UPOWER_BUS, UPOWER_PATH)
         .await
-        .map_err(|_| ())?;
+        .ok_or(())?;
     let mut upower_signals = upower_props_proxy
         .receive_properties_changed()
         .await
@@ -194,14 +189,7 @@ async fn run_battery_loop(
 
     // Subscribe to PropertiesChanged on PowerProfiles (optional)
     let mut pp_signals = async {
-        let proxy = zbus::fdo::PropertiesProxy::builder(conn)
-            .destination("net.hadess.PowerProfiles")
-            .ok()?
-            .path("/net/hadess/PowerProfiles")
-            .ok()?
-            .build()
-            .await
-            .ok()?;
+        let proxy = dbus_util::properties_proxy(conn, PPD_BUS, PPD_PATH).await?;
         proxy.receive_properties_changed().await.ok()
     }
     .await;

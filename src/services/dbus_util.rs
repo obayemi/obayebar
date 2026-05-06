@@ -67,6 +67,24 @@ pub async fn proxy<'a>(
         .ok()
 }
 
+/// Build a `zbus::fdo::PropertiesProxy` for `(dest, path)`. Returns `None` on
+/// any construction error so optional services (e.g. `PowerProfiles`) can fall
+/// through silently.
+pub async fn properties_proxy<'a>(
+    conn: &'a zbus::Connection,
+    dest: &str,
+    path: &str,
+) -> Option<zbus::fdo::PropertiesProxy<'a>> {
+    zbus::fdo::PropertiesProxy::builder(conn)
+        .destination(dest.to_string())
+        .ok()?
+        .path(path.to_string())
+        .ok()?
+        .build()
+        .await
+        .ok()
+}
+
 /// Which system bus a stream should connect to.
 #[derive(Debug, Clone, Copy)]
 pub enum Bus {

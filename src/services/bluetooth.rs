@@ -285,14 +285,9 @@ async fn run_bluetooth_loop(
         .map_err(|_| ())?;
 
     // Subscribe to PropertiesChanged on the adapter for Powered state
-    let adapter_props = zbus::fdo::PropertiesProxy::builder(conn)
-        .destination("org.bluez")
-        .map_err(|_| ())?
-        .path("/org/bluez/hci0")
-        .map_err(|_| ())?
-        .build()
+    let adapter_props = dbus_util::properties_proxy(conn, BLUEZ, "/org/bluez/hci0")
         .await
-        .map_err(|_| ())?;
+        .ok_or(())?;
     let mut adapter_signals = adapter_props
         .receive_properties_changed()
         .await

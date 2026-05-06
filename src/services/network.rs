@@ -514,14 +514,9 @@ async fn run_network_loop(
 ) -> Result<(), ()> {
     // Subscribe to PropertiesChanged on the main NetworkManager object
     // This fires when ActiveConnections, Connectivity, etc. change
-    let nm_props = zbus::fdo::PropertiesProxy::builder(conn)
-        .destination(NM_BUS)
-        .map_err(|_| ())?
-        .path(NM_PATH)
-        .map_err(|_| ())?
-        .build()
+    let nm_props = dbus_util::properties_proxy(conn, NM_BUS, NM_PATH)
         .await
-        .map_err(|_| ())?;
+        .ok_or(())?;
     let mut nm_signals = nm_props
         .receive_properties_changed()
         .await
