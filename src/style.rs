@@ -490,10 +490,25 @@ pub fn sysinfo_panel_height() -> u32 {
     (container_padding + header + per_row * 2.0 + outer_spacing + safety).ceil() as u32
 }
 
-fn find_outlined_font(dir: &str) -> Option<std::path::PathBuf> {
+/// Scan `dir` (and one level of subdirectories — font packages nest fonts
+/// under `TTF/`, `truetype/`, etc. depending on the packager) for a
+/// Material Symbols Outlined TTF.
+fn find_outlined_font(dir: impl AsRef<std::path::Path>) -> Option<std::path::PathBuf> {
+    find_outlined_font_at(dir.as_ref(), 1)
+}
+
+fn find_outlined_font_at(dir: &std::path::Path, depth: u32) -> Option<std::path::PathBuf> {
     let entries = std::fs::read_dir(dir).ok()?;
     for entry in entries.flatten() {
         let path = entry.path();
+        if path.is_dir() {
+            if depth > 0 {
+                if let Some(found) = find_outlined_font_at(&path, depth - 1) {
+                    return Some(found);
+                }
+            }
+            continue;
+        }
         let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
             continue;
         };
@@ -510,12 +525,14 @@ fn find_outlined_font(dir: &str) -> Option<std::path::PathBuf> {
 
 /// Load the Material Symbols font from the system or `OBAYEBAR_FONT_DIR` env var.
 pub fn load_icon_font() -> Vec<Cow<'static, [u8]>> {
-    // Nixpkgs' material-symbols package now ships a variable font named
-    // `MaterialSymbolsOutlined[FILL,GRAD,opsz,wght].ttf`; older releases
-    // shipped `MaterialSymbolsOutlined.ttf`. Scan the directory for either.
+    // Nixpkgs' material-symbols package has shipped the font as
+    // `MaterialSymbolsOutlined.ttf` or as a variable
+    // `MaterialSymbolsOutlined[FILL,GRAD,opsz,wght].ttf`, under either
+    // `share/fonts/TTF/` or `share/fonts/truetype/`. Scan the configured
+    // directory and its immediate subdirectories for any of those.
     let font_dirs = [
         std::env::var("OBAYEBAR_FONT_DIR").ok(),
-        Some("/run/current-system/sw/share/fonts/TTF".into()),
+        Some("/run/current-system/sw/share/fonts".into()),
         Some(format!(
             "{}/.local/share/fonts",
             std::env::var("HOME").unwrap_or_default()
@@ -686,6 +703,27 @@ pub fn severity_color(value: f32, warn: f32, danger: f32, baseline: Color) -> Co
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Font packages nest the TTF differently across nixpkgs releases
+    /// (`TTF/`, `truetype/`, or flat); the scanner must find the font one
+    /// level down but not deeper.
+    #[test]
+    fn outlined_font_found_in_nested_subdirectory() {
+        let root = std::env::temp_dir().join("obayebar_test_font_scan");
+        let nested = root.join("truetype");
+        let too_deep = nested.join("deeper");
+        std::fs::create_dir_all(&too_deep).ok();
+
+        let font = nested.join("MaterialSymbolsOutlined[FILL,GRAD,opsz,wght].ttf");
+        std::fs::write(&font, b"stub").ok();
+        assert_eq!(find_outlined_font(&root), Some(font.clone()));
+
+        // Depth is capped at one level: a font two levels down is ignored.
+        std::fs::rename(&font, too_deep.join(font.file_name().unwrap_or_default())).ok();
+        assert_eq!(find_outlined_font(&root), None);
+
+        std::fs::remove_dir_all(&root).ok();
+    }
 
     #[test]
     fn notif_fit_shows_all_when_budget_is_large() {

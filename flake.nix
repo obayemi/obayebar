@@ -77,10 +77,10 @@
 
           postInstall = ''
             wrapProgram $out/bin/obayebar \
-              --set OBAYEBAR_FONT_DIR "${pkgs.material-symbols}/share/fonts/TTF" \
+              --set OBAYEBAR_FONT_DIR "${pkgs.material-symbols}/share/fonts" \
               --prefix LD_LIBRARY_PATH : "${pkgs.lib.makeLibraryPath deps}"
             wrapProgram $out/bin/obayebar-launcher \
-              --set OBAYEBAR_FONT_DIR "${pkgs.material-symbols}/share/fonts/TTF" \
+              --set OBAYEBAR_FONT_DIR "${pkgs.material-symbols}/share/fonts" \
               --prefix LD_LIBRARY_PATH : "${pkgs.lib.makeLibraryPath deps}"
           '';
 
@@ -125,7 +125,7 @@
 
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath deps;
           LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
-          OBAYEBAR_FONT_DIR = "${pkgs.material-symbols}/share/fonts/TTF";
+          OBAYEBAR_FONT_DIR = "${pkgs.material-symbols}/share/fonts";
         };
       }
     );
