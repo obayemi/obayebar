@@ -422,6 +422,7 @@ pub fn launch(exec: &str) -> Result<(), std::io::Error> {
 }
 
 #[cfg(test)]
+#[allow(clippy::panic)]
 mod tests {
     use super::*;
 
