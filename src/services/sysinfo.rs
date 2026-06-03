@@ -411,6 +411,7 @@ pub fn format_rate(bytes_per_sec: u64) -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
