@@ -716,6 +716,7 @@ impl App {
             tasks.push(self.spawn_bar_for(monitor));
         }
 
+        #[cfg(debug_assertions)]
         debug_assert!(self.bar_invariants_hold());
 
         Task::batch(tasks)
