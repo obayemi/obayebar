@@ -1,0 +1,57 @@
+[package]
+name = "obayebar"
+description = "Wayland status bar inspired by caelestia-shell"
+default-run = "obayebar"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lib]
+name = "obayebar"
+path = "src/lib.rs"
+
+[[bin]]
+name = "obayebar"
+path = "src/main.rs"
+
+[[bin]]
+name = "obayebar-launcher"
+path = "src/bin/launcher.rs"
+
+[dependencies]
+obayebar-core.workspace = true
+iced.workspace = true
+iced_layershell.workspace = true
+iced_runtime.workspace = true
+tokio.workspace = true
+zbus.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+futures-util.workspace = true
+log.workspace = true
+env_logger.workspace = true
+async-channel.workspace = true
+ab_glyph.workspace = true
+pipewire.workspace = true
+wayland-backend.workspace = true
+tokio-stream.workspace = true
+nvml-wrapper.workspace = true
+fontdb.workspace = true
+fuzzy-matcher.workspace = true
+image.workspace = true
+resvg.workspace = true
+reqwest.workspace = true
+rustls.workspace = true
+secret-service.workspace = true
+# Moves to obayebar-core with config.rs; still bar-side while this commit is a
+# pure file move.
+toml.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

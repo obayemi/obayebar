@@ -2983,6 +2983,7 @@ dependencies = [
  "image",
  "log",
  "nvml-wrapper",
+ "obayebar-core",
  "pipewire",
  "reqwest",
  "resvg",
@@ -2996,6 +2997,19 @@ dependencies = [
  "toml",
  "wayland-backend",
  "zbus",
+]
+
+[[package]]
+name = "obayebar-core"
+version = "0.1.0"
+dependencies = [
+ "image",
+ "log",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "toml",
 ]
 
 [[package]]

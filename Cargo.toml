@@ -1,30 +1,28 @@
 cargo-features = ["codegen-backend"]
 
-[package]
-name = "obayebar"
+[workspace]
+resolver = "2"
+members = [
+    "crates/obayebar-core",
+    "crates/obayebar",
+]
+# No `default-members`: it would narrow bare `cargo build`/`cargo test` to the
+# listed crates, which is the opposite of what this repo wants — every member
+# must build and every member's tests must run by default. `default-run` on the
+# bar is what keeps a bare `cargo run` meaningful.
+
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
-description = "Wayland status bar inspired by caelestia-shell"
 license = "MIT"
 repository = "https://github.com/obayemi/obayebar"
 readme = "README.md"
 keywords = ["wayland", "bar", "status-bar", "hyprland"]
 categories = ["gui"]
-default-run = "obayebar"
 
-[lib]
-name = "obayebar"
-path = "src/lib.rs"
+[workspace.dependencies]
+obayebar-core = { path = "crates/obayebar-core" }
 
-[[bin]]
-name = "obayebar"
-path = "src/main.rs"
-
-[[bin]]
-name = "obayebar-launcher"
-path = "src/bin/launcher.rs"
-
-[dependencies]
 iced = { version = "0.14.0", default-features = false, features = ["wgpu", "crisp", "linux-theme-detection", "wayland", "tokio", "canvas", "image-without-codecs", "lazy"] }
 iced_layershell = "0.19.1"
 iced_runtime = "0.14.0"
@@ -58,10 +56,21 @@ thiserror = "2.0"
 secret-service = { version = "5", default-features = false, features = ["rt-tokio-crypto-rust"] }
 toml = { version = "1.1", default-features = false, features = ["parse", "serde", "std"] }
 
-[lints.rust]
+# The wallpaper renderer talks wlr-layer-shell directly rather than through
+# iced. smithay-client-toolkit's `create_layer_surface` takes a `wl_output`
+# *object*, so a wallpaper cannot land on the wrong monitor — the whole class of
+# bug the bar's namespace-verification reconciler exists to catch is impossible
+# by construction. It also keeps iced, wgpu and their ~100MB of VRAM out of a
+# process that draws a static picture.
+smithay-client-toolkit = "0.20"
+wayland-client = "0.31"
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+
+[workspace.lints.rust]
 unsafe_code = "forbid"
 missing_debug_implementations = "warn"
-[lints.clippy]
+
+[workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
 pedantic = { level = "deny", priority = -1 }
 nursery = { level = "deny", priority = -1 }
@@ -74,5 +83,7 @@ arithmetic_side_effects = "warn"
 # transitive dependency version conflicts are not fixable in our code
 multiple_crate_versions = "allow"
 
+# Must stay at the workspace root: cargo ignores `[profile.*]` in a member and
+# only warns, so a copy in a member would silently lose cranelift.
 [profile.dev]
 codegen-backend = "cranelift"

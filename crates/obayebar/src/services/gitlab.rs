@@ -115,7 +115,7 @@ struct Settings {
 
 /// Path the user can drop a token file at; surfaced in the popup.
 pub fn token_file_path() -> Option<PathBuf> {
-    obayebar::xdg::config_dir().map(|d| d.join("gitlab_token"))
+    obayebar_core::xdg::config_dir().map(|d| d.join("gitlab_token"))
 }
 
 /// Secret Service item attributes that uniquely identify our token.

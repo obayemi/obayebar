@@ -7,7 +7,7 @@ use std::sync::OnceLock;
 
 use serde::Deserialize;
 
-use obayebar::xdg;
+use obayebar_core::xdg;
 
 const DEFAULT_GITLAB_HOST: &str = "https://gitlab.com";
 const ENV_GITLAB_URL: &str = "OBAYEBAR_GITLAB_URL";

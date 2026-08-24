@@ -80,7 +80,7 @@ pub fn resolve_all_icon_paths(entries: &[DesktopEntry]) -> HashMap<String, PathB
 
 // --- Persistence ---
 
-use crate::xdg::{cache_dir, data_dir};
+use obayebar_core::xdg::{cache_dir, data_dir};
 
 /// Directory for pre-resized RGBA icon data.
 #[must_use]
