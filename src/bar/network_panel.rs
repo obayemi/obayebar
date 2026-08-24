@@ -1,4 +1,5 @@
 use super::widgets::{icon_button, panel_with_exit, separator, styled_toggler};
+use crate::panel::PanelKind;
 use crate::services::network::NetworkInfo;
 use crate::Message;
 use iced::widget::{column, container, row, text, Space};
@@ -259,5 +260,5 @@ pub fn view<'a>(
         .height(Length::Shrink)
         .style(style::audio_panel_container);
 
-    panel_with_exit(panel.into())
+    panel_with_exit(PanelKind::Network, panel.into())
 }

@@ -1,4 +1,5 @@
 use super::widgets::{panel_with_exit, GaugeProgram};
+use crate::panel::PanelKind;
 use crate::services::sysinfo::{self, SysInfo};
 use crate::Message;
 use iced::widget::canvas;
@@ -193,5 +194,5 @@ pub fn view(sysinfo: &SysInfo) -> Element<'_, Message> {
         .height(Length::Shrink)
         .style(style::audio_panel_container);
 
-    panel_with_exit(panel.into())
+    panel_with_exit(PanelKind::Sysinfo, panel.into())
 }

@@ -1,5 +1,6 @@
 //! Shared iced widget builders used across panels.
 
+use crate::panel::PanelKind;
 use crate::Message;
 use iced::widget::canvas::{self, path::Arc, Frame, Geometry, LineCap, Path, Stroke};
 use iced::widget::{button, container, mouse_area, text, toggler, Space};
@@ -91,8 +92,15 @@ pub fn separator<'a>() -> Element<'a, Message> {
 ///   - outer `panel_wrapper_container` style so the compositor includes the
 ///     gap area in the input region,
 ///   - `PANEL_GAP` padding on the side adjacent to the bar,
-///   - `mouse_area` whose `on_exit` dismisses all panels.
-pub fn panel_with_exit(content: Element<'_, Message>) -> Element<'_, Message> {
+///   - `mouse_area` reporting pointer enter/leave for this surface.
+///
+/// Both edges are reported, not just the leave. iced publishes `on_exit`
+/// strictly on a `was_hovered → !is_hovered` transition, so a panel the pointer
+/// never entered can never fire one — which is why this used to be the *only*
+/// dismissal producer and a panel the pointer walked past stayed open forever.
+/// Dismissal is now decided in `update()` from the pointer's location across
+/// both the bar trigger and the panel.
+pub fn panel_with_exit(kind: PanelKind, content: Element<'_, Message>) -> Element<'_, Message> {
     mouse_area(
         container(content)
             .width(Length::Fill)
@@ -106,7 +114,8 @@ pub fn panel_with_exit(content: Element<'_, Message>) -> Element<'_, Message> {
             })
             .style(style::panel_wrapper_container),
     )
-    .on_exit(Message::CloseAllPanels)
+    .on_enter(Message::PanelPointerEntered(kind))
+    .on_exit(Message::PanelPointerLeftPanel(kind))
     .into()
 }
 

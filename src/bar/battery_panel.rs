@@ -1,4 +1,5 @@
 use super::widgets::{hover_button_style, panel_with_exit, separator, GaugeProgram};
+use crate::panel::PanelKind;
 use crate::services::battery::BatteryInfo;
 use crate::Message;
 use iced::widget::canvas;
@@ -193,5 +194,5 @@ pub fn view(battery: &BatteryInfo) -> Element<'_, Message> {
         .height(Length::Shrink)
         .style(style::audio_panel_container);
 
-    panel_with_exit(panel.into())
+    panel_with_exit(PanelKind::Battery, panel.into())
 }

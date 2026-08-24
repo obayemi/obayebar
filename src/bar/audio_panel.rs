@@ -1,4 +1,5 @@
 use super::widgets::{hover_button_style, panel_with_exit, separator};
+use crate::panel::PanelKind;
 use crate::services::audio::AudioInfo;
 use crate::Message;
 use iced::widget::{button, column, container, row, slider, text};
@@ -141,5 +142,5 @@ pub fn view(audio: &AudioInfo) -> Element<'_, Message> {
         .height(Length::Shrink)
         .style(style::audio_panel_container);
 
-    panel_with_exit(panel.into())
+    panel_with_exit(PanelKind::Audio, panel.into())
 }

@@ -20,17 +20,6 @@ pub enum PanelKind {
 }
 
 impl PanelKind {
-    /// Iterate every panel kind. Order is stable so close/open behaviour stays
-    /// deterministic; iteration is rare enough that the cost is irrelevant.
-    pub const ALL: [Self; 6] = [
-        Self::Audio,
-        Self::Network,
-        Self::Battery,
-        Self::Bluetooth,
-        Self::Sysinfo,
-        Self::Gitlab,
-    ];
-
     /// Fixed surface width for this panel kind. Heights are state-dependent
     /// and computed on the fly by the caller.
     pub const fn width(self) -> u32 {
@@ -79,6 +68,11 @@ pub struct Panel {
 }
 
 impl Panel {
+    /// Whether this panel currently has a surface.
+    pub const fn is_open(&self) -> bool {
+        self.open
+    }
+
     pub fn is_window(&self, id: window::Id) -> bool {
         self.id == Some(id)
     }
@@ -100,6 +94,10 @@ impl Panel {
         monitor: &str,
     ) -> iced::Task<Message> {
         if self.open {
+            // Unreachable: `open_panel` short-circuits when this kind is
+            // already showing. Logged rather than silently ignored so a
+            // regression here is visible instead of leaking a window id.
+            log::error!("panels: open() called for an already-open panel");
             return iced::Task::none();
         }
         self.open = true;

@@ -1,4 +1,5 @@
 use super::widgets::{hover_button_style, panel_with_exit, separator};
+use crate::panel::PanelKind;
 use crate::services::gitlab::{self, AuthState, GitlabInfo, TodoItem, TODO_PAGE_PATH};
 use crate::Message;
 use iced::widget::{button, column, container, row, scrollable, text, text_input, Space};
@@ -364,5 +365,5 @@ pub fn view<'a>(info: &'a GitlabInfo, token_input: &'a str) -> Element<'a, Messa
         .height(Length::Fill)
         .style(style::audio_panel_container);
 
-    panel_with_exit(panel.into())
+    panel_with_exit(PanelKind::Gitlab, panel.into())
 }

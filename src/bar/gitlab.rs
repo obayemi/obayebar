@@ -40,7 +40,8 @@ pub fn view<'a>(auth: AuthState, count: usize, monitor: Option<String>) -> Eleme
     let open_msg = Message::PanelOpen(PanelKind::Gitlab, monitor);
     let clickable = mouse_area(stack)
         .on_press(open_msg.clone())
-        .on_enter(open_msg);
+        .on_enter(open_msg)
+        .on_exit(Message::PanelPointerLeftTrigger(PanelKind::Gitlab));
 
     container(clickable)
         .padding(style::PADDING_NORMAL)

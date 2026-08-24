@@ -195,6 +195,7 @@ pub fn view(
         PanelKind::Audio,
         monitor.map(String::from),
     ))
+    .on_exit(Message::PanelPointerLeftTrigger(PanelKind::Audio))
     .on_press(Message::AudioOpenPavucontrol)
     // Emit a *relative* nudge rather than an absolute target. This subtree is
     // built inside `lazy(status_cache_key(..))`, and that key deliberately
@@ -220,7 +221,8 @@ pub fn view(
     .on_enter(Message::PanelOpen(
         PanelKind::Network,
         monitor.map(String::from),
-    ));
+    ))
+    .on_exit(Message::PanelPointerLeftTrigger(PanelKind::Network));
 
     let bluetooth_icon = mouse_area(
         text(bluetooth.icon_name)
@@ -232,12 +234,15 @@ pub fn view(
     .on_enter(Message::PanelOpen(
         PanelKind::Bluetooth,
         monitor.map(String::from),
-    ));
+    ))
+    .on_exit(Message::PanelPointerLeftTrigger(PanelKind::Bluetooth));
 
-    let sysinfo_icon = mouse_area(sysinfo_icon_view(sysinfo)).on_enter(Message::PanelOpen(
-        PanelKind::Sysinfo,
-        monitor.map(String::from),
-    ));
+    let sysinfo_icon = mouse_area(sysinfo_icon_view(sysinfo))
+        .on_enter(Message::PanelOpen(
+            PanelKind::Sysinfo,
+            monitor.map(String::from),
+        ))
+        .on_exit(Message::PanelPointerLeftTrigger(PanelKind::Sysinfo));
 
     icons = icons.push(audio_icon);
     icons = icons.push(bluetooth_icon);
@@ -260,7 +265,8 @@ pub fn view(
         .on_enter(Message::PanelOpen(
             PanelKind::Battery,
             monitor.map(String::from),
-        ));
+        ))
+        .on_exit(Message::PanelPointerLeftTrigger(PanelKind::Battery));
         icons = icons.push(battery_icon);
     }
 

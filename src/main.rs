@@ -74,6 +74,11 @@ const BAR_NAMESPACE_PREFIX: &str = "obayebar-bar-";
 /// others.
 const POPUP_NAMESPACE: &str = "obayebar-notifications";
 
+/// How long after the pointer leaves a bar trigger or a panel before the panel
+/// is dismissed. Long enough to cross the gap between the two surfaces, short
+/// enough that a deliberate move away feels immediate.
+const PANEL_GRACE: std::time::Duration = std::time::Duration::from_millis(150);
+
 /// Base delay before checking whether a bar landed where we asked. Long enough
 /// for the compositor to map a surface we just requested.
 const VERIFY_DELAY: std::time::Duration = std::time::Duration::from_millis(250);
@@ -253,6 +258,9 @@ pub struct App {
     /// `Panel::default`; the only invariant is that at most one panel is open
     /// at a time (enforced by `close_all_panels` before each `open`).
     panels: HashMap<PanelKind, panel::Panel>,
+    /// Where the pointer is relative to the panels, which is what decides
+    /// dismissal.
+    panel_pointer: PanelPointer,
     pub gitlab_enabled: bool,
     pub gitlab: GitlabInfo,
     /// Working buffer for the token input field in the GitLab popup. Persists
@@ -329,6 +337,15 @@ pub enum Message {
     /// `NetworkManager` state change would ever clear.
     NetworkConnectTimedOut(String),
     NetworkDisconnect,
+    /// The pointer left a bar trigger (icon). Arms a grace close.
+    PanelPointerLeftTrigger(PanelKind),
+    /// The pointer left a panel surface. Arms a grace close.
+    PanelPointerLeftPanel(PanelKind),
+    /// The pointer entered a panel surface, cancelling any pending close.
+    PanelPointerEntered(PanelKind),
+    /// The grace window elapsed; close if the pointer is still nowhere near.
+    PanelGraceElapsed,
+    /// Close every panel immediately, regardless of the pointer.
     CloseAllPanels,
     /// Absolute target, from the audio panel's slider.
     AudioSetVolume(f32),
@@ -356,6 +373,7 @@ impl App {
                 notif_popup_id: None,
                 notif_popup_monitor: None,
                 panels: HashMap::new(),
+                panel_pointer: PanelPointer::default(),
                 gitlab_enabled: config::resolved().gitlab_enable(),
                 gitlab: GitlabInfo::default(),
                 gitlab_token_input: String::new(),
@@ -409,8 +427,30 @@ impl App {
             .collect()
     }
 
-    #[allow(clippy::too_many_lines)]
     fn update(&mut self, message: Message) -> Task<Message> {
+        let task = self.handle_message(message);
+        self.sync_panel_signals();
+        task
+    }
+
+    /// Derive each service's cadence signal from whether its panel is actually
+    /// open, rather than latching it at open/close time.
+    ///
+    /// A panel surface can die without a usable `Closed` event, which used to
+    /// leave `signal_setter(true)` stuck on and its service polling at panel
+    /// cadence indefinitely — network rescanning every 10s instead of every
+    /// 2min, sysinfo every 2s instead of every 10s. `PanelSignal::set` only
+    /// notifies on a change, so running this after every message is cheap.
+    fn sync_panel_signals(&self) {
+        for (kind, panel) in &self.panels {
+            if let Some(setter) = kind.signal_setter() {
+                setter(panel.is_open());
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn handle_message(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Tick => {
                 self.time = chrono::Local::now();
@@ -655,6 +695,30 @@ impl App {
                 self.connecting_ssid = None;
                 services::network::disconnect_wifi();
                 Task::none()
+            }
+            Message::PanelPointerEntered(kind) => {
+                self.panel_pointer.entered_panel(kind);
+                Task::none()
+            }
+            Message::PanelPointerLeftTrigger(kind) => {
+                self.panel_pointer.left_trigger(kind);
+                Self::arm_panel_grace()
+            }
+            Message::PanelPointerLeftPanel(kind) => {
+                self.panel_pointer.left_panel(kind);
+                Self::arm_panel_grace()
+            }
+            Message::PanelGraceElapsed => {
+                // Close only if the pointer is on neither a trigger nor a
+                // panel. Both are tracked separately and checked together so
+                // the decision does not depend on the order the leave and the
+                // enter happen to be dispatched in — which is fixed by window
+                // id and therefore not something to rely on.
+                if self.panel_pointer.is_away() {
+                    self.close_all_panels()
+                } else {
+                    Task::none()
+                }
             }
             Message::CloseAllPanels => self.close_all_panels(),
             Message::AudioSetVolume(vol) => self.set_volume(vol),
@@ -1108,12 +1172,20 @@ impl App {
     }
 
     fn close_all_panels(&mut self) -> Task<Message> {
-        for kind in PanelKind::ALL {
+        self.panel_pointer.clear();
+        // Iterate the panels we actually have rather than a hand-maintained
+        // `PanelKind::ALL`. That array was the one dispatch table the compiler
+        // did not check, and a kind missing from it closed its window while
+        // never getting `setter(false)` — leaving its service polling at panel
+        // cadence forever. A signal can only be set once its panel has been
+        // opened, so this map is exactly the right set.
+        let mut tasks = Vec::new();
+        for (kind, panel) in &mut self.panels {
             if let Some(setter) = kind.signal_setter() {
                 setter(false);
             }
+            tasks.push(panel.close());
         }
-        let tasks: Vec<_> = self.panels.values_mut().map(panel::Panel::close).collect();
         Task::batch(tasks)
     }
 
@@ -1173,6 +1245,18 @@ impl App {
         }
     }
 
+    /// Schedule a dismissal check after `PANEL_GRACE`.
+    ///
+    /// A leave never closes directly. The pointer crossing from a bar icon into
+    /// its panel produces a leave and an enter, and closing on the leave would
+    /// destroy the panel the user is moving into; the grace lets the enter land
+    /// first. The check itself is idempotent, so overlapping graces are fine.
+    fn arm_panel_grace() -> Task<Message> {
+        Task::perform(tokio::time::sleep(PANEL_GRACE), |()| {
+            Message::PanelGraceElapsed
+        })
+    }
+
     /// Open `kind`'s popup, replacing whichever panel is currently shown.
     fn open_panel(&mut self, kind: PanelKind, monitor: Option<String>) -> Task<Message> {
         // A bar with no monitor is not a state we can place a panel from, and
@@ -1183,7 +1267,24 @@ impl App {
             log::warn!("panels: not opening {kind:?}, its bar has no known monitor");
             return Task::none();
         };
+
+        // The pointer is on this trigger by definition — recording it here is
+        // what stops a leave dispatched in the same batch (crossing from an
+        // open panel back onto a bar icon) from closing the panel we are about
+        // to open.
+        self.panel_pointer.entered_trigger(kind);
+
+        // Already showing: nothing to rebuild. Re-hovering the same icon used
+        // to destroy and recreate the surface, which the compositor renders as
+        // a flicker.
+        if self.panels.get(&kind).is_some_and(panel::Panel::is_open) {
+            return Task::none();
+        }
+
         let close = self.close_all_panels();
+        // `close_all_panels` clears the pointer state, but the pointer really
+        // is on this trigger, so restore it.
+        self.panel_pointer.entered_trigger(kind);
         let (width, height) = self.panel_dimensions(kind);
         if let Some(setter) = kind.signal_setter() {
             setter(true);
@@ -1411,6 +1512,60 @@ fn close_window(id: window::Id) -> Task<Message> {
     iced_runtime::task::effect(iced_runtime::Action::Window(
         iced_runtime::window::Action::Close(id),
     ))
+}
+
+/// Where the pointer is relative to the panels, which is the whole basis for
+/// dismissing one.
+///
+/// The two locations are tracked separately rather than as a single "hovered"
+/// value, because a pointer crossing from a bar icon into its panel produces a
+/// leave *and* an enter, and the order they are dispatched in is fixed by
+/// window id (messages are drained from a `BTreeMap` keyed on it) — a panel's
+/// id is always newer than its bar's. Keeping them apart makes every
+/// interleaving give the same answer, so the behaviour does not rest on that
+/// ordering holding.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct PanelPointer {
+    /// The bar trigger (status icon) the pointer is over.
+    on_trigger: Option<PanelKind>,
+    /// The panel surface the pointer is over.
+    on_panel: Option<PanelKind>,
+}
+
+impl PanelPointer {
+    const fn entered_trigger(&mut self, kind: PanelKind) {
+        self.on_trigger = Some(kind);
+    }
+
+    /// A leave only clears the location if it is still the one recorded — a
+    /// stale leave for a trigger the pointer has already moved off must not
+    /// undo the newer position.
+    fn left_trigger(&mut self, kind: PanelKind) {
+        if self.on_trigger == Some(kind) {
+            self.on_trigger = None;
+        }
+    }
+
+    const fn entered_panel(&mut self, kind: PanelKind) {
+        self.on_panel = Some(kind);
+    }
+
+    fn left_panel(&mut self, kind: PanelKind) {
+        if self.on_panel == Some(kind) {
+            self.on_panel = None;
+        }
+    }
+
+    const fn clear(&mut self) {
+        self.on_trigger = None;
+        self.on_panel = None;
+    }
+
+    /// True when the pointer is on neither a trigger nor a panel, i.e. the
+    /// panels should be dismissed.
+    const fn is_away(self) -> bool {
+        self.on_trigger.is_none() && self.on_panel.is_none()
+    }
 }
 
 /// One bar surface we have asked the compositor for.
@@ -1838,5 +1993,108 @@ mod reconcile_tests {
             &HashMap::new(),
         );
         assert_eq!(back.spawn.as_deref(), Some("DP-1"));
+    }
+}
+
+#[cfg(test)]
+mod panel_pointer_tests {
+    use super::{PanelKind, PanelPointer};
+
+    #[test]
+    fn a_fresh_pointer_is_away() {
+        assert!(PanelPointer::default().is_away());
+    }
+
+    #[test]
+    fn hovering_a_trigger_holds_the_panel_open() {
+        let mut p = PanelPointer::default();
+        p.entered_trigger(PanelKind::Audio);
+        assert!(!p.is_away());
+    }
+
+    #[test]
+    fn leaving_the_trigger_without_entering_the_panel_dismisses() {
+        // The reported stuck-panel bug: moving up the bar past the clock, or
+        // off to another monitor, never entered the panel — and the panel's own
+        // on_exit was the only dismissal producer, so nothing ever fired.
+        let mut p = PanelPointer::default();
+        p.entered_trigger(PanelKind::Audio);
+        p.left_trigger(PanelKind::Audio);
+        assert!(p.is_away(), "must dismiss when the pointer just leaves");
+    }
+
+    #[test]
+    fn crossing_from_trigger_into_panel_keeps_it_open_either_order() {
+        // Order is decided by window id, not by us. Both interleavings must
+        // agree, or the panel the user is moving into gets destroyed.
+        let mut leave_first = PanelPointer::default();
+        leave_first.entered_trigger(PanelKind::Audio);
+        leave_first.left_trigger(PanelKind::Audio);
+        leave_first.entered_panel(PanelKind::Audio);
+        assert!(!leave_first.is_away());
+
+        let mut enter_first = PanelPointer::default();
+        enter_first.entered_trigger(PanelKind::Audio);
+        enter_first.entered_panel(PanelKind::Audio);
+        enter_first.left_trigger(PanelKind::Audio);
+        assert!(!enter_first.is_away());
+
+        assert_eq!(leave_first, enter_first);
+    }
+
+    #[test]
+    fn leaving_the_panel_dismisses() {
+        let mut p = PanelPointer::default();
+        p.entered_trigger(PanelKind::Audio);
+        p.left_trigger(PanelKind::Audio);
+        p.entered_panel(PanelKind::Audio);
+        p.left_panel(PanelKind::Audio);
+        assert!(p.is_away());
+    }
+
+    #[test]
+    fn crossing_from_a_panel_onto_another_trigger_keeps_a_panel_open() {
+        // Audio panel open, pointer moves onto the Network icon. The bar
+        // publishes the open before the panel publishes its leave, so the leave
+        // must not dismiss the panel that was just requested.
+        let mut p = PanelPointer::default();
+        p.entered_panel(PanelKind::Audio);
+        p.entered_trigger(PanelKind::Network);
+        p.left_panel(PanelKind::Audio);
+        assert!(!p.is_away());
+        assert_eq!(p.on_trigger, Some(PanelKind::Network));
+    }
+
+    #[test]
+    fn a_stale_leave_does_not_clear_a_newer_position() {
+        // Icon-to-icon: the leave for the old icon must not undo the enter for
+        // the new one, whichever order they arrive in.
+        let mut p = PanelPointer::default();
+        p.entered_trigger(PanelKind::Audio);
+        p.entered_trigger(PanelKind::Network);
+        p.left_trigger(PanelKind::Audio);
+        assert!(!p.is_away());
+        assert_eq!(p.on_trigger, Some(PanelKind::Network));
+    }
+
+    #[test]
+    fn a_stale_panel_leave_does_not_clear_a_newer_panel() {
+        let mut p = PanelPointer::default();
+        p.entered_panel(PanelKind::Audio);
+        p.entered_panel(PanelKind::Network);
+        p.left_panel(PanelKind::Audio);
+        assert_eq!(p.on_panel, Some(PanelKind::Network));
+        assert!(!p.is_away());
+    }
+
+    #[test]
+    fn clearing_forgets_both_locations() {
+        // `close_all_panels` runs on monitor changes and explicit closes; the
+        // pointer bookkeeping must not outlive the surfaces it described.
+        let mut p = PanelPointer::default();
+        p.entered_trigger(PanelKind::Audio);
+        p.entered_panel(PanelKind::Audio);
+        p.clear();
+        assert!(p.is_away());
     }
 }

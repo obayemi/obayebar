@@ -1,4 +1,5 @@
 use super::widgets::{hover_button_style, icon_button, panel_with_exit, separator, styled_toggler};
+use crate::panel::PanelKind;
 use crate::services::bluetooth::BluetoothInfo;
 use crate::Message;
 use iced::widget::{button, column, container, row, text, Space};
@@ -238,5 +239,5 @@ pub fn view(bt: &BluetoothInfo) -> Element<'_, Message> {
         .height(Length::Shrink)
         .style(style::audio_panel_container);
 
-    panel_with_exit(panel.into())
+    panel_with_exit(PanelKind::Bluetooth, panel.into())
 }
