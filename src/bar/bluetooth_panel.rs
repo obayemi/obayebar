@@ -205,8 +205,21 @@ pub fn view(bt: &BluetoothInfo) -> Element<'_, Message> {
                     .color(style::M3_ON_SURFACE_VARIANT),
             );
         } else {
-            for dev in &paired {
+            // Same cap the height function assumes. Rendering every device
+            // against a height computed for at most this many pushed the
+            // surplus off the *top* of the surface, taking the header and the
+            // controls with it.
+            for dev in paired.iter().take(style::PANEL_MAX_VISIBLE_ROWS) {
                 device_list = device_list.push(device_entry(dev));
+            }
+            if let Some(extra) = paired.len().checked_sub(style::PANEL_MAX_VISIBLE_ROWS) {
+                if extra > 0 {
+                    device_list = device_list.push(
+                        text(format!("+{extra} more paired"))
+                            .size(style::FONT_SIZE_SMALLER)
+                            .color(style::M3_ON_SURFACE_VARIANT),
+                    );
+                }
             }
         }
         content = content.push(device_list);
@@ -220,7 +233,7 @@ pub fn view(bt: &BluetoothInfo) -> Element<'_, Message> {
             .spacing(2.0)
             .width(Length::Fill);
 
-            for dev in &nearby {
+            for dev in nearby.iter().take(style::PANEL_MAX_VISIBLE_ROWS) {
                 nearby_list = nearby_list.push(nearby_entry(dev));
             }
             content = content.push(nearby_list);

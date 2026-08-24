@@ -65,12 +65,49 @@ impl PanelKind {
 pub struct Panel {
     id: Option<window::Id>,
     open: bool,
+    /// Content size the surface was last sized to, so `resize` only dispatches
+    /// when the size actually changes.
+    size: Option<(u32, u32)>,
 }
 
 impl Panel {
+    /// Layer-shell surface size for a panel with content size `(width, height)`.
+    ///
+    /// The gap is part of the surface so the compositor includes it in the
+    /// input region. `open` and `resize` must agree on it, which is why it
+    /// lives here rather than being spelled out at each site.
+    const fn surface_size(width: u32, height: u32) -> (u32, u32) {
+        (
+            width.saturating_add(style::PANEL_GAP_PX),
+            height.saturating_add(style::PANEL_GAP_PX),
+        )
+    }
+
     /// Whether this panel currently has a surface.
     pub const fn is_open(&self) -> bool {
         self.open
+    }
+
+    /// Resize the open surface to fit content of `(width, height)`.
+    ///
+    /// Panels used to be sized exactly once, at creation: `Message::SizeChange`
+    /// had a single emitter (the notification popup), and every service-update
+    /// arm returned `Task::none()`. A panel opened before its payload arrived —
+    /// which was guaranteed, since the services withheld their lists until the
+    /// panel-open signal flipped — kept the wrong height for its whole
+    /// lifetime.
+    pub fn resize(&mut self, width: u32, height: u32) -> iced::Task<Message> {
+        let Some(id) = self.id else {
+            return iced::Task::none();
+        };
+        if self.size == Some((width, height)) {
+            return iced::Task::none();
+        }
+        self.size = Some((width, height));
+        iced::Task::done(Message::SizeChange {
+            id,
+            size: Self::surface_size(width, height),
+        })
     }
 
     pub fn is_window(&self, id: window::Id) -> bool {
@@ -103,13 +140,13 @@ impl Panel {
         self.open = true;
         let id = window::Id::unique();
         self.id = Some(id);
-        let gap = style::PANEL_GAP_PX;
+        self.size = Some((width, height));
         iced::Task::done(Message::NewLayerShell {
             settings: NewLayerShellSettings {
                 anchor: Anchor::Left | Anchor::Bottom,
                 layer: Layer::Overlay,
                 exclusive_zone: Some(-1),
-                size: Some((width.saturating_add(gap), height.saturating_add(gap))),
+                size: Some(Self::surface_size(width, height)),
                 margin: Some((0, 0, 0, style::BAR_WIDTH.cast_signed())),
                 keyboard_interactivity: KeyboardInteractivity::None,
                 output_option: OutputOption::OutputName(monitor.to_string()),
@@ -125,6 +162,7 @@ impl Panel {
 
     pub fn close(&mut self) -> iced::Task<Message> {
         self.open = false;
+        self.size = None;
         self.id
             .take()
             .map_or_else(iced::Task::none, super::close_window)
@@ -137,6 +175,7 @@ impl Panel {
         if self.id == Some(id) {
             self.id = None;
             self.open = false;
+            self.size = None;
             true
         } else {
             false

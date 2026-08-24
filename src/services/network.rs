@@ -5,7 +5,11 @@ use futures_util::Stream;
 static PANEL: PanelSignal = PanelSignal::new();
 
 /// Toggle from the UI when the network panel opens/closes. Triggers an
-/// immediate refresh and enables/disables the per-scan AP enumeration.
+/// immediate refresh and selects the refresh cadence.
+///
+/// It deliberately no longer gates the *payload*: withholding the access-point
+/// list until the panel opened guaranteed the panel was sized from an empty
+/// list, because the open path measures before flipping this signal.
 pub fn set_panel_open(open: bool) {
     PANEL.set(open);
 }
@@ -144,7 +148,7 @@ async fn saved_wifi_ssids(conn: &zbus::Connection) -> std::collections::HashSet<
     ssids
 }
 
-async fn scan_access_points(
+async fn read_access_points(
     conn: &zbus::Connection,
     nm_proxy: &zbus::Proxy<'_>,
 ) -> Vec<AccessPointInfo> {
@@ -194,7 +198,7 @@ async fn scan_access_points(
 }
 
 #[allow(clippy::too_many_lines)]
-async fn read_network_dbus_with(conn: &zbus::Connection, panel_open: bool) -> NetworkInfo {
+async fn read_network_dbus(conn: &zbus::Connection) -> NetworkInfo {
     let Some(nm_proxy) = proxy(conn, NM_BUS, NM_PATH, NM_BUS).await else {
         return NetworkInfo::default();
     };
@@ -284,8 +288,15 @@ async fn read_network_dbus_with(conn: &zbus::Connection, panel_open: bool) -> Ne
         obayebar::style::ICON_WIFI_OFF
     };
 
-    let access_points = if wifi_enabled && panel_open {
-        scan_access_points(conn, &nm_proxy).await
+    // Deliberately not gated on whether the panel is open. Withholding the
+    // list until then meant the panel was *always* sized from an empty one —
+    // the open path measures before flipping the signal — so it opened at
+    // one-row height and then had to jump. The refresh *cadence* is still
+    // gated (10s open, 2min closed), which is where the real cost lives;
+    // `read_access_points` only reads NetworkManager's cached AccessPoints
+    // property and never triggers a radio scan.
+    let access_points = if wifi_enabled {
+        read_access_points(conn, &nm_proxy).await
     } else {
         Vec::new()
     };
@@ -531,7 +542,7 @@ async fn run_network_loop(
         .map_err(|_| ())?;
 
     // Emit initial state
-    let mut last = read_network_dbus_with(conn, PANEL.is_open()).await;
+    let mut last = read_network_dbus(conn).await;
     tx.send(last.clone()).map_err(|_| ())?;
 
     loop {
@@ -551,7 +562,7 @@ async fn run_network_loop(
         // Small delay to let D-Bus settle after state changes
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-        let info = read_network_dbus_with(conn, PANEL.is_open()).await;
+        let info = read_network_dbus(conn).await;
         dbus_util::send_if_changed(tx, &mut last, info)?;
     }
 }

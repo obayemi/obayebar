@@ -161,6 +161,31 @@ pub const PANEL_GAP_PX: u32 = 8;
 /// Line-height multiplier: iced cosmic-text renders text taller than the font size.
 const LINE_HEIGHT: f32 = 1.3;
 
+/// Height of a single-line text row inside a panel, including its padding.
+/// This is also exactly the height of `widgets::icon_button`, which uses the
+/// same font size and `PADDING_SMALL`.
+pub const ENTRY_TEXT_ROW: f32 = PADDING_SMALL * 2.0 + FONT_SIZE_NORMAL * LINE_HEIGHT;
+
+/// Height of a panel row whose action is an `icon_button`.
+///
+/// The button is itself [`ENTRY_TEXT_ROW`] tall and sits inside the row's own
+/// vertical padding, so such a row is taller than a plain text row. The
+/// network panel's height was computed as if the button were free, leaving it
+/// `10n - 20` pixels short against a 20px fudge factor — always short from
+/// three access points, about 59px at eight. Deriving both from one constant is
+/// what stops the two drifting apart again.
+pub const ENTRY_BUTTON_ROW: f32 = PADDING_ENTRY[0] * 2.0 + ENTRY_TEXT_ROW;
+
+/// Largest number of list rows any panel renders before collapsing the rest.
+///
+/// Consumed by both the height functions and the views. Previously the network
+/// panel had its own private `MAX_VISIBLE_NETWORKS = 8` that `main.rs` could
+/// not reference (duplicated there as a bare `8`), and the bluetooth panel had
+/// no cap at all — it rendered every device against a height computed for at
+/// most eight, so the surplus was laid out at a negative offset and clipped
+/// off the *top*, taking the header and the controls with it.
+pub const PANEL_MAX_VISIBLE_ROWS: usize = 8;
+
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
@@ -321,7 +346,10 @@ pub fn network_panel_height(
     // Separator
     let separator = 1.0;
 
-    let per_entry = PADDING_SMALL.mul_add(2.0, FONT_SIZE_NORMAL * LINE_HEIGHT);
+    // Active-connection rows are plain text; Wi-Fi rows carry an `icon_button`
+    // action and are therefore taller.
+    let per_entry = ENTRY_TEXT_ROW;
+    let per_wifi_entry = ENTRY_BUTTON_ROW;
     let label_height = FONT_SIZE_SMALLER * LINE_HEIGHT;
 
     // Active connections: each type group has a label + entries, groups separated by spacing
@@ -360,8 +388,8 @@ pub fn network_panel_height(
 
     // "Wi-Fi networks" label + N entries
     let label = FONT_SIZE_SMALLER * LINE_HEIGHT;
-    let n = ap_count.max(1) as f32;
-    let network_list = label + (n - 1.0).max(0.0).mul_add(2.0, n * per_entry);
+    let n = ap_count.clamp(1, PANEL_MAX_VISIBLE_ROWS) as f32;
+    let network_list = label + (n - 1.0).max(0.0).mul_add(2.0, n * per_wifi_entry);
 
     let safety = 20.0;
     (container_padding
@@ -437,6 +465,7 @@ pub fn bluetooth_panel_height(
     let discovery_btn = PADDING_SMALL.mul_add(2.0, FONT_SIZE_NORMAL * LINE_HEIGHT);
 
     // Each device entry height
+    // Two lines of text (alias + detail) plus padding.
     let per_entry = PADDING_SMALL.mul_add(
         2.0,
         FONT_SIZE_SMALL.mul_add(LINE_HEIGHT, FONT_SIZE_NORMAL * LINE_HEIGHT),
@@ -444,13 +473,13 @@ pub fn bluetooth_panel_height(
 
     // Paired devices section
     let label = FONT_SIZE_SMALLER * LINE_HEIGHT;
-    let n = paired_count.max(1) as f32;
+    let n = paired_count.clamp(1, PANEL_MAX_VISIBLE_ROWS) as f32;
     let device_list = label + (n - 1.0).max(0.0).mul_add(2.0, n * per_entry);
 
     // Nearby section (only when discovering with unpaired devices)
     let nearby_section = if discovering && nearby_count > 0 {
         let nearby_label = FONT_SIZE_SMALLER * LINE_HEIGHT;
-        let m = nearby_count as f32;
+        let m = nearby_count.min(PANEL_MAX_VISIBLE_ROWS) as f32;
         SPACING_NORMAL + nearby_label + (m - 1.0).max(0.0).mul_add(2.0, m * per_entry)
     } else {
         0.0
@@ -779,5 +808,73 @@ mod tests {
             with > without,
             "overflow entry must add to popup height (without={without}, with={with})"
         );
+    }
+
+    #[test]
+    fn an_icon_button_row_accounts_for_the_button_it_contains() {
+        // The network panel computed its height with the plain-text row height
+        // even though its Wi-Fi rows embed an `icon_button` that is itself a
+        // full text row tall, leaving every row short by the row's padding.
+        // `widgets::icon_button` is FONT_SIZE_NORMAL text with PADDING_SMALL,
+        // which is exactly ENTRY_TEXT_ROW; the row adds its own padding.
+        let expected = super::PADDING_ENTRY[0].mul_add(2.0, super::ENTRY_TEXT_ROW);
+        assert!((super::ENTRY_BUTTON_ROW - expected).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn network_height_grows_with_each_visible_access_point() {
+        // Monotonic up to the cap: a height that did not grow per row is how
+        // content ended up clipped off the surface.
+        let mut previous = super::network_panel_height(1, &[], true);
+        for count in 2..=super::PANEL_MAX_VISIBLE_ROWS {
+            let height = super::network_panel_height(count, &[], true);
+            assert!(
+                height > previous,
+                "height must grow from {} to {count} APs",
+                count - 1
+            );
+            previous = height;
+        }
+    }
+
+    #[test]
+    fn network_height_stops_growing_past_the_row_cap() {
+        // The view renders at most PANEL_MAX_VISIBLE_ROWS, so the height must
+        // not keep growing for APs that are never drawn — and, more
+        // importantly, must not fall short of the ones that are.
+        let at_cap = super::network_panel_height(super::PANEL_MAX_VISIBLE_ROWS, &[], true);
+        let over_cap = super::network_panel_height(super::PANEL_MAX_VISIBLE_ROWS + 40, &[], true);
+        assert_eq!(at_cap, over_cap);
+    }
+
+    #[test]
+    fn network_height_covers_its_wifi_rows() {
+        // Regression guard for the specific arithmetic bug: with N rows the
+        // budget must cover N button-rows plus the label, not N text-rows.
+        let n = super::PANEL_MAX_VISIBLE_ROWS;
+        #[allow(clippy::cast_precision_loss, clippy::as_conversions)]
+        let rows_only = (n as f32) * super::ENTRY_BUTTON_ROW;
+        #[allow(clippy::cast_precision_loss, clippy::as_conversions)]
+        let height = super::network_panel_height(n, &[], true) as f32;
+        assert!(
+            height > rows_only,
+            "height {height} must exceed the {rows_only} its rows alone need"
+        );
+    }
+
+    #[test]
+    fn bluetooth_height_stops_growing_past_the_row_cap() {
+        let at_cap = super::bluetooth_panel_height(super::PANEL_MAX_VISIBLE_ROWS, 0, true, false);
+        let over_cap =
+            super::bluetooth_panel_height(super::PANEL_MAX_VISIBLE_ROWS + 40, 0, true, false);
+        assert_eq!(at_cap, over_cap);
+    }
+
+    #[test]
+    fn bluetooth_nearby_section_is_also_capped() {
+        let at_cap = super::bluetooth_panel_height(1, super::PANEL_MAX_VISIBLE_ROWS, true, true);
+        let over_cap =
+            super::bluetooth_panel_height(1, super::PANEL_MAX_VISIBLE_ROWS + 40, true, true);
+        assert_eq!(at_cap, over_cap);
     }
 }

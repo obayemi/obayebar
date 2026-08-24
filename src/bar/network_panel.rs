@@ -6,8 +6,6 @@ use iced::widget::{column, container, row, text, Space};
 use iced::{Alignment, Border, Element, Length};
 use obayebar::style;
 
-const MAX_VISIBLE_NETWORKS: usize = 8;
-
 fn network_entry<'a>(
     ssid: &'a str,
     icon_name: &'a str,
@@ -230,7 +228,7 @@ pub fn view<'a>(
             }
 
             for ap in &network.access_points {
-                if shown >= MAX_VISIBLE_NETWORKS {
+                if shown >= style::PANEL_MAX_VISIBLE_ROWS {
                     break;
                 }
                 if active_ssid == Some(ap.ssid.as_str()) {

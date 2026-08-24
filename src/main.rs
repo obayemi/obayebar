@@ -430,7 +430,26 @@ impl App {
     fn update(&mut self, message: Message) -> Task<Message> {
         let task = self.handle_message(message);
         self.sync_panel_signals();
-        task
+        // Any message can change what a panel renders, so refit here rather
+        // than in each of the five service arms. `Panel::resize` no-ops when
+        // the size is unchanged, so this costs nothing in the common case.
+        let resize = self.resize_open_panel();
+        Task::batch([task, resize])
+    }
+
+    /// Refit the open panel's surface to its current content.
+    fn resize_open_panel(&mut self) -> Task<Message> {
+        let Some(kind) = self
+            .panels
+            .iter()
+            .find_map(|(kind, panel)| panel.is_open().then_some(*kind))
+        else {
+            return Task::none();
+        };
+        let (width, height) = self.panel_dimensions(kind);
+        self.panels
+            .get_mut(&kind)
+            .map_or_else(Task::none, |panel| panel.resize(width, height))
     }
 
     /// Derive each service's cadence signal from whether its panel is actually

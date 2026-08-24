@@ -98,11 +98,7 @@ async fn find_adapter_path(conn: &zbus::Connection) -> Option<String> {
     )
 }
 
-async fn read_bluetooth_dbus(
-    conn: &zbus::Connection,
-    panel_open: bool,
-    adapter_path: Option<&str>,
-) -> BluetoothInfo {
+async fn read_bluetooth_dbus(conn: &zbus::Connection, adapter_path: Option<&str>) -> BluetoothInfo {
     let Some(adapter_path) = adapter_path else {
         // No `Adapter1` anywhere in the tree: no hardware, or bluetoothd is
         // down. Render as off — there is nothing to toggle — but deliberately
@@ -135,48 +131,19 @@ async fn read_bluetooth_dbus(
 
     let discovering: bool = adapter.get_property("Discovering").await.unwrap_or(false);
 
-    if panel_open {
-        let devices = enumerate_devices(conn, discovering).await;
-        let has_connected = devices.iter().any(|d| d.connected);
-        BluetoothInfo {
-            powered: true,
-            discovering,
-            icon_name: bt_icon(true, has_connected),
-            devices,
-        }
-    } else {
-        // Bar icon only needs powered + has_connected — avoid deserializing
-        // per-device alias/icon/battery fields.
-        let has_connected = has_any_connected_device(conn).await;
-        BluetoothInfo {
-            powered: true,
-            discovering,
-            icon_name: bt_icon(true, has_connected),
-            devices: Vec::new(),
-        }
+    // The device list is populated whether or not the panel is open. The old
+    // "cheap path" for the closed case still made the same
+    // `GetManagedObjects` call and only skipped per-device deserialization, so
+    // it saved very little — while guaranteeing the panel was sized from an
+    // empty list, since the open path measures before flipping the signal.
+    let devices = enumerate_devices(conn, discovering).await;
+    let has_connected = devices.iter().any(|d| d.connected);
+    BluetoothInfo {
+        powered: true,
+        discovering,
+        icon_name: bt_icon(true, has_connected),
+        devices,
     }
-}
-
-/// Cheap path: check only the `Connected` field on each Device1 interface,
-/// short-circuiting as soon as one is true.
-async fn has_any_connected_device(conn: &zbus::Connection) -> bool {
-    let Some(om_proxy) = build_proxy(conn, "/", OBJECT_MANAGER).await else {
-        return false;
-    };
-    let Ok(objects) = om_proxy
-        .call::<_, _, ManagedObjects>("GetManagedObjects", &())
-        .await
-    else {
-        return false;
-    };
-    objects.values().any(|ifaces| {
-        ifaces.get(DEVICE1).is_some_and(|props| {
-            props
-                .get("Connected")
-                .and_then(|v| <bool as TryFrom<_>>::try_from(v.clone()).ok())
-                .unwrap_or(false)
-        })
-    })
 }
 
 type ManagedObjects = std::collections::HashMap<
@@ -419,7 +386,7 @@ async fn run_bluetooth_loop(
         };
 
     // Emit initial state
-    let mut last = read_bluetooth_dbus(conn, PANEL.is_open(), adapter_path.as_deref()).await;
+    let mut last = read_bluetooth_dbus(conn, adapter_path.as_deref()).await;
     tx.send(last.clone()).map_err(|_| ())?;
 
     loop {
@@ -447,7 +414,7 @@ async fn run_bluetooth_loop(
             return Ok(());
         }
 
-        let info = read_bluetooth_dbus(conn, PANEL.is_open(), adapter_path.as_deref()).await;
+        let info = read_bluetooth_dbus(conn, adapter_path.as_deref()).await;
         dbus_util::send_if_changed(tx, &mut last, info)?;
     }
 }
