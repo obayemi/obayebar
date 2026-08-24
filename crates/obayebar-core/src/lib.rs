@@ -6,5 +6,6 @@
 //! directly. Keeping the shared code iced-free is what lets those two build in
 //! seconds instead of compiling several hundred crates.
 
+pub mod hypr;
 pub mod wallpaper;
 pub mod xdg;

@@ -19,12 +19,13 @@ use iced_layershell::reexport::{
 };
 use iced_layershell::settings::{LayerShellSettings, Settings, StartMode};
 use iced_layershell::to_layer_message;
+use obayebar_core::hypr::MonitorGeom;
 use panel::PanelKind;
 use services::audio::{AudioCommand, AudioInfo};
 use services::battery::BatteryInfo;
 use services::bluetooth::BluetoothInfo;
 use services::gitlab::GitlabInfo;
-use services::hyprland::{HyprEvent, HyprState, MonitorGeom, WindowInfo, WorkspaceInfo};
+use services::hyprland::{HyprEvent, HyprState, WindowInfo, WorkspaceInfo};
 use services::network::NetworkInfo;
 use services::notifications::{NotifEvent, NotificationData};
 use services::sysinfo::SysInfo;
@@ -334,7 +335,7 @@ pub enum Message {
     NetworkSetWifiEnabled(bool),
     /// A `j/layers` observation, or `None` if the query failed. Drives the
     /// whole bar reconcile loop.
-    LayersObserved(Option<services::hyprland::LayerMap>),
+    LayersObserved(Option<obayebar_core::hypr::LayerMap>),
     NetworkConnect(String),
     /// Outcome of the `NetworkManager` connect request itself.
     NetworkConnectDone(Result<(), String>),
@@ -883,7 +884,7 @@ impl App {
         Task::perform(
             async move {
                 tokio::time::sleep(delay).await;
-                services::hyprland::fetch_layer_namespaces().await
+                obayebar_core::hypr::fetch_layer_namespaces().await
             },
             Message::LayersObserved,
         )
@@ -952,7 +953,10 @@ impl App {
     /// The previous version checked these against its own tracking map, which
     /// is exactly the thing that goes wrong — so it reported success in every
     /// broken state. Everything here is driven by `observed` instead.
-    fn reconcile_bars(&mut self, observed: Option<&services::hyprland::LayerMap>) -> Task<Message> {
+    fn reconcile_bars(
+        &mut self,
+        observed: Option<&obayebar_core::hypr::LayerMap>,
+    ) -> Task<Message> {
         let expected: std::collections::HashSet<String> =
             self.monitor_geoms.keys().cloned().collect();
         let plan = plan_from_observation(observed, &expected, &self.bars);
@@ -1046,7 +1050,7 @@ impl App {
     /// build said nothing while bars were visibly stacked on one screen.
     fn log_bar_invariants(
         &self,
-        observed: Option<&services::hyprland::LayerMap>,
+        observed: Option<&obayebar_core::hypr::LayerMap>,
         expected: &std::collections::HashSet<String>,
     ) {
         let Some(observed) = observed else {
@@ -1655,7 +1659,7 @@ struct BarPlan {
 /// `observed` maps monitor name to the layer namespaces mapped there. `None`
 /// means the query failed.
 fn plan_from_observation(
-    observed: Option<&services::hyprland::LayerMap>,
+    observed: Option<&obayebar_core::hypr::LayerMap>,
     expected: &std::collections::HashSet<String>,
     tracked: &HashMap<window::Id, BarRecord>,
 ) -> BarPlan {
@@ -1782,9 +1786,7 @@ mod reconcile_tests {
     }
 
     /// A `j/layers`-shaped observation.
-    fn observed<const N: usize>(
-        entries: [(&str, &[&str]); N],
-    ) -> super::services::hyprland::LayerMap {
+    fn observed<const N: usize>(entries: [(&str, &[&str]); N]) -> obayebar_core::hypr::LayerMap {
         entries
             .into_iter()
             .map(|(monitor, namespaces)| {

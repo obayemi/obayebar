@@ -1,7 +1,15 @@
+//! The bar's half of the Hyprland IPC: workspaces, windows and the event
+//! stream.
+//!
+//! The transport, monitor detection and layer observation live in
+//! `obayebar_core::hypr`, so the wallpaper renderer and the lock screen can ask
+//! the same questions without linking iced. Everything here is about what the
+//! *bar* renders.
+
 use futures_util::Stream;
+use obayebar_core::hypr::{parse_lenient, query_or_log, socket_dir, MonitorGeom};
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::path::PathBuf;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
@@ -22,38 +30,6 @@ pub struct WindowInfo {
     pub title: String,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct MonitorInfo {
-    pub name: String,
-    #[serde(rename = "activeWorkspace")]
-    pub active_workspace: MonitorWorkspace,
-    #[serde(default)]
-    pub focused: bool,
-    #[serde(default)]
-    pub width: u32,
-    #[serde(default)]
-    pub height: u32,
-    #[serde(default)]
-    pub scale: f32,
-    #[serde(default)]
-    pub transform: i32,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct MonitorWorkspace {
-    pub id: i32,
-}
-
-/// Physical geometry of a connected monitor, used for sizing overlays
-/// that need to know the screen dimensions (e.g. notification popup cap).
-#[derive(Debug, Clone, Copy)]
-pub struct MonitorGeom {
-    pub width: u32,
-    pub height: u32,
-    pub scale: f32,
-    pub transform: i32,
-}
-
 /// All state fetched from Hyprland in one batch
 #[derive(Debug, Clone)]
 pub struct HyprState {
@@ -72,120 +48,6 @@ pub enum HyprEvent {
     /// Active window changed
     ActiveWindow(Option<WindowInfo>),
 }
-
-fn socket_dir() -> Option<PathBuf> {
-    let sig = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok()?;
-    let xdg = std::env::var("XDG_RUNTIME_DIR").ok()?;
-    Some(PathBuf::from(xdg).join("hypr").join(sig))
-}
-
-/// Why a Hyprland IPC query failed.
-///
-/// Every step used to end in `.ok()?`, collapsing six distinct failures into
-/// one `None` that the caller then turned into an empty state. This module had
-/// no log statements at all, so a compositor that had gone away, a renamed
-/// socket and a JSON schema change were indistinguishable — and all three
-/// presented as "no monitors are connected".
-#[derive(Debug, thiserror::Error)]
-pub enum IpcError {
-    #[error("HYPRLAND_INSTANCE_SIGNATURE or XDG_RUNTIME_DIR is unset")]
-    NoSocketDir,
-    #[error("connecting to {path}")]
-    Connect {
-        path: String,
-        #[source]
-        source: std::io::Error,
-    },
-    #[error("sending {command}")]
-    Write {
-        command: String,
-        #[source]
-        source: std::io::Error,
-    },
-    #[error("reading the reply to {command}")]
-    Read {
-        command: String,
-        #[source]
-        source: std::io::Error,
-    },
-    #[error("the reply to {command} was not valid UTF-8")]
-    NotUtf8 { command: String },
-    #[error("parsing the reply to {command}")]
-    Parse {
-        command: String,
-        #[source]
-        source: serde_json::Error,
-    },
-}
-
-async fn query_json<T: serde::de::DeserializeOwned>(command: &str) -> Result<T, IpcError> {
-    let dir = socket_dir().ok_or(IpcError::NoSocketDir)?;
-    let sock_path = dir.join(".socket.sock");
-    let mut stream = UnixStream::connect(&sock_path)
-        .await
-        .map_err(|source| IpcError::Connect {
-            path: sock_path.display().to_string(),
-            source,
-        })?;
-    stream
-        .write_all(command.as_bytes())
-        .await
-        .map_err(|source| IpcError::Write {
-            command: command.to_string(),
-            source,
-        })?;
-    stream.shutdown().await.map_err(|source| IpcError::Write {
-        command: command.to_string(),
-        source,
-    })?;
-
-    let mut buf = Vec::new();
-    tokio::io::AsyncReadExt::read_to_end(&mut stream, &mut buf)
-        .await
-        .map_err(|source| IpcError::Read {
-            command: command.to_string(),
-            source,
-        })?;
-    let text = String::from_utf8(buf).map_err(|_| IpcError::NotUtf8 {
-        command: command.to_string(),
-    })?;
-    serde_json::from_str(&text).map_err(|source| IpcError::Parse {
-        command: command.to_string(),
-        source,
-    })
-}
-
-/// Run a query, logging the reason on failure. `None` here means "we could not
-/// find out", which callers must never action as "there is nothing".
-async fn query_or_log<T: serde::de::DeserializeOwned>(command: &str) -> Option<T> {
-    match query_json(command).await {
-        Ok(value) => Some(value),
-        Err(e) => {
-            log::warn!("hyprland: {e}");
-            None
-        }
-    }
-}
-
-/// Deserialize a JSON array element-wise, dropping the entries that fail.
-///
-/// `Vec<T>` as a whole would fail on a single unparseable element, so one
-/// monitor Hyprland describes in a shape we do not model used to discard
-/// *every* monitor — which the reconciler then read as "no monitors are
-/// connected". One odd monitor should cost us that monitor, nothing more.
-fn parse_lenient<T: serde::de::DeserializeOwned>(values: Vec<serde_json::Value>) -> Vec<T> {
-    values
-        .into_iter()
-        .filter_map(|value| match serde_json::from_value(value) {
-            Ok(parsed) => Some(parsed),
-            Err(e) => {
-                log::warn!("hyprland: skipping unparseable IPC entry: {e}");
-                None
-            }
-        })
-        .collect()
-}
-
 /// Read a full state snapshot from Hyprland.
 ///
 /// `None` means "we could not find out", which is deliberately distinct from
@@ -195,15 +57,10 @@ fn parse_lenient<T: serde::de::DeserializeOwned>(values: Vec<serde_json::Value>)
 /// `StartMode::Active` that also emptied `units` and made layershellev call
 /// `signal.stop()`, killing the process outright.
 async fn fetch_full_state() -> Option<HyprState> {
-    let monitor_values: Vec<serde_json::Value> = query_or_log("j/monitors").await?;
-    let monitors: Vec<MonitorInfo> = parse_lenient(monitor_values);
-    if monitors.is_empty() {
-        // Hyprland lists every enabled, connected monitor here. An empty list
-        // from a compositor that is up means we asked at a bad moment, not
-        // that the machine has no displays.
-        log::warn!("hyprland: j/monitors returned no usable monitors, treating state as unknown");
-        return None;
-    }
+    // `monitors()` carries the "an empty list means we asked at a bad moment"
+    // guard, so a transient hiccup arrives here as `None` — unknown — rather
+    // than as an empty state the reconciler would action by closing every bar.
+    let monitors = obayebar_core::hypr::monitors().await?;
 
     let workspaces: Vec<WorkspaceInfo> = query_or_log::<Vec<serde_json::Value>>("j/workspaces")
         .await
@@ -247,53 +104,6 @@ async fn fetch_full_state() -> Option<HyprState> {
         active_workspaces,
         active_window,
     })
-}
-
-/// One entry in Hyprland's `j/layers` output.
-#[derive(Debug, Clone, Deserialize)]
-struct LayerEntry {
-    #[serde(default)]
-    namespace: String,
-}
-
-/// The `levels` map Hyprland nests layer surfaces under, keyed by layer level.
-#[derive(Debug, Clone, Default, Deserialize)]
-struct MonitorLayers {
-    #[serde(default)]
-    levels: HashMap<String, Vec<LayerEntry>>,
-}
-
-/// Which layer-shell namespaces are mapped on which monitor, as the compositor
-/// sees it. Keyed by monitor name.
-pub type LayerMap = HashMap<String, Vec<String>>;
-
-/// Ask the compositor which layer surfaces are actually on which monitor.
-///
-/// This is the only placement feedback available to us: `OutputOption::
-/// OutputName` resolves through layershellev's own output-name cache and, on a
-/// miss, silently creates the surface with no output at all — the compositor
-/// then puts it on the focused monitor and nothing is reported back. Asking
-/// Hyprland directly is what turns bar placement from a belief into an
-/// observation.
-///
-/// `None` means the query failed, which callers must treat as "unknown" and
-/// never as "no layers are mapped".
-pub async fn fetch_layer_namespaces() -> Option<LayerMap> {
-    let raw: HashMap<String, MonitorLayers> = query_or_log("j/layers").await?;
-    Some(
-        raw.into_iter()
-            .map(|(monitor, layers)| {
-                let namespaces = layers
-                    .levels
-                    .into_values()
-                    .flatten()
-                    .map(|entry| entry.namespace)
-                    .filter(|ns| !ns.is_empty())
-                    .collect();
-                (monitor, namespaces)
-            })
-            .collect(),
-    )
 }
 
 pub fn switch_workspace(id: i32) {
