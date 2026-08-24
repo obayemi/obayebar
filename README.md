@@ -80,7 +80,15 @@ choices that follow from that:
   "*N more notifications*" entry rather than rendering offscreen widgets.
 - **Launcher cache.** `obayebar-launcher` persists desktop-entry parsing and
   resolved icon paths to `XDG_CACHE_HOME` and launch frequencies to
-  `XDG_DATA_HOME`, so cold start is almost instant after the first run.
+  `XDG_DATA_HOME`, so cold start is almost instant after the first run. A cache
+  written by an older version is discarded rather than migrated, so the entry
+  list is simply rediscovered once after an upgrade.
+- **Terminal applications launch in a terminal.** Entries with
+  `Terminal=true` (htop, vim, ranger, …) are wrapped in `$TERMINAL`, falling
+  back to the first of foot, kitty, alacritty, wezterm, konsole,
+  gnome-terminal, xfce4-terminal or xterm found on `PATH`. `Exec` lines run
+  through `sh -c`, so quoted arguments, `env VAR=value` prefixes and
+  `sh -c "…"` wrapper entries get the argv the desktop-entry spec asks for.
 - **Smithay clipboard worker disabled.** No surface in the bar is
   keyboard-interactive, so the upstream always-on clipboard thread is
   switched off via `iced_layershell::disable_clipboard()`. (The launcher,

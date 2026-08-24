@@ -549,6 +549,7 @@ impl Launcher {
         };
         let desktop_id = entry.desktop_id.clone();
         let exec = entry.exec.clone();
+        let terminal = entry.terminal;
         let name = entry.name.clone();
 
         // Track launch frequency
@@ -556,7 +557,7 @@ impl Launcher {
         *count = count.saturating_add(1);
         desktop_entry::save_launch_counts(&self.launch_counts);
 
-        if let Err(err) = desktop_entry::launch(&exec) {
+        if let Err(err) = desktop_entry::launch(&exec, terminal) {
             log::error!("Failed to launch {name}: {err}");
         }
         std::process::exit(0);
