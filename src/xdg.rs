@@ -31,3 +31,19 @@ fn resolve(env_var: &str, home_subpath: &str) -> Option<PathBuf> {
     let home = std::env::var("HOME").ok()?;
     Some(PathBuf::from(home).join(home_subpath).join(APP_DIR))
 }
+
+/// `$XDG_RUNTIME_DIR/obayebar`, or `None` when it is unset.
+///
+/// Deliberately no `$HOME` fallback, unlike the others: callers use this for
+/// files that must be mode-700 and torn down at logout (the generated hyprlock
+/// config names every wallpaper path). Silently landing those in a
+/// world-readable `$HOME` directory would defeat the reason for choosing the
+/// runtime dir in the first place.
+#[must_use]
+pub fn runtime_dir() -> Option<PathBuf> {
+    let base = std::env::var("XDG_RUNTIME_DIR").ok()?;
+    if base.is_empty() {
+        return None;
+    }
+    Some(PathBuf::from(base).join(APP_DIR))
+}
