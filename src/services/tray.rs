@@ -115,8 +115,12 @@ async fn run_tray_loop(
         .map_err(|_| ())?;
 
     // Emit initial state
-    let items = read_tray_items_with(conn).await;
-    tx.send(items).map_err(|_| ())?;
+    // Tracked so the fallback refresh only pushes when something changed —
+    // the other three `spawn_stream` consumers already funnel through
+    // `send_if_changed`, and an unconditional send makes iced_layershell
+    // refresh every surface.
+    let mut last = read_tray_items_with(conn).await;
+    tx.send(last.clone()).map_err(|_| ())?;
 
     loop {
         tokio::select! {
@@ -130,6 +134,6 @@ async fn run_tray_loop(
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         let items = read_tray_items_with(conn).await;
-        tx.send(items).map_err(|_| ())?;
+        dbus_util::send_if_changed(tx, &mut last, items)?;
     }
 }

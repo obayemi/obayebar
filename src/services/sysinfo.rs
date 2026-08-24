@@ -88,12 +88,25 @@ fn parse_meminfo(content: &str) -> Option<f32> {
     Some(((total - available) / total * 100.0) as f32)
 }
 
+/// Round a percentage to the precision anything actually renders at.
+///
+/// The change guard compares whole `SysInfo` values, and a CPU percentage
+/// derived from `/proc/stat` deltas essentially never repeats exactly — so
+/// every tick counted as a change and pushed a message. A non-empty message
+/// queue makes `iced_layershell` request a refresh of *every* surface before
+/// `update()` runs, so the app-side equality check could not prevent the
+/// repaint. At the closed-panel cadence that was hundreds of full-surface
+/// repaints an hour for a number nobody can see moving.
+fn round_percent(value: f32) -> f32 {
+    (value * 10.0).round() / 10.0
+}
+
 #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
 fn compute_cpu_percent(prev_idle: u64, prev_total: u64, idle: u64, total: u64) -> f32 {
     let idle_delta = idle.saturating_sub(prev_idle);
     let total_delta = total.saturating_sub(prev_total);
     if total_delta > 0 {
-        ((1.0 - (idle_delta as f64 / total_delta as f64)) * 100.0) as f32
+        round_percent(((1.0 - (idle_delta as f64 / total_delta as f64)) * 100.0) as f32)
     } else {
         0.0
     }
@@ -355,9 +368,11 @@ pub fn stream() -> impl Stream<Item = SysInfo> {
             let info = SysInfo {
                 cpu_percent,
                 cpu_temp_c,
-                gpu_percent,
+                // Rounded for the same reason as `cpu_percent`: sub-0.1%
+                // jitter is invisible but counted as a change.
+                gpu_percent: round_percent(gpu_percent),
                 gpu_temp_c,
-                ram_percent,
+                ram_percent: round_percent(ram_percent),
                 net_rx_rate: rx_rate,
                 net_tx_rate: tx_rate,
             };

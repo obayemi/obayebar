@@ -1,9 +1,6 @@
-use std::sync::OnceLock;
-
-use crate::services::dbus_util;
+use crate::services::dbus_util::{self, RefreshSignal};
 use futures_util::stream::StreamExt;
 use futures_util::Stream;
-use tokio::sync::Notify;
 
 const UPOWER_BUS: &str = "org.freedesktop.UPower";
 const UPOWER_PATH: &str = "/org/freedesktop/UPower/devices/DisplayDevice";
@@ -12,11 +9,9 @@ const PPD_BUS: &str = "net.hadess.PowerProfiles";
 const PPD_PATH: &str = "/net/hadess/PowerProfiles";
 const PPD_IFACE: &str = "net.hadess.PowerProfiles";
 
-static REFRESH_NOTIFY: OnceLock<Notify> = OnceLock::new();
-
-fn refresh_notify() -> &'static Notify {
-    REFRESH_NOTIFY.get_or_init(Notify::new)
-}
+/// Set after a power-profile write so the loop reports the new profile without
+/// waiting out its poll interval.
+static REFRESH: RefreshSignal = RefreshSignal::new();
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PowerProfileInfo {
@@ -122,7 +117,7 @@ pub fn set_power_profile(profile: &str) {
             return;
         };
         if proxy.set_property("ActiveProfile", &profile).await.is_ok() {
-            refresh_notify().notify_one();
+            REFRESH.request();
         }
     });
 }
@@ -207,7 +202,7 @@ async fn run_battery_loop(
                     None => std::future::pending().await,
                 }
             } => {}
-            () = refresh_notify().notified() => {
+            () = REFRESH.requested() => {
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             }
             // Fallback refresh every 5 minutes in case signals are missed

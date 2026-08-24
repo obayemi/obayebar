@@ -17,7 +17,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crate::services::dbus_util::PanelSignal;
+use crate::services::dbus_util::{PanelSignal, RefreshSignal};
 use futures_util::Stream;
 use serde::Deserialize;
 
@@ -387,7 +387,7 @@ pub fn open_token_file() {
 /// Notify the polling loop to refresh on the next tick (e.g. after the user
 /// updated the token file).
 pub fn request_refresh() {
-    REFRESH.notify_waiters();
+    REFRESH.request();
 }
 
 /// Read the system clipboard via `wl-paste`/`xclip`. Used to fill the token
@@ -482,8 +482,9 @@ async fn write_token_file(token: &str) -> std::io::Result<()> {
     Ok(())
 }
 
-static REFRESH: std::sync::LazyLock<tokio::sync::Notify> =
-    std::sync::LazyLock::new(tokio::sync::Notify::new);
+/// Set by the token buttons so a save/forget/reload is reflected without
+/// waiting out the poll interval.
+static REFRESH: RefreshSignal = RefreshSignal::new();
 
 pub fn stream() -> impl Stream<Item = GitlabInfo> {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
@@ -592,7 +593,7 @@ async fn wait_next_tick() {
     tokio::select! {
         () = tokio::time::sleep(interval) => {}
         () = PANEL.changed() => {}
-        () = REFRESH.notified() => {}
+        () = REFRESH.requested() => {}
     }
 }
 

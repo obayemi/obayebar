@@ -8,6 +8,7 @@ use obayebar::style;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use bar::workspaces::SpringState;
 use iced::widget::canvas;
@@ -278,12 +279,16 @@ pub struct App {
     pub active_window: Option<WindowInfo>,
     pub time: chrono::DateTime<chrono::Local>,
     pub battery: BatteryInfo,
-    pub network: NetworkInfo,
+    /// Behind an `Arc` because `bar::view` clones it on every frame — and the
+    /// workspace spring drives 60 frames a second per monitor while animating,
+    /// with a scanned access-point list inside. The `lazy` widgets downstream
+    /// then usually decide nothing changed and drop it.
+    pub network: Arc<NetworkInfo>,
     pub connecting_ssid: Option<String>,
-    pub audio: AudioInfo,
-    pub bluetooth: BluetoothInfo,
-    pub sysinfo: SysInfo,
-    pub tray_items: Vec<TrayItemInfo>,
+    pub audio: Arc<AudioInfo>,
+    pub bluetooth: Arc<BluetoothInfo>,
+    pub sysinfo: Arc<SysInfo>,
+    pub tray_items: Arc<Vec<TrayItemInfo>>,
     pub popup_notifications: Vec<NotificationData>,
     pub hovered_notif_id: Option<u32>,
 }
@@ -384,12 +389,12 @@ impl App {
                 active_window: None,
                 time: chrono::Local::now(),
                 battery: BatteryInfo::default(),
-                network: NetworkInfo::default(),
+                network: Arc::new(NetworkInfo::default()),
                 connecting_ssid: None,
-                audio: AudioInfo::default(),
-                bluetooth: BluetoothInfo::default(),
-                sysinfo: SysInfo::default(),
-                tray_items: Vec::new(),
+                audio: Arc::new(AudioInfo::default()),
+                bluetooth: Arc::new(BluetoothInfo::default()),
+                sysinfo: Arc::new(SysInfo::default()),
+                tray_items: Arc::new(Vec::new()),
                 popup_notifications: Vec::new(),
                 hovered_notif_id: None,
             },
@@ -510,32 +515,32 @@ impl App {
                         self.connecting_ssid = None;
                     }
                 }
-                if self.network != info {
-                    self.network = info;
+                if *self.network != info {
+                    self.network = Arc::new(info);
                 }
                 Task::none()
             }
             Message::Audio(info) => {
-                if self.audio != info {
-                    self.audio = info;
+                if *self.audio != info {
+                    self.audio = Arc::new(info);
                 }
                 Task::none()
             }
             Message::Bluetooth(info) => {
-                if self.bluetooth != info {
-                    self.bluetooth = info;
+                if *self.bluetooth != info {
+                    self.bluetooth = Arc::new(info);
                 }
                 Task::none()
             }
             Message::SysInfo(info) => {
-                if self.sysinfo != info {
-                    self.sysinfo = info;
+                if *self.sysinfo != info {
+                    self.sysinfo = Arc::new(info);
                 }
                 Task::none()
             }
             Message::TrayItems(items) => {
-                if self.tray_items != items {
-                    self.tray_items = items;
+                if *self.tray_items != items {
+                    self.tray_items = Arc::new(items);
                 }
                 Task::none()
             }
@@ -665,9 +670,14 @@ impl App {
                 Task::none()
             }
             Message::NetworkSetWifiEnabled(enabled) => {
-                self.network.wifi_enabled = enabled;
-                if !enabled {
-                    self.network.icon_name = obayebar::style::ICON_WIFI_OFF;
+                {
+                    // Optimistic update: clone-on-write is fine here, this is
+                    // a user action rather than a per-frame path.
+                    let network = Arc::make_mut(&mut self.network);
+                    network.wifi_enabled = enabled;
+                    if !enabled {
+                        network.icon_name = obayebar::style::ICON_WIFI_OFF;
+                    }
                 }
                 services::network::set_wifi_enabled(enabled);
                 Task::none()
@@ -751,9 +761,11 @@ impl App {
                     log::warn!("audio: ignoring mute change, PipeWire is unavailable");
                     return Task::none();
                 }
-                self.audio.muted = muted;
-                self.audio.icon_name =
-                    crate::services::audio::volume_icon(self.audio.volume, muted);
+                {
+                    let audio = Arc::make_mut(&mut self.audio);
+                    audio.muted = muted;
+                    audio.icon_name = crate::services::audio::volume_icon(audio.volume, muted);
+                }
                 services::audio::send_command(AudioCommand::Mute(muted));
                 Task::none()
             }
@@ -1184,8 +1196,11 @@ impl App {
             return Task::none();
         }
         let volume = volume.clamp(0.0, 1.0);
-        self.audio.volume = volume;
-        self.audio.icon_name = services::audio::volume_icon(volume, self.audio.muted);
+        {
+            let audio = Arc::make_mut(&mut self.audio);
+            audio.volume = volume;
+            audio.icon_name = services::audio::volume_icon(volume, audio.muted);
+        }
         services::audio::send_command(AudioCommand::Volume(volume));
         Task::none()
     }
@@ -1215,7 +1230,11 @@ impl App {
         let height = match kind {
             PanelKind::Audio => style::audio_panel_height(self.audio.sinks.len()),
             PanelKind::Network => {
-                let ap_count = self.network.access_points.len().clamp(1, 8);
+                let ap_count = self
+                    .network
+                    .access_points
+                    .len()
+                    .clamp(1, style::PANEL_MAX_VISIBLE_ROWS);
                 let conn_groups = connection_type_groups(&self.network.active_connections);
                 style::network_panel_height(ap_count, &conn_groups, self.network.wifi_enabled)
             }
@@ -1229,14 +1248,14 @@ impl App {
                     .iter()
                     .filter(|d| d.paired)
                     .count()
-                    .clamp(1, 8);
+                    .clamp(1, style::PANEL_MAX_VISIBLE_ROWS);
                 let nearby = self
                     .bluetooth
                     .devices
                     .iter()
                     .filter(|d| !d.paired)
                     .count()
-                    .min(8);
+                    .min(style::PANEL_MAX_VISIBLE_ROWS);
                 style::bluetooth_panel_height(
                     paired,
                     nearby,

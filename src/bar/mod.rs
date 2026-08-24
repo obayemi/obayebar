@@ -12,6 +12,8 @@ mod tray;
 mod widgets;
 pub mod workspaces;
 
+use std::sync::Arc;
+
 use crate::App;
 use crate::Message;
 use chrono::{Datelike, Timelike};
@@ -77,17 +79,20 @@ pub fn view<'a>(app: &'a App, monitor: Option<&'a str>) -> Element<'a, Message> 
     let active_title: Option<String> = app.active_window.as_ref().map(|w| w.title.clone());
     let has_font = app.vector_font.is_some();
 
-    let tray_items = app.tray_items.clone();
+    // `Arc::clone` rather than a deep copy: this runs once per frame per bar
+    // window, and the spring animation drives 60 of those a second while a
+    // workspace indicator is moving.
+    let tray_items = Arc::clone(&app.tray_items);
 
     let time = app.time;
     let clock_key = (time.hour(), time.minute(), time.day());
 
     let status_key = status_cache_key(app, monitor);
     let battery = app.battery.clone();
-    let network = app.network.clone();
-    let audio = app.audio.clone();
-    let bluetooth = app.bluetooth.clone();
-    let sysinfo = app.sysinfo.clone();
+    let network = Arc::clone(&app.network);
+    let audio = Arc::clone(&app.audio);
+    let bluetooth = Arc::clone(&app.bluetooth);
+    let sysinfo = Arc::clone(&app.sysinfo);
     let monitor_owned = monitor.map(String::from);
 
     let active_font = app.vector_font.clone();

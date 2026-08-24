@@ -47,6 +47,50 @@ impl PanelSignal {
     }
 }
 
+/// One-shot "refresh now" signal from the UI to a polling service loop.
+///
+/// Unlike [`PanelSignal`], which is level-triggered (a waiter that misses the
+/// wake-up still sees the new value via `is_open`), a refresh is purely an
+/// edge — so a lost edge is a lost refresh. `notify_one` stores a permit, which
+/// is what makes that safe: a request issued while the loop is *inside* its
+/// body (a Secret Service round trip plus an HTTP fetch with a 15s timeout, in
+/// the GitLab case) is still delivered when the loop comes back to wait.
+///
+/// `notify_waiters()` stores nothing, so an edge arriving while no waiter was
+/// registered was simply dropped, with nothing logged.
+#[derive(Debug)]
+pub struct RefreshSignal {
+    notify: OnceLock<Notify>,
+}
+
+impl RefreshSignal {
+    pub const fn new() -> Self {
+        Self {
+            notify: OnceLock::new(),
+        }
+    }
+
+    fn notify_cell(&self) -> &Notify {
+        self.notify.get_or_init(Notify::new)
+    }
+
+    /// Ask the service loop to refresh at its next opportunity.
+    pub fn request(&self) {
+        self.notify_cell().notify_one();
+    }
+
+    /// Wait for a refresh request. Returns immediately if one is pending.
+    pub async fn requested(&self) {
+        self.notify_cell().notified().await;
+    }
+}
+
+impl Default for RefreshSignal {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Build a `zbus::Proxy` from the four required pieces (connection, bus name,
 /// object path, interface). Returns `None` on any construction error.
 pub async fn proxy<'a>(
