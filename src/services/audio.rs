@@ -33,6 +33,11 @@ pub struct AudioInfo {
     pub icon_name: &'static str,
     pub sinks: Vec<SinkInfo>,
     pub default_sink_name: Option<String>,
+    /// Whether a live `PipeWire` connection is backing these values. False
+    /// means the reading is not live, so the UI must not present it as the
+    /// current volume — the previous code left a stale reading on screen while
+    /// every slider drag was silently dropped.
+    pub available: bool,
 }
 
 impl Default for AudioInfo {
@@ -43,6 +48,7 @@ impl Default for AudioInfo {
             icon_name: obayebar::style::ICON_VOLUME_OFF,
             sinks: Vec::new(),
             default_sink_name: None,
+            available: false,
         }
     }
 }
@@ -187,6 +193,8 @@ impl PwState {
             icon_name: volume_icon(volume, muted),
             sinks: self.sinks.clone(),
             default_sink_name: self.default_sink_name.clone(),
+            // Reached only from a live registry callback.
+            available: true,
         }
     }
 
@@ -375,31 +383,67 @@ fn process_command(cmd: &AudioCommand, proxies: &PwProxies, state: &PwState) {
     }
 }
 
-#[allow(clippy::too_many_lines, clippy::needless_pass_by_value)]
+/// Delay between `PipeWire` connection attempts.
+const PW_RECONNECT_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Own the `PipeWire` monitor thread: connect, run until the connection dies,
+/// publish an unavailable state, wait, and try again.
+///
+/// Every failure used to `return`, ending the thread and dropping `tx`; iced
+/// never restarts a finished subscription recipe, so the volume widget stayed
+/// at `AudioInfo::default()` (0%, muted icon) for the rest of the session after
+/// a single early failure — the common case being the bar starting from
+/// `exec-once` before the pipewire user unit is up. The steady state was no
+/// better: a core error called `main_loop.quit()` and the old trailing
+/// `loop { main_loop.run(); sleep(100ms) }` re-entered with a dead core and a
+/// `PwState` that was never reset, so stale sinks kept rendering and commands
+/// were written to dead node proxies.
+#[allow(clippy::needless_pass_by_value)]
 fn run_pipewire_monitor(
     tx: tokio::sync::mpsc::UnboundedSender<AudioInfo>,
     cmd_rx: std::sync::mpsc::Receiver<AudioCommand>,
 ) {
     pw::init();
 
-    let Ok(main_loop) = pw::main_loop::MainLoopRc::new(None) else {
-        log::error!("Failed to create PipeWire main loop");
-        return;
-    };
-    let Ok(context) = pw::context::ContextRc::new(&main_loop, None) else {
-        log::error!("Failed to create PipeWire context");
-        return;
-    };
-    let Ok(core) = context.connect_rc(None) else {
-        log::error!("Failed to connect to PipeWire");
-        return;
-    };
+    // The receiver has to outlive every attempt: `add_timer` wants an
+    // `Fn(u64) + 'static` closure so it cannot borrow a per-attempt local, and
+    // re-creating the channel would strand the `CMD_TX` `OnceLock` that
+    // `send_command` publishes through. One long-lived channel, shared by `Rc`
+    // into each attempt's timer.
+    let cmd_rx = Rc::new(cmd_rx);
 
-    let Ok(registry) = core.get_registry_rc() else {
-        log::error!("Failed to get PipeWire registry");
-        return;
-    };
+    while !tx.is_closed() {
+        match try_run_pipewire(&tx, &cmd_rx) {
+            Ok(()) => log::warn!("audio: PipeWire connection ended, reconnecting"),
+            Err(reason) => log::warn!("audio: PipeWire unavailable ({reason}), retrying"),
+        }
+        if tx.is_closed() {
+            return;
+        }
+        // Tell the UI its reading is no longer live rather than leaving a
+        // stale volume that every drag silently fails to change.
+        let _ = tx.send(AudioInfo::default());
+        std::thread::sleep(PW_RECONNECT_DELAY);
+    }
+}
+
+/// One `PipeWire` connection attempt, with fresh state and proxies.
+///
+/// Returns `Ok` when the main loop exited (the connection died and we should
+/// reconnect) and `Err` with a reason when setup never got that far.
+#[allow(clippy::too_many_lines)]
+fn try_run_pipewire(
+    tx: &tokio::sync::mpsc::UnboundedSender<AudioInfo>,
+    cmd_rx: &Rc<std::sync::mpsc::Receiver<AudioCommand>>,
+) -> Result<(), &'static str> {
+    let main_loop = pw::main_loop::MainLoopRc::new(None).map_err(|_| "cannot create main loop")?;
+    let context =
+        pw::context::ContextRc::new(&main_loop, None).map_err(|_| "cannot create context")?;
+    let core = context.connect_rc(None).map_err(|_| "cannot connect")?;
+    let registry = core.get_registry_rc().map_err(|_| "cannot get registry")?;
     let registry_weak = registry.downgrade();
+    let tx = tx.clone();
+    let cmd_rx = Rc::clone(cmd_rx);
 
     let proxies = Rc::new(RefCell::new(PwProxies::new()));
     let state = Rc::new(RefCell::new(PwState::new()));
@@ -509,10 +553,11 @@ fn run_pipewire_monitor(
         })
         .register();
 
-    loop {
-        main_loop.run();
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
+    // Runs until the core-error listener calls `quit()`. Everything above is
+    // then dropped, so the next attempt starts from clean state instead of
+    // re-entering with a dead core.
+    main_loop.run();
+    Ok(())
 }
 
 static CMD_TX: std::sync::OnceLock<std::sync::mpsc::Sender<AudioCommand>> =

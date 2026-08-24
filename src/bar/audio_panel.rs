@@ -29,6 +29,15 @@ fn sink_entry(description: &str, sink_id: u32, is_selected: bool) -> Element<'_,
 }
 
 fn volume_section(audio: &AudioInfo) -> Element<'_, Message> {
+    if !audio.available {
+        // No live PipeWire connection: showing a slider here would accept
+        // drags that go nowhere and display a volume that is not the real one.
+        return text("PipeWire unavailable")
+            .size(style::FONT_SIZE_SMALLER)
+            .color(style::M3_ON_SURFACE_VARIANT)
+            .into();
+    }
+
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let volume_pct = (audio.volume * 100.0).round() as u32;
     let volume_text: Element<'_, Message> = if audio.muted {

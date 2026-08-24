@@ -623,6 +623,10 @@ impl App {
                 self.set_volume(self.audio.volume + delta)
             }
             Message::AudioSetMute(muted) => {
+                if !self.audio.available {
+                    log::warn!("audio: ignoring mute change, PipeWire is unavailable");
+                    return Task::none();
+                }
                 self.audio.muted = muted;
                 self.audio.icon_name =
                     crate::services::audio::volume_icon(self.audio.volume, muted);
@@ -925,6 +929,13 @@ impl App {
     /// update keeps the slider and icon responsive; the service's next
     /// `AudioInfo` corrects it if the write did not land.
     fn set_volume(&mut self, volume: f32) -> Task<Message> {
+        if !self.audio.available {
+            // Optimistically moving the slider with no live PipeWire behind it
+            // is exactly the lie this flag exists to prevent: the command is
+            // dropped and no correcting `AudioInfo` ever arrives.
+            log::warn!("audio: ignoring volume change, PipeWire is unavailable");
+            return Task::none();
+        }
         let volume = volume.clamp(0.0, 1.0);
         self.audio.volume = volume;
         self.audio.icon_name = services::audio::volume_icon(volume, self.audio.muted);
