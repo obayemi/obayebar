@@ -165,7 +165,7 @@ mod tests {
             &file,
             &CliOverrides {
                 gitlab_enable: Some(true),
-                gitlab_url: None,
+                ..CliOverrides::default()
             },
         );
         assert!(r.gitlab_enable());
@@ -177,8 +177,8 @@ mod tests {
         let r = Resolved::from_parts(
             &file,
             &CliOverrides {
-                gitlab_enable: None,
                 gitlab_url: Some("https://from-cli".to_string()),
+                ..CliOverrides::default()
             },
         );
         assert_eq!(r.gitlab_host(), "https://from-cli");
