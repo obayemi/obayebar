@@ -74,10 +74,12 @@ choices that follow from that:
   subscription (`services::timers::clock_stream`) that wakes exactly on the
   next minute boundary and on the next pending notification expiry — never on
   a fixed interval.
-- **Notification popup is auto-sized.** The popup window resizes to fit the
-  current notifications and capped at 2/5 of the focused monitor's logical
-  height; anything that doesn't fit is collapsed into a single
-  "*N more notifications*" entry rather than rendering offscreen widgets.
+- **Notification popup is auto-sized.** The popup is pinned to a known output
+  and resizes to fit the current notifications, capped at 2/5 of *that*
+  monitor's logical height; anything that doesn't fit is collapsed into a
+  single "*N more notifications*" entry rather than rendering offscreen
+  widgets. It follows the focused monitor by being recreated there, since a
+  layer surface can be resized but not moved.
 - **Launcher cache.** `obayebar-launcher` persists desktop-entry parsing and
   resolved icon paths to `XDG_CACHE_HOME` and launch frequencies to
   `XDG_DATA_HOME`, so cold start is almost instant after the first run. A cache
@@ -96,14 +98,31 @@ choices that follow from that:
 - **Secrets stored in the kernel keyring.** GitLab tokens go through Secret
   Service when available, falling back to a file in `XDG_CONFIG_HOME`. The
   token never ends up in the Nix store even via the home-manager module.
-- **Defensive multi-monitor handling.** When the compositor tears down a
-  layer surface (output disappears across screen sleep, monitor disconnect,
-  etc.), `iced::window::close_events()` is observed and the bar is
-  re-spawned pinned to the original output, so all monitors get their bar
-  back on wake instead of piling onto one screen.
+- **Verified multi-monitor placement.** Bar placement is *observed*, not
+  assumed. Each bar is spawned under its own layer-shell namespace
+  (`obayebar-bar-N`) and then checked against Hyprland's `j/layers`: if a bar
+  landed on a monitor other than the one requested, vanished without a close
+  event, or ended up sharing a screen with another bar, it is closed and
+  respawned until the compositor agrees. Spawns are serialised one at a time so
+  a batch cannot resolve against a stale output-name cache and pile onto one
+  screen. A failed IPC query is treated as "unknown" and changes nothing —
+  never as "no monitors are connected".
 
 The last bullet describes a behaviour you specifically should not have to
 think about — it just works.
+
+> **Upgrading:** every layer surface now carries its own namespace instead of
+> the shared `obayebar`. A Hyprland rule matching the old exact name needs to
+> become a prefix match:
+>
+> ```
+> layerrule = blur, ^obayebar
+> ```
+>
+> The namespaces are `obayebar-bar-N` (one per bar), `obayebar-panel-<kind>`
+> (audio, network, bluetooth, battery, sysinfo, gitlab) and
+> `obayebar-notifications`, so rules can also target one kind of surface
+> without catching the others.
 
 ## Libraries
 

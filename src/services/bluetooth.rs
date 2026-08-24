@@ -234,7 +234,7 @@ async fn enumerate_devices(
         }
 
         let battery = ifaces
-            .get("org.bluez.Battery1")
+            .get(BATTERY1)
             .and_then(|bat_props| bat_props.get("Percentage"))
             .and_then(|v| <u8 as TryFrom<_>>::try_from(v.clone()).ok());
 

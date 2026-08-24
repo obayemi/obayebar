@@ -6,7 +6,6 @@ mod services;
 
 use obayebar::style;
 
-use std::cell::Cell;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -17,7 +16,7 @@ use iced::{Element, Subscription, Task, Theme};
 use iced_layershell::reexport::{
     Anchor, KeyboardInteractivity, Layer, NewLayerShellSettings, OutputOption,
 };
-use iced_layershell::settings::{LayerShellSettings, Settings};
+use iced_layershell::settings::{LayerShellSettings, Settings, StartMode};
 use iced_layershell::to_layer_message;
 use panel::PanelKind;
 use services::audio::{AudioCommand, AudioInfo};
@@ -62,6 +61,32 @@ impl log::Log for FatalErrorLogger {
         self.inner.flush();
     }
 }
+
+/// Prefix for every bar's layer-shell namespace, followed by its generation.
+///
+/// User-visible: a Hyprland `layerrule` that matched the exact namespace
+/// `obayebar` must now match a prefix, e.g. `layerrule = blur, ^obayebar`.
+const BAR_NAMESPACE_PREFIX: &str = "obayebar-bar-";
+
+/// Namespace for the notification popup surface, so `j/layers` can tell it
+/// apart from a bar. Every surface previously shared the app-wide `obayebar`
+/// namespace, which also meant a `layerrule` could not target one and not the
+/// others.
+const POPUP_NAMESPACE: &str = "obayebar-notifications";
+
+/// Base delay before checking whether a bar landed where we asked. Long enough
+/// for the compositor to map a surface we just requested.
+const VERIFY_DELAY: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// Ceiling for the verification backoff, so a compositor that persistently
+/// refuses to place a surface is retried slowly rather than in a hot loop.
+const MAX_VERIFY_BACKOFF: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// How many verification passes a freshly spawned bar gets to show up in
+/// `j/layers` before we give up on it and spawn a replacement. At
+/// `VERIFY_DELAY` per pass this is roughly a second of grace, which covers
+/// normal mapping latency without stranding a monitor for long.
+const VERIFY_GRACE_PASSES: u32 = 4;
 
 /// How long a Wi-Fi connection attempt may show its spinner before we give up
 /// on it. `NetworkManager` authenticates asynchronously, so a bad passphrase or
@@ -154,8 +179,20 @@ fn main() {
 
     let icon_fonts = style::load_icon_font();
 
-    // The initial window is created by settings on the default output.
-    // Additional monitors get windows via NewLayerShell in setup_bars().
+    // Background start mode: the app creates *every* bar surface itself, via
+    // NewLayerShell in `reconcile_bars`.
+    //
+    // The alternative — letting `Settings` create an initial window — is what
+    // made the reported duplicate/missing bars unfixable. That surface is
+    // built with `becreated == false`, so layershellev's `remove_shell`
+    // refuses to close it, and without a binding its `Closed` delivery is
+    // unreliable; it also lands on whichever output the compositor picks, with
+    // no way to find out which. So it could neither be placed, verified, nor
+    // closed — only guessed at. Owning every surface removes that whole class.
+    //
+    // Background mode also stops layershellev calling `signal.stop()` when the
+    // last unit dies, which previously turned a transient "no monitors" state
+    // into process death.
     let result = iced_layershell::daemon(App::new, App::namespace, App::update, App::view)
         .settings(Settings {
             layer_settings: LayerShellSettings {
@@ -164,6 +201,7 @@ fn main() {
                 exclusive_zone: i32::try_from(style::BAR_WIDTH).unwrap_or(54),
                 size: Some((style::BAR_WIDTH, 0)),
                 keyboard_interactivity: KeyboardInteractivity::None,
+                start_mode: StartMode::Background,
                 ..LayerShellSettings::default()
             },
             fonts: icon_fonts,
@@ -183,19 +221,20 @@ fn main() {
 #[derive(Debug)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct App {
-    /// Map of bar window ID -> monitor name (for extra monitors only).
-    /// This — together with `initial_monitor` — is the canonical record of
-    /// which monitors have a bar. Any other view must derive from these two.
-    extra_bar_windows: HashMap<window::Id, String>,
-    /// The monitor that the initial (settings-created) window is on
-    initial_monitor: Option<String>,
-    /// Window id of the settings-created initial bar. We don't generate this
-    /// id ourselves, so we capture it lazily on the first `view()` call for
-    /// an unknown bar surface — only an exact match should be treated as the
-    /// initial bar in close-event handling. Without this, popup/panel close
-    /// events (which clear their tracking before the close fires) get
-    /// misclassified as the initial bar and trigger spurious bar respawns.
-    initial_bar_id: Cell<Option<window::Id>>,
+    /// Every bar surface we have asked the compositor for, keyed by window id.
+    ///
+    /// This is bookkeeping, not truth: a record says which monitor we *asked*
+    /// for, and `BarRecord::verified` says whether the compositor was ever
+    /// observed agreeing. `reconcile_bars` is the only thing allowed to mutate
+    /// it, and it does so from a `j/layers` observation.
+    bars: HashMap<window::Id, BarRecord>,
+    /// Monotonic counter making each bar's layer-shell namespace unique, so a
+    /// `j/layers` observation can be matched back to one specific surface.
+    bar_generation: u64,
+    /// Delay before the next verification pass. Grows when a spawn fails to
+    /// appear so a compositor that refuses us is not hammered; reset whenever
+    /// the monitor set changes or a bar verifies.
+    verify_backoff: std::time::Duration,
     /// Per-monitor workspace indicator spring animation
     ws_spring: HashMap<String, SpringState>,
     /// Per-monitor workspace canvas cache (cleared on data change)
@@ -206,6 +245,10 @@ pub struct App {
     pub vector_font: Option<ab_glyph::FontArc>,
 
     notif_popup_id: Option<window::Id>,
+    /// The monitor the popup surface was created on. Needed because its size
+    /// cap depends on that monitor and because moving it requires recreating
+    /// the surface rather than resizing it.
+    notif_popup_monitor: Option<String>,
     /// One entry per `PanelKind`. Lazily populated on first open via
     /// `Panel::default`; the only invariant is that at most one panel is open
     /// at a time (enforced by `close_all_panels` before each `open`).
@@ -276,6 +319,9 @@ pub enum Message {
     BluetoothSetDiscovery(bool),
     BluetoothForgetDevice(String),
     NetworkSetWifiEnabled(bool),
+    /// A `j/layers` observation, or `None` if the query failed. Drives the
+    /// whole bar reconcile loop.
+    LayersObserved(Option<services::hyprland::LayerMap>),
     NetworkConnect(String),
     /// Outcome of the `NetworkManager` connect request itself.
     NetworkConnectDone(Result<(), String>),
@@ -300,14 +346,15 @@ impl App {
     fn new() -> (Self, Task<Message>) {
         (
             Self {
-                extra_bar_windows: HashMap::new(),
-                initial_monitor: None,
-                initial_bar_id: Cell::new(None),
+                bars: HashMap::new(),
+                bar_generation: 0,
+                verify_backoff: VERIFY_DELAY,
                 ws_spring: HashMap::new(),
                 ws_cache: HashMap::new(),
                 ws_cache_fallback: canvas::Cache::default(),
                 vector_font: style::load_vector_font(),
                 notif_popup_id: None,
+                notif_popup_monitor: None,
                 panels: HashMap::new(),
                 gitlab_enabled: config::resolved().gitlab_enable(),
                 gitlab: GitlabInfo::default(),
@@ -338,19 +385,13 @@ impl App {
 
     /// Get the monitor name for a bar window ID. Returns `None` if `id` is
     /// not a tracked bar surface.
+    ///
+    /// An exact lookup, with no fallback. The old version returned
+    /// `initial_monitor` for *any* unknown id while `initial_bar_id` was
+    /// unset, which meant a panel or popup surface could be rendered as a bar
+    /// for the wrong monitor.
     fn monitor_for_bar(&self, id: window::Id) -> Option<&str> {
-        if let Some(monitor) = self.extra_bar_windows.get(&id) {
-            return Some(monitor);
-        }
-        if self.initial_bar_id.get() == Some(id) {
-            return self.initial_monitor.as_deref();
-        }
-        // First-render fallback: `view()` captures the initial bar's id on
-        // its first call; until then, an unknown id can only be that bar.
-        if self.initial_bar_id.get().is_none() {
-            return self.initial_monitor.as_deref();
-        }
-        None
+        self.bars.get(&id).map(|record| record.monitor.as_str())
     }
 
     /// Get the active workspace ID for a `monitor`
@@ -647,17 +688,32 @@ impl App {
                 });
                 Task::none()
             }
+            Message::LayersObserved(observed) => self.reconcile_bars(observed.as_ref()),
             Message::WindowClosed(id) => self.handle_window_closed(id),
             _ => Task::none(),
         }
     }
 
-    /// Apply a full Hyprland state update. Creates bar windows for new monitors.
+    /// Apply a full Hyprland state update, then kick off bar verification.
     fn apply_hypr_state(&mut self, state: HyprState) -> Task<Message> {
+        // Snapshot the monitor *set* before overwriting it. Panels and the
+        // notification popup are pinned to a specific output, so a topology
+        // change has to invalidate them; comparing key sets (not `keys()`,
+        // whose HashMap order is nondeterministic) is what detects that.
+        let previous_monitors: std::collections::HashSet<String> =
+            self.monitor_geoms.keys().cloned().collect();
+
         self.workspaces = state.workspaces;
         self.active_window = state.active_window;
         self.monitor_geoms = state.monitor_geoms;
         self.focused_monitor = Some(state.focused_monitor.clone());
+
+        let monitors_changed = previous_monitors
+            != self
+                .monitor_geoms
+                .keys()
+                .cloned()
+                .collect::<std::collections::HashSet<String>>();
 
         // Invalidate all workspace caches since data changed
         for cache in self.ws_cache.values() {
@@ -692,14 +748,26 @@ impl App {
 
         self.active_workspaces = state.active_workspaces;
 
-        // The initial settings window lands on the focused monitor.
-        // Assign it on first state update so reconciliation can match the
-        // bar against an expected monitor instead of treating it as missing.
-        if self.initial_monitor.is_none() && self.extra_bar_windows.is_empty() {
-            self.initial_monitor = Some(state.focused_monitor);
+        let mut tasks = Vec::new();
+
+        if monitors_changed {
+            // A fresh topology is the one moment worth retrying eagerly, so
+            // drop any accumulated backoff.
+            self.verify_backoff = VERIFY_DELAY;
+            // Panels and the popup are pinned to an output that may have just
+            // gone away. Close rather than try to correlate: `Panel` does not
+            // record its monitor, and the pointer is not necessarily anywhere
+            // near a panel we would otherwise leave stranded as a
+            // click-swallowing overlay on a dead screen.
+            //
+            // Deliberately keyed on the monitor *set*, not `focused_monitor`:
+            // focus-follows-mouse churns that on ordinary pointer movement and
+            // would yank panels out from under the user mid-interaction.
+            tasks.push(self.close_all_panels());
+            tasks.push(self.invalidate_popup());
         }
 
-        let mut tasks = vec![self.reconcile_bars()];
+        tasks.push(self.verify_bars_soon());
 
         // Re-fit notification popup: focused monitor or its geometry may have
         // changed, which affects the 2/5-of-screen cap.
@@ -710,12 +778,51 @@ impl App {
         Task::batch(tasks)
     }
 
-    /// Spawn a layer-shell bar pinned to `monitor` and register it in
-    /// `extra_bar_windows`. Internal primitive — call sites must go through
-    /// `reconcile_bars` so the per-monitor invariants stay enforced.
+    /// Ask the compositor where our bars actually are, after `verify_backoff`.
+    ///
+    /// The delay exists because a surface is not mapped the instant
+    /// `NewLayerShell` is queued; verifying immediately would see nothing and
+    /// conclude the spawn failed.
+    fn verify_bars_soon(&self) -> Task<Message> {
+        let delay = self.verify_backoff;
+        Task::perform(
+            async move {
+                tokio::time::sleep(delay).await;
+                services::hyprland::fetch_layer_namespaces().await
+            },
+            Message::LayersObserved,
+        )
+    }
+
+    /// Spawn one layer-shell bar aimed at `monitor`, under a unique namespace.
+    ///
+    /// The namespace is the whole point: `OutputOption::OutputName` is a
+    /// request, not a guarantee — on a name-cache miss layershellev creates the
+    /// surface with no output and the compositor puts it on the focused
+    /// monitor, reporting nothing back. A per-surface namespace is what lets
+    /// the next `j/layers` observation say which monitor this specific surface
+    /// landed on. All bars previously shared the app-wide `obayebar`
+    /// namespace, which made them indistinguishable and verification
+    /// impossible.
+    ///
+    /// Private on purpose: `reconcile_bars` is the only legitimate caller.
     fn spawn_bar_for(&mut self, monitor: String) -> Task<Message> {
+        self.bar_generation = self.bar_generation.wrapping_add(1);
+        let namespace = format!("{BAR_NAMESPACE_PREFIX}{}", self.bar_generation);
         let id = window::Id::unique();
-        self.extra_bar_windows.insert(id, monitor.clone());
+        log::info!(
+            "bars: spawning {namespace} for {monitor} (generation {})",
+            self.bar_generation
+        );
+        self.bars.insert(
+            id,
+            BarRecord {
+                monitor: monitor.clone(),
+                namespace: namespace.clone(),
+                verified: false,
+                attempts: 0,
+            },
+        );
         Task::done(Message::NewLayerShell {
             settings: NewLayerShellSettings {
                 anchor: Anchor::Left | Anchor::Top | Anchor::Bottom,
@@ -724,6 +831,7 @@ impl App {
                 size: Some((style::BAR_WIDTH, 0)),
                 output_option: OutputOption::OutputName(monitor),
                 keyboard_interactivity: KeyboardInteractivity::None,
+                namespace: Some(namespace),
                 ..NewLayerShellSettings::default()
             },
             id,
@@ -737,86 +845,157 @@ impl App {
         self.ws_cache.remove(monitor);
     }
 
-    /// Enforce the bar-distribution invariants over the set of currently
-    /// connected monitors (those with known geometry):
+    /// Reconcile bars against what the compositor says is on screen.
     ///
-    /// 1. Every connected monitor has a bar pinned to it.
+    /// `observed` is the `j/layers` answer, or `None` if the query failed.
+    /// Enforces three invariants over the connected monitors:
+    ///
+    /// 1. Every connected monitor has a bar on it.
     /// 2. No bar is left over for a disconnected monitor.
-    /// 3. No two bars share the same monitor.
+    /// 3. No two bars share a monitor.
     ///
-    /// This is the single source of truth for redistribution. Every code
-    /// path that touches monitor presence or bar window lifetimes must
-    /// finish by calling this so the model stays coherent regardless of how
-    /// it got there. The function is idempotent — calling it twice in a
-    /// row is a no-op.
-    fn reconcile_bars(&mut self) -> Task<Message> {
+    /// The previous version checked these against its own tracking map, which
+    /// is exactly the thing that goes wrong — so it reported success in every
+    /// broken state. Everything here is driven by `observed` instead.
+    fn reconcile_bars(&mut self, observed: Option<&services::hyprland::LayerMap>) -> Task<Message> {
         let expected: std::collections::HashSet<String> =
             self.monitor_geoms.keys().cloned().collect();
-        let plan = plan_bar_reconcile(
-            &expected,
-            self.initial_monitor.as_deref(),
-            &self.extra_bar_windows,
-        );
+        let plan = plan_from_observation(observed, &expected, &self.bars);
 
         let mut tasks = Vec::new();
 
-        if plan.drop_initial {
-            self.initial_monitor = None;
-            self.initial_bar_id.set(None);
+        for id in &plan.verified {
+            if let Some(record) = self.bars.get_mut(id) {
+                if !record.verified {
+                    log::info!("bars: {} confirmed on {}", record.namespace, record.monitor);
+                }
+                record.verified = true;
+                record.attempts = 0;
+                // Something is working; stop backing off.
+                self.verify_backoff = VERIFY_DELAY;
+            }
         }
-        for id in &plan.close_extras {
-            self.extra_bar_windows.remove(id);
+        for id in &plan.pending {
+            if let Some(record) = self.bars.get_mut(id) {
+                record.attempts = record.attempts.saturating_add(1);
+            }
+        }
+        for (id, reason) in &plan.close {
+            if let Some(record) = self.bars.remove(id) {
+                log::warn!(
+                    "bars: closing {} ({reason}); wanted {}",
+                    record.namespace,
+                    record.monitor
+                );
+            }
             tasks.push(close_window(*id));
+        }
+        for (id, reason) in &plan.forget {
+            if let Some(record) = self.bars.remove(id) {
+                log::warn!("bars: forgetting {} ({reason})", record.namespace);
+            }
+            // Deliberately no `close_window`: the surface is already gone, and
+            // a close for an unknown id is dropped by iced_layershell anyway.
+            self.grow_verify_backoff();
         }
         for monitor in &plan.drop_state_for {
             self.drop_bar_state(monitor);
         }
-        for monitor in plan.spawn_monitors {
+        if let Some(monitor) = plan.spawn {
+            // One spawn per pass, on purpose. Batching several put them all
+            // into one `Task::batch`, which layershellev drains inside
+            // `process_window_state` — a context that cannot dispatch the
+            // wayland queue at all, so every spawn resolved its output name
+            // against the same frozen cache. When that cache was cold they all
+            // missed together and stacked on the focused monitor. Spawning one
+            // at a time and verifying in between makes that impossible.
             tasks.push(self.spawn_bar_for(monitor));
         }
 
-        #[cfg(debug_assertions)]
-        debug_assert!(self.bar_invariants_hold());
+        self.log_bar_invariants(observed, &expected);
+
+        // Keep verifying while anything is unconfirmed or uncovered. Once every
+        // monitor has a verified bar this stops scheduling, so a settled
+        // multi-monitor setup costs nothing.
+        if self.bars_need_verification(&expected) {
+            tasks.push(self.verify_bars_soon());
+        }
 
         Task::batch(tasks)
     }
 
-    /// Debug-only check that the three bar-distribution invariants hold.
-    /// Used after `reconcile_bars` to catch reconciler bugs at the source.
-    #[cfg(debug_assertions)]
-    #[allow(clippy::arithmetic_side_effects)]
-    fn bar_invariants_hold(&self) -> bool {
-        use std::collections::HashMap;
-        let mut counts: HashMap<&str, u32> = HashMap::new();
-        if let Some(m) = &self.initial_monitor {
-            *counts.entry(m).or_insert(0) += 1;
-        }
-        for m in self.extra_bar_windows.values() {
-            *counts.entry(m).or_insert(0) += 1;
-        }
-        for (monitor, count) in &counts {
-            if !self.monitor_geoms.contains_key(*monitor) {
-                log::error!("bar invariant: stale bar tracked for {monitor}");
-                return false;
-            }
-            if *count > 1 {
-                log::error!("bar invariant: {count} bars on monitor {monitor}");
-                return false;
-            }
-        }
-        for monitor in self.monitor_geoms.keys() {
-            if !counts.contains_key(monitor.as_str()) {
-                log::error!("bar invariant: monitor {monitor} has no bar");
-                return false;
-            }
-        }
-        true
+    /// Whether another verification pass is warranted.
+    fn bars_need_verification(&self, expected: &std::collections::HashSet<String>) -> bool {
+        let covered: std::collections::HashSet<&str> = self
+            .bars
+            .values()
+            .filter(|r| r.verified)
+            .map(|r| r.monitor.as_str())
+            .collect();
+        self.bars.values().any(|r| !r.verified)
+            || expected.iter().any(|m| !covered.contains(m.as_str()))
     }
 
-    /// Handle a window closed by the compositor. Layer surfaces are torn
-    /// down when their `wl_output` disappears (monitor disconnect, screen
-    /// sleep, etc.); without this, our tracking would drift and bars get
-    /// stranded on a single output when others come back.
+    /// Back off after a spawn failed to appear, so a compositor that will not
+    /// place our surface is retried at a decreasing rate rather than hammered.
+    fn grow_verify_backoff(&mut self) {
+        self.verify_backoff = self
+            .verify_backoff
+            .saturating_mul(2)
+            .min(MAX_VERIFY_BACKOFF);
+    }
+
+    /// Report invariant violations against the *observation*, always — not
+    /// against our own tracking, and not only in debug builds. The previous
+    /// check was self-referential and `#[cfg(debug_assertions)]`, so a release
+    /// build said nothing while bars were visibly stacked on one screen.
+    fn log_bar_invariants(
+        &self,
+        observed: Option<&services::hyprland::LayerMap>,
+        expected: &std::collections::HashSet<String>,
+    ) {
+        let Some(observed) = observed else {
+            return;
+        };
+        let ours: std::collections::HashSet<&str> =
+            self.bars.values().map(|r| r.namespace.as_str()).collect();
+        let mut per_monitor: HashMap<&str, usize> = HashMap::new();
+        for (monitor, namespaces) in observed {
+            let count = namespaces
+                .iter()
+                .filter(|ns| ours.contains(ns.as_str()))
+                .count();
+            if count > 0 {
+                per_monitor.insert(monitor.as_str(), count);
+            }
+        }
+        for (monitor, count) in &per_monitor {
+            if *count > 1 {
+                log::error!("bar invariant: {count} bars observed on monitor {monitor}");
+            }
+            if !expected.contains(*monitor) {
+                log::error!("bar invariant: bar observed on unexpected monitor {monitor}");
+            }
+        }
+        for monitor in expected {
+            if !per_monitor.contains_key(monitor.as_str()) {
+                // Normal while a spawn is still in flight; only a settled
+                // state with no bar is a real violation, which the repeated
+                // verification passes will surface as a persistent message.
+                log::debug!("bars: monitor {monitor} has no bar yet");
+            }
+        }
+    }
+
+    /// Handle a window closed by the compositor. Layer surfaces are torn down
+    /// when their `wl_output` disappears (monitor disconnect, DPMS, …).
+    ///
+    /// This is only an optimisation now: it lets us react immediately instead
+    /// of waiting for the next verification pass. It is explicitly *not* the
+    /// liveness signal, because for exactly the surfaces most likely to die —
+    /// the ones bound to an output that just vanished — layershellev removes
+    /// the unit before dispatching `Closed`, and `handle_closed_event` then
+    /// early-returns on the unknown id, so the event never arrives at all.
     fn handle_window_closed(&mut self, id: window::Id) -> Task<Message> {
         if self.notif_popup_id == Some(id) {
             self.notif_popup_id = None;
@@ -829,35 +1008,21 @@ impl App {
             return Task::none();
         }
 
-        // Bar window: drop our tracking for the closed surface, then let
-        // `reconcile_bars` decide whether to respawn (monitor still around)
-        // or do nothing (monitor gone). Unknown ids are popup/panel
-        // surfaces whose tracking we cleared before initiating close —
-        // treat them as no-ops so notification dismissals don't spawn bars.
-        let closed_a_bar = if let Some(monitor) = self.extra_bar_windows.remove(&id) {
-            if !self.extra_bar_windows.values().any(|m| m == &monitor)
-                && self.initial_monitor.as_deref() != Some(&monitor)
-            {
-                self.drop_bar_state(&monitor);
+        // Unknown ids are surfaces whose tracking we already cleared; they must
+        // stay no-ops. Treating one as a bar is what let a panel or popup close
+        // masquerade as "the bar died" and trigger a spurious respawn.
+        if let Some(record) = self.bars.remove(&id) {
+            log::info!(
+                "bars: {} on {} was closed by the compositor",
+                record.namespace,
+                record.monitor
+            );
+            if !self.bars.values().any(|r| r.monitor == record.monitor) {
+                self.drop_bar_state(&record.monitor);
             }
-            true
-        } else if self.initial_bar_id.get() == Some(id) {
-            self.initial_bar_id.set(None);
-            if let Some(monitor) = self.initial_monitor.take() {
-                if !self.extra_bar_windows.values().any(|m| m == &monitor) {
-                    self.drop_bar_state(&monitor);
-                }
-            }
-            true
-        } else {
-            false
-        };
-
-        if closed_a_bar {
-            self.reconcile_bars()
-        } else {
-            Task::none()
+            return self.verify_bars_soon();
         }
+        Task::none()
     }
 
     fn view(&self, id: window::Id) -> Element<'_, Message> {
@@ -871,11 +1036,10 @@ impl App {
         {
             return self.view_panel(kind);
         }
-        // Capture the settings-created bar's id the first time we render
-        // it so close events can be matched exactly rather than guessed.
-        if !self.extra_bar_windows.contains_key(&id) && self.initial_bar_id.get().is_none() {
-            self.initial_bar_id.set(Some(id));
-        }
+        // Every bar surface is created by us with a known id, so there is no
+        // longer any id to guess at here — which is what the old lazy
+        // "first unknown id must be the initial bar" capture was doing, and
+        // what let a closing panel be adopted as the initial bar.
         let monitor = self.monitor_for_bar(id);
         bar::view(self, monitor)
     }
@@ -1011,6 +1175,14 @@ impl App {
 
     /// Open `kind`'s popup, replacing whichever panel is currently shown.
     fn open_panel(&mut self, kind: PanelKind, monitor: Option<String>) -> Task<Message> {
+        // A bar with no monitor is not a state we can place a panel from, and
+        // guessing an output is what the `LastOutput` fallback used to do.
+        // Every bar surface is now tracked with its monitor, so this only fires
+        // if the bar was closed between render and hover.
+        let Some(monitor) = monitor else {
+            log::warn!("panels: not opening {kind:?}, its bar has no known monitor");
+            return Task::none();
+        };
         let close = self.close_all_panels();
         let (width, height) = self.panel_dimensions(kind);
         if let Some(setter) = kind.signal_setter() {
@@ -1020,7 +1192,7 @@ impl App {
             .panels
             .entry(kind)
             .or_default()
-            .open(width, height, monitor);
+            .open(kind, width, height, &monitor);
         Task::batch([close, open])
     }
 
@@ -1059,8 +1231,14 @@ impl App {
         self.maybe_close_popup_window()
     }
 
-    /// Maximum popup height in logical pixels: 2/5 of the focused monitor's
-    /// logical height, or a conservative 1080p-based fallback.
+    /// Maximum popup height in logical pixels: 2/5 of the logical height of the
+    /// monitor the popup is *on*, or a conservative 1080p-based fallback.
+    ///
+    /// Measuring `focused_monitor` instead was wrong in both directions: the
+    /// popup did not live there, and every focus change re-fitted the surface
+    /// against a screen it was not on. With a 4K focused monitor and a 768px
+    /// host that produced a cap taller than the screen, and since the popup
+    /// column has no scrollable the overflow summary itself fell off-screen.
     #[allow(
         clippy::cast_possible_truncation,
         clippy::cast_precision_loss,
@@ -1073,8 +1251,9 @@ impl App {
         let den = f32::from(u16::try_from(style::NOTIF_POPUP_MAX_FRACTION_DEN).unwrap_or(5));
 
         let geom = self
-            .focused_monitor
+            .notif_popup_monitor
             .as_deref()
+            .or(self.focused_monitor.as_deref())
             .and_then(|name| self.monitor_geoms.get(name));
 
         let logical_h = geom.map_or(FALLBACK_LOGICAL_H, |g| {
@@ -1096,21 +1275,70 @@ impl App {
         style::notif_popup_fit(self.popup_notifications.len(), self.popup_max_height())
     }
 
+    /// The monitor the popup belongs on: the focused one while it is still
+    /// connected, otherwise any connected monitor (lowest name, so the choice
+    /// is stable rather than flipping on `HashMap` order).
+    fn popup_monitor(&self) -> Option<String> {
+        if let Some(focused) = self.focused_monitor.as_deref() {
+            if self.monitor_geoms.contains_key(focused) {
+                return Some(focused.to_string());
+            }
+        }
+        let mut names: Vec<&String> = self.monitor_geoms.keys().collect();
+        names.sort();
+        names.first().map(|name| (*name).clone())
+    }
+
     fn ensure_popup_window(&mut self) -> Task<Message> {
         if self.popup_notifications.is_empty() {
             return Task::none();
         }
-        let (visible, overflow) = self.popup_fit();
-        let height = style::notif_popup_height(visible, overflow);
+        let Some(target) = self.popup_monitor() else {
+            log::warn!("notifications: no connected monitor to place the popup on");
+            return Task::none();
+        };
+
+        // Moving the popup needs a new surface: `SizeChange` can only resize,
+        // never re-place.
+        if self.notif_popup_id.is_some() && self.notif_popup_monitor.as_deref() != Some(&target) {
+            let close = self
+                .notif_popup_id
+                .take()
+                .map_or_else(Task::none, close_window);
+            self.notif_popup_monitor = None;
+            return Task::batch([close, self.create_popup_window(target)]);
+        }
+
         if let Some(id) = self.notif_popup_id {
             // Resize existing window to fit current notification layout
+            let (visible, overflow) = self.popup_fit();
             return Task::done(Message::SizeChange {
                 id,
-                size: (style::NOTIF_WIDTH, height),
+                size: (
+                    style::NOTIF_WIDTH,
+                    style::notif_popup_height(visible, overflow),
+                ),
             });
         }
+        self.create_popup_window(target)
+    }
+
+    /// Create the popup surface pinned to `monitor`.
+    ///
+    /// The output is explicit because the default `OutputOption::None`
+    /// resolves through `current_surface` — written by the last surface
+    /// created *and* by the last pointer button press, and never cleared when
+    /// a surface is removed — then falls back to `outputs.first()`. So popups
+    /// landed on an arbitrary monitor, never the tracked focused one, while
+    /// the height cap was computed from the focused monitor's geometry.
+    fn create_popup_window(&mut self, monitor: String) -> Task<Message> {
         let id = window::Id::unique();
         self.notif_popup_id = Some(id);
+        // Set before measuring: `popup_max_height` derives the cap from the
+        // monitor the surface is actually on.
+        self.notif_popup_monitor = Some(monitor.clone());
+        let (visible, overflow) = self.popup_fit();
+        let height = style::notif_popup_height(visible, overflow);
         Task::done(Message::NewLayerShell {
             settings: NewLayerShellSettings {
                 anchor: Anchor::Right | Anchor::Top,
@@ -1119,10 +1347,35 @@ impl App {
                 size: Some((style::NOTIF_WIDTH, height)),
                 margin: Some((8, 8, 8, 8)),
                 keyboard_interactivity: KeyboardInteractivity::None,
+                output_option: OutputOption::OutputName(monitor),
+                namespace: Some(POPUP_NAMESPACE.to_string()),
                 ..NewLayerShellSettings::default()
             },
             id,
         })
+    }
+
+    /// Drop the notification popup so the next one is created on a live output.
+    ///
+    /// The popup owns a concrete `wl_output`, so when that output disappears
+    /// layershellev removes the unit before dispatching `Closed` and the event
+    /// is swallowed — leaving `notif_popup_id` pointing at a dead surface
+    /// forever. `ensure_popup_window` would then only ever emit `SizeChange`,
+    /// which is dropped for a dead unit, so every subsequent notification was
+    /// accepted over D-Bus and silently discarded. Clearing the id is what
+    /// breaks that.
+    fn invalidate_popup(&mut self) -> Task<Message> {
+        let Some(id) = self.notif_popup_id.take() else {
+            return Task::none();
+        };
+        self.notif_popup_monitor = None;
+        // Ask for a close in case the surface is in fact still alive; a close
+        // for an id iced_layershell no longer knows is dropped harmlessly.
+        let close = close_window(id);
+        if self.popup_notifications.is_empty() {
+            return close;
+        }
+        Task::batch([close, self.ensure_popup_window()])
     }
 
     fn maybe_close_popup_window(&mut self) -> Task<Message> {
@@ -1160,214 +1413,430 @@ fn close_window(id: window::Id) -> Task<Message> {
     ))
 }
 
-/// Decision output from `plan_bar_reconcile`: what changes the caller must
-/// apply for the three bar-distribution invariants to hold.
-#[derive(Debug, Default, PartialEq, Eq)]
-struct BarReconcilePlan {
-    /// Initial bar tracking should be cleared (its monitor disappeared).
-    drop_initial: bool,
-    /// Extra bar window ids to close (sorted by id for determinism).
-    close_extras: Vec<window::Id>,
-    /// Monitors that lose their last bar in this plan and whose per-monitor
-    /// state (workspace cache/spring) should be dropped (sorted).
-    drop_state_for: Vec<String>,
-    /// Monitors that need a fresh bar spawned (sorted).
-    spawn_monitors: Vec<String>,
+/// One bar surface we have asked the compositor for.
+///
+/// The distinction that matters: `monitor` is what we *requested*, `verified`
+/// is whether the compositor was ever observed agreeing. Treating the request
+/// as the truth is what produced bars stacked on one screen while the app
+/// believed they were spread across all of them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BarRecord {
+    /// Monitor this bar was spawned for.
+    monitor: String,
+    /// Unique layer-shell namespace, our handle for matching `j/layers` output
+    /// back to this specific surface.
+    namespace: String,
+    /// Set once this namespace was observed on `monitor`.
+    verified: bool,
+    /// Verification passes survived without being observed. Bounded by
+    /// `VERIFY_GRACE_PASSES` so a surface that never maps is eventually
+    /// replaced rather than masking its monitor forever.
+    attempts: u32,
 }
 
-/// Compute the redistribution plan for a given bar tracking state. Pure —
-/// returns the operations needed to restore the three invariants without
-/// touching any iced types or running side effects.
-fn plan_bar_reconcile(
+/// What `plan_from_observation` decided. Every field is sorted so the plan is
+/// deterministic and directly comparable in tests.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct BarPlan {
+    /// Surfaces to close, with the reason, because they are on the wrong
+    /// monitor or their monitor is gone.
+    close: Vec<(window::Id, &'static str)>,
+    /// Records to drop without closing: the surface is already gone.
+    forget: Vec<(window::Id, &'static str)>,
+    /// Records observed where we asked for them.
+    verified: Vec<window::Id>,
+    /// Records still within their grace window; the caller counts an attempt.
+    pending: Vec<window::Id>,
+    /// Monitors whose per-monitor state should be dropped.
+    drop_state_for: Vec<String>,
+    /// The single monitor to spawn a bar for this pass, if any.
+    spawn: Option<String>,
+}
+
+/// Decide what to do about the bars, given what the compositor reports.
+///
+/// Pure, so the whole state machine is testable without a compositor: this is
+/// what the old belief-only planner could not offer, because the bugs it needed
+/// to catch all lived in the gap between the tracking map and reality.
+///
+/// `observed` maps monitor name to the layer namespaces mapped there. `None`
+/// means the query failed.
+fn plan_from_observation(
+    observed: Option<&services::hyprland::LayerMap>,
     expected: &std::collections::HashSet<String>,
-    initial_monitor: Option<&str>,
-    extras: &HashMap<window::Id, String>,
-) -> BarReconcilePlan {
-    use std::collections::HashSet;
+    tracked: &HashMap<window::Id, BarRecord>,
+) -> BarPlan {
+    let mut plan = BarPlan::default();
 
-    let drop_initial = initial_monitor.is_some_and(|m| !expected.contains(m));
-    let live_initial = if drop_initial { None } else { initial_monitor };
+    // Two no-op guards, both load-bearing. Without an observation we know
+    // nothing, and acting on nothing is how a transient IPC failure used to
+    // close every bar. An empty `expected` is the same story from the other
+    // direction: "we could not read the monitor list" must never be actioned
+    // as "there are no monitors".
+    let (Some(observed), false) = (observed, expected.is_empty()) else {
+        return plan;
+    };
 
-    let mut sorted_extras: Vec<(window::Id, &str)> =
-        extras.iter().map(|(id, m)| (*id, m.as_str())).collect();
-    sorted_extras.sort_by_key(|(id, _)| *id);
-
-    // First pass: walk extras in id order, keeping the first bar seen per
-    // monitor and marking the rest (or any on a stale monitor) for close.
-    let mut have: HashSet<&str> = live_initial.into_iter().collect();
-    let mut close_extras: Vec<window::Id> = Vec::new();
-    for (id, monitor) in &sorted_extras {
-        if !expected.contains(*monitor) || !have.insert(monitor) {
-            close_extras.push(*id);
+    // Where each namespace actually is, according to the compositor.
+    let mut location: HashMap<&str, &str> = HashMap::new();
+    for (monitor, namespaces) in observed {
+        for namespace in namespaces {
+            location.insert(namespace.as_str(), monitor.as_str());
         }
     }
 
-    // A monitor loses its last bar when it had one before the plan but has
-    // none after. `have` is the post-plan set; the pre-plan set is `extras`
-    // values plus the original `initial_monitor`.
-    let pre_have: HashSet<&str> = extras
-        .values()
-        .map(String::as_str)
-        .chain(initial_monitor)
-        .collect();
-    let mut drop_state_for: Vec<String> = pre_have
-        .difference(&have)
-        .map(|s| (*s).to_string())
-        .collect();
-    drop_state_for.sort();
+    // Walk records in id order so the plan does not depend on HashMap order.
+    let mut records: Vec<(&window::Id, &BarRecord)> = tracked.iter().collect();
+    records.sort_by_key(|(id, _)| **id);
 
-    let mut spawn_monitors: Vec<String> = expected
-        .iter()
-        .filter(|m| !have.contains(m.as_str()))
-        .cloned()
-        .collect();
-    spawn_monitors.sort();
+    // Monitors that end this pass with a bar we trust to be there.
+    let mut covered: std::collections::HashSet<&str> = std::collections::HashSet::new();
 
-    BarReconcilePlan {
-        drop_initial,
-        close_extras,
-        drop_state_for,
-        spawn_monitors,
+    for (id, record) in records {
+        let wanted_gone = !expected.contains(&record.monitor);
+        match location.get(record.namespace.as_str()) {
+            // Observed exactly where we asked.
+            Some(actual) if *actual == record.monitor => {
+                if wanted_gone {
+                    plan.close.push((*id, "monitor disconnected"));
+                } else if covered.insert(actual) {
+                    plan.verified.push(*id);
+                } else {
+                    // Another bar already holds this monitor. Duplicates are
+                    // resolved by id order so the choice is stable.
+                    plan.close.push((*id, "duplicate on monitor"));
+                }
+            }
+            // Observed somewhere else: `OutputName` fell back to the focused
+            // output and nothing told us. This is the flagship bug, and the
+            // only reason it is fixable is that we can see it here.
+            Some(_) => plan.close.push((*id, "landed on the wrong monitor")),
+            // Not mapped anywhere.
+            None => {
+                if wanted_gone {
+                    plan.forget.push((*id, "monitor disconnected"));
+                } else if record.verified {
+                    // It was there and is not any more: the surface died
+                    // without a usable `Closed` event, which is precisely the
+                    // lost-close case that used to strand a monitor forever.
+                    plan.forget.push((*id, "surface vanished"));
+                } else if record.attempts >= VERIFY_GRACE_PASSES {
+                    plan.forget.push((*id, "never appeared"));
+                } else {
+                    // Still mapping. Hold its monitor so we do not spawn a
+                    // second bar on top of a surface that is on its way.
+                    plan.pending.push(*id);
+                    covered.insert(record.monitor.as_str());
+                }
+            }
+        }
     }
+
+    // Per-monitor state belongs to monitors that no longer keep a bar.
+    let mut dropped: Vec<String> = tracked
+        .values()
+        .map(|r| r.monitor.clone())
+        .filter(|m| !covered.contains(m.as_str()))
+        .collect();
+    dropped.sort();
+    dropped.dedup();
+    plan.drop_state_for = dropped;
+
+    // One uncovered monitor per pass, lowest name first for determinism.
+    let mut uncovered: Vec<&String> = expected
+        .iter()
+        .filter(|m| !covered.contains(m.as_str()))
+        .collect();
+    uncovered.sort();
+    plan.spawn = uncovered.first().map(|m| (*m).clone());
+
+    plan.close.sort();
+    plan.forget.sort();
+    plan.verified.sort();
+    plan.pending.sort();
+    plan
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used)]
 mod reconcile_tests {
-    use super::{plan_bar_reconcile, BarReconcilePlan};
+    use super::{plan_from_observation, BarPlan, BarRecord, VERIFY_GRACE_PASSES};
     use iced::window;
     use std::collections::{HashMap, HashSet};
 
     fn expected<const N: usize>(monitors: [&str; N]) -> HashSet<String> {
-        monitors.iter().map(|s| (*s).to_string()).collect()
+        monitors.iter().map(|m| (*m).to_string()).collect()
     }
 
-    fn extras<const N: usize>(entries: [(window::Id, &str); N]) -> HashMap<window::Id, String> {
+    /// A tracking map from `(monitor, namespace, verified)` triples.
+    fn tracked<const N: usize>(
+        entries: [(window::Id, &str, &str, bool); N],
+    ) -> HashMap<window::Id, BarRecord> {
         entries
-            .iter()
-            .map(|(id, m)| (*id, (*m).to_string()))
+            .into_iter()
+            .map(|(id, monitor, namespace, verified)| {
+                (
+                    id,
+                    BarRecord {
+                        monitor: monitor.to_string(),
+                        namespace: namespace.to_string(),
+                        verified,
+                        attempts: 0,
+                    },
+                )
+            })
             .collect()
     }
 
-    fn id(n: u64) -> window::Id {
-        // window::Id::unique() is process-global; tests need deterministic ids.
-        // The crate's Id wraps a u64, but its only public ctor is `unique()`.
-        // Generate fresh ones in a loop and use them in seen-order.
-        let _ = n;
-        window::Id::unique()
+    /// A `j/layers`-shaped observation.
+    fn observed<const N: usize>(
+        entries: [(&str, &[&str]); N],
+    ) -> super::services::hyprland::LayerMap {
+        entries
+            .into_iter()
+            .map(|(monitor, namespaces)| {
+                (
+                    monitor.to_string(),
+                    namespaces.iter().map(|n| (*n).to_string()).collect(),
+                )
+            })
+            .collect()
     }
 
     #[test]
-    fn empty_state_with_one_monitor_spawns_one_bar() {
-        let plan = plan_bar_reconcile(&expected(["DP-1"]), None, &HashMap::new());
-        assert!(!plan.drop_initial);
-        assert!(plan.close_extras.is_empty());
-        assert_eq!(plan.spawn_monitors, vec!["DP-1".to_string()]);
-        assert!(plan.drop_state_for.is_empty());
+    fn a_failed_observation_changes_nothing() {
+        // The single most damaging old behaviour: an IPC failure read as "no
+        // monitors" closed every bar, which under StartMode::Active emptied
+        // `units` and killed the process.
+        let plan = plan_from_observation(None, &expected(["DP-1"]), &HashMap::new());
+        assert_eq!(plan, BarPlan::default());
     }
 
     #[test]
-    fn initial_only_no_extras_is_idempotent() {
-        let plan = plan_bar_reconcile(&expected(["DP-1"]), Some("DP-1"), &HashMap::new());
-        assert_eq!(plan, BarReconcilePlan::default());
+    fn an_empty_monitor_set_changes_nothing() {
+        let a = window::Id::unique();
+        let plan = plan_from_observation(
+            Some(&observed([("DP-1", &["obayebar-bar-1"][..])])),
+            &HashSet::new(),
+            &tracked([(a, "DP-1", "obayebar-bar-1", true)]),
+        );
+        assert_eq!(plan, BarPlan::default());
     }
 
     #[test]
-    fn missing_monitor_gets_a_bar_initial_kept() {
-        let plan = plan_bar_reconcile(
-            &expected(["DP-1", "HDMI-A-1"]),
-            Some("DP-1"),
+    fn an_empty_setup_spawns_for_one_monitor() {
+        let plan = plan_from_observation(Some(&observed([])), &expected(["DP-1"]), &HashMap::new());
+        assert_eq!(plan.spawn.as_deref(), Some("DP-1"));
+        assert!(plan.close.is_empty());
+    }
+
+    #[test]
+    fn spawns_are_serialised_one_per_pass() {
+        // Batching them is what made a cold output-name cache stack every bar
+        // on the focused monitor: they all resolved against one frozen
+        // snapshot inside a context that cannot dispatch the wayland queue.
+        let plan = plan_from_observation(
+            Some(&observed([])),
+            &expected(["DP-1", "DP-2", "HDMI-A-1"]),
             &HashMap::new(),
         );
-        assert_eq!(plan.spawn_monitors, vec!["HDMI-A-1".to_string()]);
-        assert!(!plan.drop_initial);
-        assert!(plan.close_extras.is_empty());
+        assert_eq!(plan.spawn.as_deref(), Some("DP-1"));
     }
 
     #[test]
-    fn stale_extra_is_closed_and_state_dropped() {
-        let a = id(1);
-        let plan = plan_bar_reconcile(
+    fn a_bar_observed_where_requested_is_verified() {
+        let a = window::Id::unique();
+        let plan = plan_from_observation(
+            Some(&observed([("DP-1", &["obayebar-bar-1"][..])])),
             &expected(["DP-1"]),
-            Some("DP-1"),
-            &extras([(a, "HDMI-A-1")]),
+            &tracked([(a, "DP-1", "obayebar-bar-1", false)]),
         );
-        assert_eq!(plan.close_extras, vec![a]);
-        assert_eq!(plan.drop_state_for, vec!["HDMI-A-1".to_string()]);
-        assert!(plan.spawn_monitors.is_empty());
+        assert_eq!(plan.verified, vec![a]);
+        assert_eq!(plan.spawn, None);
+        assert!(plan.close.is_empty());
     }
 
     #[test]
-    fn duplicate_extras_keep_first_close_rest() {
-        let mut ids = [id(1), id(2), id(3)];
-        ids.sort();
-        let plan = plan_bar_reconcile(
-            &expected(["HDMI-A-1"]),
-            None,
-            &extras([
-                (ids[0], "HDMI-A-1"),
-                (ids[1], "HDMI-A-1"),
-                (ids[2], "HDMI-A-1"),
+    fn a_bar_on_the_wrong_monitor_is_closed_and_respawned() {
+        // The OutputName silent fallback. Previously invisible and permanent:
+        // the app kept believing the bar was on DP-2 forever.
+        let a = window::Id::unique();
+        let plan = plan_from_observation(
+            Some(&observed([("DP-1", &["obayebar-bar-1"][..])])),
+            &expected(["DP-1", "DP-2"]),
+            &tracked([(a, "DP-2", "obayebar-bar-1", false)]),
+        );
+        assert_eq!(plan.close, vec![(a, "landed on the wrong monitor")]);
+        // DP-1 has no bar of ours that we asked for, DP-2 lost its only
+        // candidate — one of them gets this pass.
+        assert!(plan.spawn.is_some());
+    }
+
+    #[test]
+    fn two_bars_on_one_monitor_leaves_exactly_one() {
+        let a = window::Id::unique();
+        let b = window::Id::unique();
+        let plan = plan_from_observation(
+            Some(&observed([(
+                "DP-1",
+                &["obayebar-bar-1", "obayebar-bar-2"][..],
+            )])),
+            &expected(["DP-1"]),
+            &tracked([
+                (a, "DP-1", "obayebar-bar-1", true),
+                (b, "DP-1", "obayebar-bar-2", true),
             ]),
         );
-        assert_eq!(plan.close_extras, vec![ids[1], ids[2]]);
-        // Monitor still has one bar (ids[0]), so no state drop.
-        assert!(plan.drop_state_for.is_empty());
-        assert!(plan.spawn_monitors.is_empty());
+        let (kept, dropped) = if a < b { (a, b) } else { (b, a) };
+        assert_eq!(plan.verified, vec![kept]);
+        assert_eq!(plan.close, vec![(dropped, "duplicate on monitor")]);
+        assert_eq!(plan.spawn, None);
     }
 
     #[test]
-    fn extra_duplicating_initial_is_closed() {
-        let a = id(1);
-        let plan = plan_bar_reconcile(&expected(["DP-1"]), Some("DP-1"), &extras([(a, "DP-1")]));
-        assert_eq!(plan.close_extras, vec![a]);
-        assert!(plan.drop_state_for.is_empty());
-        assert!(plan.spawn_monitors.is_empty());
-        assert!(!plan.drop_initial);
-    }
-
-    #[test]
-    fn initial_monitor_disappearing_drops_initial_and_keeps_remaining() {
-        let a = id(1);
-        let plan = plan_bar_reconcile(
-            &expected(["HDMI-A-1"]),
-            Some("DP-1"),
-            &extras([(a, "HDMI-A-1")]),
+    fn a_disconnected_monitor_closes_its_observed_bar() {
+        let a = window::Id::unique();
+        let plan = plan_from_observation(
+            Some(&observed([("DP-2", &["obayebar-bar-1"][..])])),
+            &expected(["DP-1"]),
+            &tracked([(a, "DP-2", "obayebar-bar-1", true)]),
         );
-        assert!(plan.drop_initial);
-        assert!(plan.close_extras.is_empty());
+        assert_eq!(plan.close, vec![(a, "monitor disconnected")]);
+        assert_eq!(plan.drop_state_for, vec!["DP-2".to_string()]);
+        assert_eq!(plan.spawn.as_deref(), Some("DP-1"));
+    }
+
+    #[test]
+    fn a_disconnected_monitor_forgets_its_unmapped_bar() {
+        let a = window::Id::unique();
+        let plan = plan_from_observation(
+            Some(&observed([])),
+            &expected(["DP-1"]),
+            &tracked([(a, "DP-2", "obayebar-bar-1", true)]),
+        );
+        assert_eq!(plan.forget, vec![(a, "monitor disconnected")]);
+        assert!(plan.close.is_empty());
+    }
+
+    #[test]
+    fn a_vanished_verified_bar_is_forgotten_and_respawned() {
+        // The lost-Closed case: layershellev removes the unit before
+        // dispatching Closed, so the app never hears about it. Observation is
+        // what catches it; without this the monitor stayed masked forever.
+        let a = window::Id::unique();
+        let plan = plan_from_observation(
+            Some(&observed([("DP-1", &[][..])])),
+            &expected(["DP-1"]),
+            &tracked([(a, "DP-1", "obayebar-bar-1", true)]),
+        );
+        assert_eq!(plan.forget, vec![(a, "surface vanished")]);
+        assert_eq!(plan.spawn.as_deref(), Some("DP-1"));
         assert_eq!(plan.drop_state_for, vec!["DP-1".to_string()]);
-        assert!(plan.spawn_monitors.is_empty());
     }
 
     #[test]
-    fn no_monitors_means_close_everything() {
-        let a = id(1);
-        let b = id(2);
-        let plan = plan_bar_reconcile(
-            &HashSet::new(),
-            Some("DP-1"),
-            &extras([(a, "DP-1"), (b, "HDMI-A-1")]),
+    fn a_freshly_spawned_bar_gets_grace_and_holds_its_monitor() {
+        // Verifying immediately after a spawn sees nothing, so an unverified
+        // record must not be read as failure — otherwise every spawn is
+        // instantly replaced and the bar never settles.
+        let a = window::Id::unique();
+        let plan = plan_from_observation(
+            Some(&observed([])),
+            &expected(["DP-1"]),
+            &tracked([(a, "DP-1", "obayebar-bar-1", false)]),
         );
-        assert!(plan.drop_initial);
-        let mut closed = plan.close_extras.clone();
-        closed.sort();
-        let mut want = vec![a, b];
-        want.sort();
-        assert_eq!(closed, want);
-        assert_eq!(
-            plan.drop_state_for,
-            vec!["DP-1".to_string(), "HDMI-A-1".to_string()]
-        );
-        assert!(plan.spawn_monitors.is_empty());
+        assert_eq!(plan.pending, vec![a]);
+        assert_eq!(plan.spawn, None, "must not double-spawn while mapping");
+        assert!(plan.forget.is_empty());
     }
 
     #[test]
-    fn duplicate_keeps_initial_and_closes_extra_even_if_extra_id_lower() {
-        // Initial bar is always preferred over an extra on the same monitor
-        // (we can't close the initial by id from this side), regardless of
-        // id ordering.
-        let a = id(1);
-        let plan = plan_bar_reconcile(&expected(["DP-1"]), Some("DP-1"), &extras([(a, "DP-1")]));
-        assert_eq!(plan.close_extras, vec![a]);
+    fn a_bar_that_never_appears_is_replaced_after_the_grace_window() {
+        let a = window::Id::unique();
+        let mut map = tracked([(a, "DP-1", "obayebar-bar-1", false)]);
+        map.entry(a)
+            .and_modify(|r| r.attempts = VERIFY_GRACE_PASSES);
+        let plan = plan_from_observation(Some(&observed([])), &expected(["DP-1"]), &map);
+        assert_eq!(plan.forget, vec![(a, "never appeared")]);
+        assert_eq!(plan.spawn.as_deref(), Some("DP-1"));
+    }
+
+    #[test]
+    fn foreign_layer_surfaces_are_ignored() {
+        // Other clients' layers share j/layers with ours; only our namespaces
+        // may influence the plan.
+        let a = window::Id::unique();
+        let plan = plan_from_observation(
+            Some(&observed([(
+                "DP-1",
+                &["waybar", "obayebar-bar-1", "gtk-layer-shell"][..],
+            )])),
+            &expected(["DP-1"]),
+            &tracked([(a, "DP-1", "obayebar-bar-1", true)]),
+        );
+        assert_eq!(plan.verified, vec![a]);
+        assert_eq!(plan.spawn, None);
+        assert!(plan.close.is_empty());
+    }
+
+    #[test]
+    fn a_settled_multi_monitor_setup_is_a_no_op() {
+        // Idempotence: the steady state must produce an empty plan, or the
+        // loop would churn surfaces forever.
+        let a = window::Id::unique();
+        let b = window::Id::unique();
+        let plan = plan_from_observation(
+            Some(&observed([
+                ("DP-1", &["obayebar-bar-1"][..]),
+                ("DP-2", &["obayebar-bar-2"][..]),
+            ])),
+            &expected(["DP-1", "DP-2"]),
+            &tracked([
+                (a, "DP-1", "obayebar-bar-1", true),
+                (b, "DP-2", "obayebar-bar-2", true),
+            ]),
+        );
+        assert_eq!(plan.spawn, None);
+        assert!(plan.close.is_empty());
+        assert!(plan.forget.is_empty());
+        assert!(plan.drop_state_for.is_empty());
+        assert_eq!(plan.verified.len(), 2);
+    }
+
+    #[test]
+    fn panel_and_popup_namespaces_never_count_as_bars() {
+        // Our own non-bar surfaces are in j/layers too. Counting one as a bar
+        // would mask a monitor that has no bar at all.
+        let plan = plan_from_observation(
+            Some(&observed([(
+                "DP-1",
+                &["obayebar-panel-audio", "obayebar-notifications"][..],
+            )])),
+            &expected(["DP-1"]),
+            &HashMap::new(),
+        );
+        assert_eq!(plan.spawn.as_deref(), Some("DP-1"));
+    }
+
+    #[test]
+    fn rapid_add_remove_add_converges() {
+        // DP-2 disappears and comes back while its bar was still unverified.
+        // The stale record must not mask the returning monitor.
+        let a = window::Id::unique();
+        let mut map = tracked([(a, "DP-2", "obayebar-bar-1", false)]);
+        map.entry(a)
+            .and_modify(|r| r.attempts = VERIFY_GRACE_PASSES);
+
+        // Gone: forget it, and DP-1 is the only monitor left to serve.
+        let gone = plan_from_observation(Some(&observed([])), &expected(["DP-1"]), &map);
+        assert_eq!(gone.forget, vec![(a, "monitor disconnected")]);
+
+        // Back, with nothing tracked: it gets a fresh spawn.
+        let back = plan_from_observation(
+            Some(&observed([("DP-1", &["obayebar-bar-2"][..])])),
+            &expected(["DP-1", "DP-2"]),
+            &HashMap::new(),
+        );
+        assert_eq!(back.spawn.as_deref(), Some("DP-1"));
     }
 }

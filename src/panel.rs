@@ -44,6 +44,19 @@ impl PanelKind {
         }
     }
 
+    /// Layer-shell namespace for this kind's surface.
+    pub fn namespace(self) -> String {
+        let suffix = match self {
+            Self::Audio => "audio",
+            Self::Network => "network",
+            Self::Battery => "battery",
+            Self::Bluetooth => "bluetooth",
+            Self::Sysinfo => "sysinfo",
+            Self::Gitlab => "gitlab",
+        };
+        format!("obayebar-panel-{suffix}")
+    }
+
     /// `Some` when this kind drives a service-side `PanelSignal` that should
     /// flip on open/close so the backing service can switch refresh cadence
     /// (network rescan, bluetooth discovery hint, sysinfo polling, gitlab
@@ -70,11 +83,21 @@ impl Panel {
         self.id == Some(id)
     }
 
+    /// Open this panel on `monitor`.
+    ///
+    /// `monitor` is required rather than optional. The old `None` branch used
+    /// `OutputOption::LastOutput`, which resolves through `last_wloutput` —
+    /// only ever advanced by a pointer *button* press, a keyboard enter or a
+    /// touch. Bars are `KeyboardInteractivity::None` and nothing ever sends
+    /// `ForgetLastOutput`, so it was a sticky arbitrary output: the panel could
+    /// open on a screen the pointer was nowhere near. Making the monitor
+    /// mandatory removes that state from the type.
     pub fn open(
         &mut self,
+        kind: PanelKind,
         width: u32,
         height: u32,
-        monitor: Option<String>,
+        monitor: &str,
     ) -> iced::Task<Message> {
         if self.open {
             return iced::Task::none();
@@ -82,7 +105,6 @@ impl Panel {
         self.open = true;
         let id = window::Id::unique();
         self.id = Some(id);
-        let output_option = monitor.map_or(OutputOption::LastOutput, OutputOption::OutputName);
         let gap = style::PANEL_GAP_PX;
         iced::Task::done(Message::NewLayerShell {
             settings: NewLayerShellSettings {
@@ -92,7 +114,11 @@ impl Panel {
                 size: Some((width.saturating_add(gap), height.saturating_add(gap))),
                 margin: Some((0, 0, 0, style::BAR_WIDTH.cast_signed())),
                 keyboard_interactivity: KeyboardInteractivity::None,
-                output_option,
+                output_option: OutputOption::OutputName(monitor.to_string()),
+                // Per-kind namespace so `j/layers` can tell a panel from a bar
+                // (and from another panel), and so a Hyprland `layerrule` can
+                // target one without catching all of them.
+                namespace: Some(kind.namespace()),
                 ..NewLayerShellSettings::default()
             },
             id,

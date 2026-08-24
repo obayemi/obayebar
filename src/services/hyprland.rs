@@ -94,9 +94,48 @@ async fn query_json<T: serde::de::DeserializeOwned>(command: &str) -> Option<T> 
     serde_json::from_str(&text).ok()
 }
 
-async fn fetch_full_state() -> HyprState {
-    let monitors: Vec<MonitorInfo> = query_json("j/monitors").await.unwrap_or_default();
-    let workspaces: Vec<WorkspaceInfo> = query_json("j/workspaces").await.unwrap_or_default();
+/// Deserialize a JSON array element-wise, dropping the entries that fail.
+///
+/// `Vec<T>` as a whole would fail on a single unparseable element, so one
+/// monitor Hyprland describes in a shape we do not model used to discard
+/// *every* monitor — which the reconciler then read as "no monitors are
+/// connected". One odd monitor should cost us that monitor, nothing more.
+fn parse_lenient<T: serde::de::DeserializeOwned>(values: Vec<serde_json::Value>) -> Vec<T> {
+    values
+        .into_iter()
+        .filter_map(|value| match serde_json::from_value(value) {
+            Ok(parsed) => Some(parsed),
+            Err(e) => {
+                log::warn!("hyprland: skipping unparseable IPC entry: {e}");
+                None
+            }
+        })
+        .collect()
+}
+
+/// Read a full state snapshot from Hyprland.
+///
+/// `None` means "we could not find out", which is deliberately distinct from
+/// "nothing is connected". The previous `unwrap_or_default()` collapsed the
+/// two, so a momentary socket hiccup or a Hyprland restart produced a state
+/// with zero monitors — and the reconciler dutifully closed every bar. With
+/// `StartMode::Active` that also emptied `units` and made layershellev call
+/// `signal.stop()`, killing the process outright.
+async fn fetch_full_state() -> Option<HyprState> {
+    let monitor_values: Vec<serde_json::Value> = query_json("j/monitors").await?;
+    let monitors: Vec<MonitorInfo> = parse_lenient(monitor_values);
+    if monitors.is_empty() {
+        // Hyprland lists every enabled, connected monitor here. An empty list
+        // from a compositor that is up means we asked at a bad moment, not
+        // that the machine has no displays.
+        log::warn!("hyprland: j/monitors returned no usable monitors, treating state as unknown");
+        return None;
+    }
+
+    let workspaces: Vec<WorkspaceInfo> = query_json::<Vec<serde_json::Value>>("j/workspaces")
+        .await
+        .map(parse_lenient)
+        .unwrap_or_default();
     let active_window: Option<WindowInfo> = query_json::<WindowInfo>("j/activewindow")
         .await
         .filter(|w| !w.class.is_empty());
@@ -127,14 +166,61 @@ async fn fetch_full_state() -> HyprState {
         })
         .collect();
 
-    HyprState {
+    Some(HyprState {
         monitors: monitor_names,
         focused_monitor,
         monitor_geoms,
         workspaces,
         active_workspaces,
         active_window,
-    }
+    })
+}
+
+/// One entry in Hyprland's `j/layers` output.
+#[derive(Debug, Clone, Deserialize)]
+struct LayerEntry {
+    #[serde(default)]
+    namespace: String,
+}
+
+/// The `levels` map Hyprland nests layer surfaces under, keyed by layer level.
+#[derive(Debug, Clone, Default, Deserialize)]
+struct MonitorLayers {
+    #[serde(default)]
+    levels: HashMap<String, Vec<LayerEntry>>,
+}
+
+/// Which layer-shell namespaces are mapped on which monitor, as the compositor
+/// sees it. Keyed by monitor name.
+pub type LayerMap = HashMap<String, Vec<String>>;
+
+/// Ask the compositor which layer surfaces are actually on which monitor.
+///
+/// This is the only placement feedback available to us: `OutputOption::
+/// OutputName` resolves through layershellev's own output-name cache and, on a
+/// miss, silently creates the surface with no output at all — the compositor
+/// then puts it on the focused monitor and nothing is reported back. Asking
+/// Hyprland directly is what turns bar placement from a belief into an
+/// observation.
+///
+/// `None` means the query failed, which callers must treat as "unknown" and
+/// never as "no layers are mapped".
+pub async fn fetch_layer_namespaces() -> Option<LayerMap> {
+    let raw: HashMap<String, MonitorLayers> = query_json("j/layers").await?;
+    Some(
+        raw.into_iter()
+            .map(|(monitor, layers)| {
+                let namespaces = layers
+                    .levels
+                    .into_values()
+                    .flatten()
+                    .map(|entry| entry.namespace)
+                    .filter(|ns| !ns.is_empty())
+                    .collect();
+                (monitor, namespaces)
+            })
+            .collect(),
+    )
 }
 
 pub fn switch_workspace(id: i32) {
@@ -186,56 +272,77 @@ enum State {
     Streaming(BufReader<UnixStream>),
 }
 
+/// How long to wait before retrying a failed socket connection or state read.
+const RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
+/// Shorter pause after the event socket closes, since a compositor restart
+/// usually comes back quickly.
+const RECONNECT_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
+
 pub fn stream() -> impl Stream<Item = HyprEvent> {
-    futures_util::stream::unfold(State::Starting, |state| async {
-        match state {
-            State::Starting => {
-                let Some(dir) = socket_dir() else {
-                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                    return Some((
-                        HyprEvent::State(HyprState {
-                            monitors: Vec::new(),
-                            focused_monitor: String::new(),
-                            monitor_geoms: HashMap::new(),
-                            workspaces: Vec::new(),
-                            active_workspaces: HashMap::new(),
-                            active_window: None,
-                        }),
-                        State::Starting,
-                    ));
-                };
+    futures_util::stream::unfold(State::Starting, |mut state| async move {
+        // Only ever yields state we actually read. When there is nothing
+        // trustworthy to report the loop retries instead of emitting — the
+        // old code invented an all-empty `HyprState` here, which downstream
+        // could not tell from "every monitor was just unplugged".
+        loop {
+            match state {
+                State::Starting => {
+                    let Some(dir) = socket_dir() else {
+                        log::warn!(
+                            "hyprland: HYPRLAND_INSTANCE_SIGNATURE or XDG_RUNTIME_DIR unset, retrying"
+                        );
+                        tokio::time::sleep(RETRY_DELAY).await;
+                        state = State::Starting;
+                        continue;
+                    };
 
-                // Fetch full initial state
-                let hypr_state = fetch_full_state().await;
+                    let Some(hypr_state) = fetch_full_state().await else {
+                        tokio::time::sleep(RETRY_DELAY).await;
+                        state = State::Starting;
+                        continue;
+                    };
 
-                let sock_path = dir.join(".socket2.sock");
-                let Ok(event_stream) = UnixStream::connect(&sock_path).await else {
-                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                    return Some((HyprEvent::State(hypr_state), State::Starting));
-                };
-
-                let reader = BufReader::new(event_stream);
-                Some((HyprEvent::State(hypr_state), State::Streaming(reader)))
-            }
-            State::Streaming(mut reader) => {
-                // Loop until an event `classify_event` cares about, so noise
-                // (windowtitle, submap, activewindowv2, …) never wakes the UI.
-                loop {
-                    let mut line = String::new();
-                    match reader.read_line(&mut line).await {
-                        Ok(0) | Err(_) => {
-                            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    let sock_path = dir.join(".socket2.sock");
+                    match UnixStream::connect(&sock_path).await {
+                        Ok(event_stream) => {
                             return Some((
-                                HyprEvent::State(fetch_full_state().await),
-                                State::Starting,
+                                HyprEvent::State(hypr_state),
+                                State::Streaming(BufReader::new(event_stream)),
                             ));
                         }
-                        Ok(_) => {
-                            if let Some(event) = parse_event(line.trim()).await {
-                                return Some((event, State::Streaming(reader)));
-                            }
+                        Err(e) => {
+                            // The snapshot is real even though the event socket
+                            // is not up yet, so it is worth publishing before
+                            // we retry.
+                            log::warn!("hyprland: cannot open event socket ({e}), retrying");
+                            tokio::time::sleep(RETRY_DELAY).await;
+                            return Some((HyprEvent::State(hypr_state), State::Starting));
                         }
                     }
+                }
+                State::Streaming(mut reader) => {
+                    // Loop until an event `classify_event` cares about, so noise
+                    // (windowtitle, submap, activewindowv2, …) never wakes the UI.
+                    let next = loop {
+                        let mut line = String::new();
+                        match reader.read_line(&mut line).await {
+                            Ok(0) | Err(_) => break None,
+                            Ok(_) => {
+                                if let Some(event) = parse_event(line.trim()).await {
+                                    break Some(event);
+                                }
+                            }
+                        }
+                    };
+                    if let Some(event) = next {
+                        return Some((event, State::Streaming(reader)));
+                    }
+                    // Socket closed. Go back to `Starting` without emitting: it
+                    // re-reads the state and publishes that, so there is
+                    // nothing to invent here.
+                    log::warn!("hyprland: event socket closed, reconnecting");
+                    tokio::time::sleep(RECONNECT_DELAY).await;
+                    state = State::Starting;
                 }
             }
         }
@@ -255,7 +362,9 @@ async fn parse_event(line: &str) -> Option<HyprEvent> {
             });
             Some(HyprEvent::ActiveWindow(win.filter(|w| !w.class.is_empty())))
         }
-        EventAction::Refresh => Some(HyprEvent::State(fetch_full_state().await)),
+        // A failed read is skipped rather than reported as an empty state; the
+        // next event (or the next topology change) refreshes again.
+        EventAction::Refresh => fetch_full_state().await.map(HyprEvent::State),
         EventAction::Ignore => {
             // Logged so a Hyprland rename of a handled event shows up as a
             // named unknown instead of silently becoming "we stopped
