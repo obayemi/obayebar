@@ -70,7 +70,7 @@ fn volume_section(audio: &AudioInfo) -> Element<'_, Message> {
 
     let volume_slider = container(
         slider(0.0..=1.0, audio.volume, Message::AudioSetVolume)
-            .step(0.01)
+            .step(0.01_f32)
             .width(Length::Fill),
     )
     .height(volume_row_height)

@@ -102,15 +102,15 @@ think about — it just works.
 | Crate                        | Used for                                                  |
 |------------------------------|-----------------------------------------------------------|
 | `iced` 0.14                  | Reactive UI runtime, wgpu renderer, canvas, lazy widgets  |
-| `iced_layershell` 0.18-beta4 | wlr-layer-shell integration on top of iced                |
+| `iced_layershell` 0.19       | wlr-layer-shell integration on top of iced                |
 | `zbus` 5                     | Async dbus for NetworkManager / BlueZ / UPower / SNI / …  |
-| `pipewire` 0.9               | Native PipeWire client for audio                          |
+| `pipewire` 0.10              | Native PipeWire client for audio                          |
 | `tokio` 1.x                  | Async runtime, signal/timer plumbing                      |
 | `chrono`                     | Time + minute-aligned wakeups                             |
 | `nvml-wrapper`               | NVIDIA GPU usage / temperature                            |
 | `fuzzy-matcher` (Skim)       | Launcher fuzzy ranking                                    |
 | `resvg` + `image`            | Tray / launcher icon decoding                             |
-| `reqwest` (rustls)           | GitLab REST API                                           |
+| `reqwest` (rustls + ring)    | GitLab REST API                                           |
 | `secret-service`             | Storing the GitLab PAT in the kernel keyring              |
 | `serde` + `toml`             | Config file parsing                                       |
 | `ab_glyph` + `fontdb`        | Vector text rendering on the workspace canvas             |

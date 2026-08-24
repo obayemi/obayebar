@@ -491,7 +491,27 @@ pub fn stream() -> impl Stream<Item = GitlabInfo> {
     tokio_stream::wrappers::UnboundedReceiverStream::new(rx)
 }
 
+/// Install `ring` as the process-wide rustls crypto provider.
+///
+/// reqwest 0.13 is built with `rustls-no-provider`, so no provider is
+/// registered by default and every TLS handshake would fail. Installing is a
+/// process-global, once-only operation; a second call losing the race is
+/// harmless because the winner installed the same provider.
+fn install_crypto_provider() {
+    static INSTALLED: std::sync::Once = std::sync::Once::new();
+    INSTALLED.call_once(|| {
+        if rustls::crypto::ring::default_provider()
+            .install_default()
+            .is_err()
+        {
+            log::debug!("gitlab: rustls crypto provider was already installed");
+        }
+    });
+}
+
 async fn run_loop(tx: tokio::sync::mpsc::UnboundedSender<GitlabInfo>) {
+    install_crypto_provider();
+
     let Ok(client) = reqwest::Client::builder()
         .timeout(REQUEST_TIMEOUT)
         .user_agent(concat!("obayebar/", env!("CARGO_PKG_VERSION")))

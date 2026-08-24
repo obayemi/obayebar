@@ -52,18 +52,10 @@
           version = "0.1.0";
           inherit src;
 
-          cargoLock = {
-            lockFile = ./Cargo.lock;
-            outputHashes = {
-              # Pinned via [patch.crates-io] in Cargo.toml. All crates come
-              # from the same exwlshelleventloop tree, so they share one hash.
-              "iced_exdevtools-0.18.0-beta4" = "sha256-CA0KAv8FggttW6kbn4SzJDWsgYxzoWGeIqTUDNBrdFI=";
-              "iced_layershell-0.18.0-beta4" = "sha256-CA0KAv8FggttW6kbn4SzJDWsgYxzoWGeIqTUDNBrdFI=";
-              "iced_layershell_macros-0.18.0-beta4" = "sha256-CA0KAv8FggttW6kbn4SzJDWsgYxzoWGeIqTUDNBrdFI=";
-              "layershellev-0.18.0-beta4" = "sha256-CA0KAv8FggttW6kbn4SzJDWsgYxzoWGeIqTUDNBrdFI=";
-              "waycrate_xkbkeycode-0.18.0-beta4" = "sha256-CA0KAv8FggttW6kbn4SzJDWsgYxzoWGeIqTUDNBrdFI=";
-            };
-          };
+          # Every dependency now resolves from crates.io, so no outputHashes
+          # are needed (iced_layershell 0.19.1 ships the disable_clipboard
+          # opt-out that previously forced a git pin).
+          cargoLock.lockFile = ./Cargo.lock;
 
           buildInputs = deps;
           nativeBuildInputs = nativeBuildInputs pkgs;
