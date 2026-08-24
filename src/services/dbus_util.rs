@@ -91,42 +91,101 @@ impl Default for RefreshSignal {
     }
 }
 
+/// Why a D-Bus proxy could not be built. Names the piece that was rejected,
+/// which a bare `None` could not.
+#[derive(Debug, thiserror::Error)]
+#[error("proxy for {dest} {path} ({iface}): {source}")]
+pub struct ProxyError {
+    dest: String,
+    path: String,
+    iface: String,
+    #[source]
+    // Boxed: `zbus::Error` is large enough that an unboxed `Result` here
+    // trips `clippy::result_large_err`.
+    source: Box<zbus::Error>,
+}
+
 /// Build a `zbus::Proxy` from the four required pieces (connection, bus name,
-/// object path, interface). Returns `None` on any construction error.
+/// object path, interface).
+///
+/// Returns `None` — every caller treats an unavailable service as "render it
+/// as absent" rather than propagating — but the reason is *logged* first. This
+/// is the single widest swallow site in the codebase: every service builds its
+/// proxies here, and a construction failure used to disappear entirely,
+/// leaving the module to report the service as off or empty with nothing to
+/// distinguish that from a real absence.
 pub async fn proxy<'a>(
     conn: &'a zbus::Connection,
     dest: &str,
     path: &str,
     iface: &str,
 ) -> Option<zbus::Proxy<'a>> {
-    zbus::proxy::Builder::new(conn)
-        .destination(dest.to_string())
-        .ok()?
-        .path(path.to_string())
-        .ok()?
-        .interface(iface.to_string())
-        .ok()?
-        .build()
-        .await
-        .ok()
+    match try_proxy(conn, dest, path, iface).await {
+        Ok(proxy) => Some(proxy),
+        Err(e) => {
+            log::warn!("dbus: {e}");
+            None
+        }
+    }
 }
 
-/// Build a `zbus::fdo::PropertiesProxy` for `(dest, path)`. Returns `None` on
-/// any construction error so optional services (e.g. `PowerProfiles`) can fall
-/// through silently.
+/// The typed form of [`proxy`], for callers that want to report the failure
+/// themselves.
+pub async fn try_proxy<'a>(
+    conn: &'a zbus::Connection,
+    dest: &str,
+    path: &str,
+    iface: &str,
+) -> Result<zbus::Proxy<'a>, ProxyError> {
+    let describe = |source: zbus::Error| ProxyError {
+        dest: dest.to_string(),
+        path: path.to_string(),
+        iface: iface.to_string(),
+        source: Box::new(source),
+    };
+    zbus::proxy::Builder::new(conn)
+        .destination(dest.to_string())
+        .map_err(describe)?
+        .path(path.to_string())
+        .map_err(describe)?
+        .interface(iface.to_string())
+        .map_err(describe)?
+        .build()
+        .await
+        .map_err(describe)
+}
+
+/// Build a `zbus::fdo::PropertiesProxy` for `(dest, path)`. Logs and returns
+/// `None` on a construction error so optional services (e.g. `PowerProfiles`)
+/// can fall through without the reason being lost.
 pub async fn properties_proxy<'a>(
     conn: &'a zbus::Connection,
     dest: &str,
     path: &str,
 ) -> Option<zbus::fdo::PropertiesProxy<'a>> {
-    zbus::fdo::PropertiesProxy::builder(conn)
+    let describe = |source: zbus::Error| ProxyError {
+        dest: dest.to_string(),
+        path: path.to_string(),
+        iface: "org.freedesktop.DBus.Properties".to_string(),
+        source: Box::new(source),
+    };
+    let built = zbus::fdo::PropertiesProxy::builder(conn)
         .destination(dest.to_string())
-        .ok()?
-        .path(path.to_string())
-        .ok()?
-        .build()
-        .await
-        .ok()
+        .map_err(describe)
+        .and_then(|builder| builder.path(path.to_string()).map_err(describe));
+    match built {
+        Ok(builder) => match builder.build().await {
+            Ok(proxy) => Some(proxy),
+            Err(e) => {
+                log::warn!("dbus: {}", describe(e));
+                None
+            }
+        },
+        Err(e) => {
+            log::warn!("dbus: {e}");
+            None
+        }
+    }
 }
 
 /// Which system bus a stream should connect to.

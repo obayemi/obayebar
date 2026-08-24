@@ -79,19 +79,92 @@ fn socket_dir() -> Option<PathBuf> {
     Some(PathBuf::from(xdg).join("hypr").join(sig))
 }
 
-async fn query_json<T: serde::de::DeserializeOwned>(command: &str) -> Option<T> {
-    let dir = socket_dir()?;
+/// Why a Hyprland IPC query failed.
+///
+/// Every step used to end in `.ok()?`, collapsing six distinct failures into
+/// one `None` that the caller then turned into an empty state. This module had
+/// no log statements at all, so a compositor that had gone away, a renamed
+/// socket and a JSON schema change were indistinguishable — and all three
+/// presented as "no monitors are connected".
+#[derive(Debug, thiserror::Error)]
+pub enum IpcError {
+    #[error("HYPRLAND_INSTANCE_SIGNATURE or XDG_RUNTIME_DIR is unset")]
+    NoSocketDir,
+    #[error("connecting to {path}")]
+    Connect {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("sending {command}")]
+    Write {
+        command: String,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("reading the reply to {command}")]
+    Read {
+        command: String,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("the reply to {command} was not valid UTF-8")]
+    NotUtf8 { command: String },
+    #[error("parsing the reply to {command}")]
+    Parse {
+        command: String,
+        #[source]
+        source: serde_json::Error,
+    },
+}
+
+async fn query_json<T: serde::de::DeserializeOwned>(command: &str) -> Result<T, IpcError> {
+    let dir = socket_dir().ok_or(IpcError::NoSocketDir)?;
     let sock_path = dir.join(".socket.sock");
-    let mut stream = UnixStream::connect(&sock_path).await.ok()?;
-    stream.write_all(command.as_bytes()).await.ok()?;
-    stream.shutdown().await.ok()?;
+    let mut stream = UnixStream::connect(&sock_path)
+        .await
+        .map_err(|source| IpcError::Connect {
+            path: sock_path.display().to_string(),
+            source,
+        })?;
+    stream
+        .write_all(command.as_bytes())
+        .await
+        .map_err(|source| IpcError::Write {
+            command: command.to_string(),
+            source,
+        })?;
+    stream.shutdown().await.map_err(|source| IpcError::Write {
+        command: command.to_string(),
+        source,
+    })?;
 
     let mut buf = Vec::new();
     tokio::io::AsyncReadExt::read_to_end(&mut stream, &mut buf)
         .await
-        .ok()?;
-    let text = String::from_utf8(buf).ok()?;
-    serde_json::from_str(&text).ok()
+        .map_err(|source| IpcError::Read {
+            command: command.to_string(),
+            source,
+        })?;
+    let text = String::from_utf8(buf).map_err(|_| IpcError::NotUtf8 {
+        command: command.to_string(),
+    })?;
+    serde_json::from_str(&text).map_err(|source| IpcError::Parse {
+        command: command.to_string(),
+        source,
+    })
+}
+
+/// Run a query, logging the reason on failure. `None` here means "we could not
+/// find out", which callers must never action as "there is nothing".
+async fn query_or_log<T: serde::de::DeserializeOwned>(command: &str) -> Option<T> {
+    match query_json(command).await {
+        Ok(value) => Some(value),
+        Err(e) => {
+            log::warn!("hyprland: {e}");
+            None
+        }
+    }
 }
 
 /// Deserialize a JSON array element-wise, dropping the entries that fail.
@@ -122,7 +195,7 @@ fn parse_lenient<T: serde::de::DeserializeOwned>(values: Vec<serde_json::Value>)
 /// `StartMode::Active` that also emptied `units` and made layershellev call
 /// `signal.stop()`, killing the process outright.
 async fn fetch_full_state() -> Option<HyprState> {
-    let monitor_values: Vec<serde_json::Value> = query_json("j/monitors").await?;
+    let monitor_values: Vec<serde_json::Value> = query_or_log("j/monitors").await?;
     let monitors: Vec<MonitorInfo> = parse_lenient(monitor_values);
     if monitors.is_empty() {
         // Hyprland lists every enabled, connected monitor here. An empty list
@@ -132,11 +205,11 @@ async fn fetch_full_state() -> Option<HyprState> {
         return None;
     }
 
-    let workspaces: Vec<WorkspaceInfo> = query_json::<Vec<serde_json::Value>>("j/workspaces")
+    let workspaces: Vec<WorkspaceInfo> = query_or_log::<Vec<serde_json::Value>>("j/workspaces")
         .await
         .map(parse_lenient)
         .unwrap_or_default();
-    let active_window: Option<WindowInfo> = query_json::<WindowInfo>("j/activewindow")
+    let active_window: Option<WindowInfo> = query_or_log::<WindowInfo>("j/activewindow")
         .await
         .filter(|w| !w.class.is_empty());
 
@@ -206,7 +279,7 @@ pub type LayerMap = HashMap<String, Vec<String>>;
 /// `None` means the query failed, which callers must treat as "unknown" and
 /// never as "no layers are mapped".
 pub async fn fetch_layer_namespaces() -> Option<LayerMap> {
-    let raw: HashMap<String, MonitorLayers> = query_json("j/layers").await?;
+    let raw: HashMap<String, MonitorLayers> = query_or_log("j/layers").await?;
     Some(
         raw.into_iter()
             .map(|(monitor, layers)| {
