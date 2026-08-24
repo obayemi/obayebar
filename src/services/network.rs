@@ -435,68 +435,69 @@ async fn find_saved_connection(conn: &zbus::Connection, ssid: &str) -> Option<St
     None
 }
 
-pub fn connect_network(ssid: String) {
-    tokio::spawn(async move {
-        let Ok(conn) = zbus::Connection::system().await else {
-            return;
-        };
-        let Some(nm_proxy) = proxy(&conn, NM_BUS, NM_PATH, NM_BUS).await else {
-            return;
-        };
+/// Ask `NetworkManager` to connect to `ssid`.
+///
+/// Returns `Err` with a user-facing reason when the request itself fails. This
+/// used to be a detached `tokio::spawn` whose only outcome was a log line, so
+/// the UI's optimistic `connecting_ssid` had nothing to clear it: a synchronous
+/// failure — a stale AP so no device/AP pair is found, or an immediate
+/// activation error — left the row spinning forever, and the panel hides the
+/// connect button while a row is connecting, so that network became
+/// unretryable until Wi-Fi dropped or was toggled off.
+///
+/// A successful return only means `NetworkManager` accepted the request.
+/// Authentication happens afterwards, so the caller still needs its own
+/// deadline for asynchronous failures.
+pub async fn connect_network(ssid: String) -> Result<(), String> {
+    let conn = zbus::Connection::system()
+        .await
+        .map_err(|e| format!("no system bus: {e}"))?;
+    let nm_proxy = proxy(&conn, NM_BUS, NM_PATH, NM_BUS)
+        .await
+        .ok_or_else(|| "NetworkManager is unavailable".to_string())?;
 
-        let Some((dev_path, ap_path)) = find_wifi_device_and_ap(&conn, &nm_proxy, &ssid).await
-        else {
-            log::warn!("network: no wifi device found for connect");
-            return;
-        };
+    let (dev_path, ap_path) = find_wifi_device_and_ap(&conn, &nm_proxy, &ssid)
+        .await
+        .ok_or_else(|| format!("{ssid} is no longer in range"))?;
 
-        let Some(dev_obj) = zbus::zvariant::ObjectPath::try_from(dev_path.as_str()).ok() else {
-            return;
-        };
-        let Some(ap_obj) = zbus::zvariant::ObjectPath::try_from(ap_path.as_str()).ok() else {
-            return;
-        };
+    let dev_obj = zbus::zvariant::ObjectPath::try_from(dev_path.as_str())
+        .map_err(|e| format!("bad device path: {e}"))?;
+    let ap_obj = zbus::zvariant::ObjectPath::try_from(ap_path.as_str())
+        .map_err(|e| format!("bad access point path: {e}"))?;
 
-        if let Some(conn_path) = find_saved_connection(&conn, &ssid).await {
-            // Activate existing saved connection
-            let Some(conn_obj) = zbus::zvariant::ObjectPath::try_from(conn_path.as_str()).ok()
-            else {
-                return;
-            };
-            log::info!("network: activating saved connection for {ssid}");
-            match nm_proxy
-                .call::<_, _, zbus::zvariant::OwnedObjectPath>(
-                    "ActivateConnection",
-                    &(conn_obj, dev_obj, ap_obj),
-                )
-                .await
-            {
-                Ok(_) => log::info!("network: activated connection for {ssid}"),
-                Err(e) => log::warn!("network: ActivateConnection failed: {e}"),
-            }
-        } else {
-            // No saved connection — use AddAndActivateConnection with empty settings.
-            // NetworkManager's secret agent (e.g. nm-applet) will prompt for password.
-            log::info!("network: adding new connection for {ssid}");
-            let empty_settings: std::collections::HashMap<
-                &str,
-                std::collections::HashMap<&str, zbus::zvariant::Value<'_>>,
-            > = std::collections::HashMap::new();
-            match nm_proxy
-                .call::<_, _, (
-                    zbus::zvariant::OwnedObjectPath,
-                    zbus::zvariant::OwnedObjectPath,
-                )>(
-                    "AddAndActivateConnection",
-                    &(empty_settings, dev_obj, ap_obj),
-                )
-                .await
-            {
-                Ok(_) => log::info!("network: added+activated connection for {ssid}"),
-                Err(e) => log::warn!("network: AddAndActivateConnection failed: {e}"),
-            }
-        }
-    });
+    if let Some(conn_path) = find_saved_connection(&conn, &ssid).await {
+        // Activate existing saved connection
+        let conn_obj = zbus::zvariant::ObjectPath::try_from(conn_path.as_str())
+            .map_err(|e| format!("bad connection path: {e}"))?;
+        log::info!("network: activating saved connection for {ssid}");
+        nm_proxy
+            .call::<_, _, zbus::zvariant::OwnedObjectPath>(
+                "ActivateConnection",
+                &(conn_obj, dev_obj, ap_obj),
+            )
+            .await
+            .map(|_| log::info!("network: activated connection for {ssid}"))
+            .map_err(|e| format!("could not connect to {ssid}: {e}"))
+    } else {
+        // No saved connection — use AddAndActivateConnection with empty settings.
+        // NetworkManager's secret agent (e.g. nm-applet) will prompt for password.
+        log::info!("network: adding new connection for {ssid}");
+        let empty_settings: std::collections::HashMap<
+            &str,
+            std::collections::HashMap<&str, zbus::zvariant::Value<'_>>,
+        > = std::collections::HashMap::new();
+        nm_proxy
+            .call::<_, _, (
+                zbus::zvariant::OwnedObjectPath,
+                zbus::zvariant::OwnedObjectPath,
+            )>(
+                "AddAndActivateConnection",
+                &(empty_settings, dev_obj, ap_obj),
+            )
+            .await
+            .map(|_| log::info!("network: added+activated connection for {ssid}"))
+            .map_err(|e| format!("could not connect to {ssid}: {e}"))
+    }
 }
 
 pub fn stream() -> impl Stream<Item = NetworkInfo> {

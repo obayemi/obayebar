@@ -63,6 +63,12 @@ impl log::Log for FatalErrorLogger {
     }
 }
 
+/// How long a Wi-Fi connection attempt may show its spinner before we give up
+/// on it. `NetworkManager` authenticates asynchronously, so a bad passphrase or
+/// a missing secret agent can fail without any state change we could observe —
+/// this bounds the spinner so the row's connect button comes back.
+const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
 /// Parsed CLI arguments. Kept intentionally small — extend with care.
 #[derive(Debug, Default, Clone)]
 struct CliArgs {
@@ -271,6 +277,11 @@ pub enum Message {
     BluetoothForgetDevice(String),
     NetworkSetWifiEnabled(bool),
     NetworkConnect(String),
+    /// Outcome of the `NetworkManager` connect request itself.
+    NetworkConnectDone(Result<(), String>),
+    /// `CONNECT_TIMEOUT` elapsed for this SSID; clears a spinner that no
+    /// `NetworkManager` state change would ever clear.
+    NetworkConnectTimedOut(String),
     NetworkDisconnect,
     CloseAllPanels,
     /// Absolute target, from the audio panel's slider.
@@ -563,7 +574,40 @@ impl App {
             }
             Message::NetworkConnect(ssid) => {
                 self.connecting_ssid = Some(ssid.clone());
-                services::network::connect_network(ssid);
+                // Two independent ways out of the spinner, because neither
+                // covers the other: the `Result` catches a request that fails
+                // outright, and the deadline catches an authentication failure
+                // that never changes NetworkManager's state (so no
+                // `NetworkInfo` update ever arrives to clear it). Without both,
+                // the row keeps spinning and the panel hides its connect
+                // button, leaving that network unretryable.
+                let deadline_ssid = ssid.clone();
+                Task::batch([
+                    Task::perform(
+                        services::network::connect_network(ssid),
+                        Message::NetworkConnectDone,
+                    ),
+                    Task::perform(
+                        async move {
+                            tokio::time::sleep(CONNECT_TIMEOUT).await;
+                            deadline_ssid
+                        },
+                        Message::NetworkConnectTimedOut,
+                    ),
+                ])
+            }
+            Message::NetworkConnectDone(Err(reason)) => {
+                log::warn!("network: {reason}");
+                self.connecting_ssid = None;
+                Task::none()
+            }
+            Message::NetworkConnectTimedOut(ssid) => {
+                // Only clear if this is still the attempt we started: the user
+                // may have moved on to a different network in the meantime.
+                if self.connecting_ssid.as_deref() == Some(ssid.as_str()) {
+                    log::warn!("network: connecting to {ssid} timed out");
+                    self.connecting_ssid = None;
+                }
                 Task::none()
             }
             Message::NetworkDisconnect => {
