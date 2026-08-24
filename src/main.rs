@@ -444,6 +444,10 @@ impl App {
                 if self.hovered_notif_id == Some(id) {
                     self.hovered_notif_id = None;
                 }
+                services::notifications::emit_closed(
+                    id,
+                    services::notifications::close_reason::DISMISSED,
+                );
                 self.maybe_close_popup_window()
             }
             Message::NotifHoverEnter(id) => {
@@ -957,8 +961,23 @@ impl App {
 
     fn expire_popups(&mut self) -> Task<Message> {
         let now = chrono::Local::now();
+        // Collect the ids first: `Vec::retain` hands the closure nothing we can
+        // report on, and a client waiting on `NotificationClosed` needs the
+        // expiry signal as much as the dismissal one.
+        let expired: Vec<u32> = self
+            .popup_notifications
+            .iter()
+            .filter(|n| n.expire_at.is_some_and(|exp| now >= exp))
+            .map(|n| n.id)
+            .collect();
         self.popup_notifications
             .retain(|n| n.expire_at.is_none_or(|exp| now < exp));
+        for id in expired {
+            services::notifications::emit_closed(
+                id,
+                services::notifications::close_reason::EXPIRED,
+            );
+        }
         if let Some(hovered) = self.hovered_notif_id {
             if !self.popup_notifications.iter().any(|n| n.id == hovered) {
                 self.hovered_notif_id = None;

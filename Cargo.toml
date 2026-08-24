@@ -54,6 +54,7 @@ reqwest = { version = "0.13.4", default-features = false, features = ["rustls-no
 # now comes from the system store (/etc/ssl/certs) — a self-hosted GitLab behind
 # a private CA validates without extra config.
 rustls = { version = "0.23.43", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+thiserror = "2.0"
 secret-service = { version = "5", default-features = false, features = ["rt-tokio-crypto-rust"] }
 toml = { version = "1.1", default-features = false, features = ["parse", "serde", "std"] }
 
