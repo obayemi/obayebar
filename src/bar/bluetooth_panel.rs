@@ -1,4 +1,6 @@
-use super::widgets::{hover_button_style, icon_button, panel_with_exit, separator, styled_toggler};
+use super::widgets::{
+    hover_button_style, icon_button, panel_header, panel_with_exit, separator, styled_toggler,
+};
 use crate::panel::PanelKind;
 use crate::services::bluetooth::BluetoothInfo;
 use crate::Message;
@@ -167,19 +169,9 @@ fn discovery_button(discovering: bool) -> Element<'static, Message> {
 }
 
 pub fn view(bt: &BluetoothInfo) -> Element<'_, Message> {
-    let header = row![
-        text(bt.icon_name)
-            .font(style::ICON_FONT)
-            .size(style::FONT_SIZE_LARGE)
-            .color(style::M3_PRIMARY),
-        text("Bluetooth")
-            .size(style::FONT_SIZE_LARGE)
-            .color(style::M3_ON_SURFACE),
-        Space::new().width(Length::Fill),
-        styled_toggler(bt.powered, Message::BluetoothSetPowered),
-    ]
-    .spacing(style::SPACING_SMALLER)
-    .align_y(Alignment::Center);
+    let header = panel_header(bt.icon_name, "Bluetooth", style::M3_PRIMARY)
+        .push(Space::new().width(Length::Fill))
+        .push(styled_toggler(bt.powered, Message::BluetoothSetPowered));
 
     let mut content = column![header, separator()]
         .spacing(style::SPACING_NORMAL)
@@ -250,7 +242,7 @@ pub fn view(bt: &BluetoothInfo) -> Element<'_, Message> {
         .padding(style::PADDING_LARGE)
         .width(Length::Fill)
         .height(Length::Shrink)
-        .style(style::audio_panel_container);
+        .style(style::panel_container);
 
     panel_with_exit(PanelKind::Bluetooth, panel.into())
 }

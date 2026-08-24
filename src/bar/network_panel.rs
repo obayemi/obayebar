@@ -1,4 +1,4 @@
-use super::widgets::{icon_button, panel_with_exit, separator, styled_toggler};
+use super::widgets::{icon_button, panel_header, panel_with_exit, separator, styled_toggler};
 use crate::panel::PanelKind;
 use crate::services::network::NetworkInfo;
 use crate::Message;
@@ -140,19 +140,12 @@ pub fn view<'a>(
         network.icon_name
     };
 
-    let header = row![
-        text(header_icon)
-            .font(style::ICON_FONT)
-            .size(style::FONT_SIZE_LARGE)
-            .color(style::M3_PRIMARY),
-        text("Network")
-            .size(style::FONT_SIZE_LARGE)
-            .color(style::M3_ON_SURFACE),
-        Space::new().width(Length::Fill),
-        styled_toggler(network.wifi_enabled, Message::NetworkSetWifiEnabled),
-    ]
-    .spacing(style::SPACING_SMALLER)
-    .align_y(Alignment::Center);
+    let header = panel_header(header_icon, "Network", style::M3_PRIMARY)
+        .push(Space::new().width(Length::Fill))
+        .push(styled_toggler(
+            network.wifi_enabled,
+            Message::NetworkSetWifiEnabled,
+        ));
 
     let mut content = column![header, separator()]
         .spacing(style::SPACING_NORMAL)
@@ -256,7 +249,7 @@ pub fn view<'a>(
         .padding(style::PADDING_LARGE)
         .width(Length::Fill)
         .height(Length::Shrink)
-        .style(style::audio_panel_container);
+        .style(style::panel_container);
 
     panel_with_exit(PanelKind::Network, panel.into())
 }

@@ -14,7 +14,6 @@ use iced::widget::{
     button, column, container, image, mouse_area, row, scrollable, text, text_input, Column, Id,
     Space,
 };
-use iced::Background;
 use iced::{Alignment, Border, Color, Element, Length, Subscription, Task, Theme};
 use iced_layershell::to_layer_message;
 
@@ -275,28 +274,7 @@ impl Launcher {
             .on_input(Message::SearchChanged)
             .size(style::FONT_SIZE_LARGE)
             .padding(style::PADDING_NORMAL)
-            .style(|_theme, status| {
-                let border_color = match status {
-                    text_input::Status::Focused { .. } => style::M3_PRIMARY,
-                    text_input::Status::Hovered => style::M3_ON_SURFACE_VARIANT,
-                    _ => style::M3_OUTLINE_VARIANT,
-                };
-                text_input::Style {
-                    background: Background::Color(style::with_alpha(
-                        style::M3_SURFACE_CONTAINER,
-                        0.95,
-                    )),
-                    border: Border {
-                        radius: style::ROUNDING_EXTRA_SMALL.into(),
-                        width: 1.0,
-                        color: border_color,
-                    },
-                    icon: style::M3_ON_SURFACE_VARIANT,
-                    placeholder: style::M3_ON_SURFACE_VARIANT,
-                    value: style::M3_ON_SURFACE,
-                    selection: style::with_alpha(style::M3_PRIMARY, 0.3),
-                }
-            });
+            .style(style::search_input);
 
         let entries: Column<'_, Message> = self
             .filtered
@@ -321,7 +299,7 @@ impl Launcher {
                         .scroller_width(6.0)
                         .spacing(style::SPACING_SMALL),
                 ))
-                .style(scrollable_style)
+                .style(style::scrollbar)
                 .height(Length::Fill),
         ]
         .spacing(style::SPACING_NORMAL)
@@ -426,24 +404,11 @@ impl Launcher {
 
         button(entry_row.width(Length::Fill))
             .on_press(Message::Launch(entry_idx))
-            .style(move |_theme, status| {
-                let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
-                let bg_color = if hover {
-                    style::with_alpha(style::M3_ON_SURFACE, 0.08)
-                } else {
-                    bg
-                };
-                button::Style {
-                    background: Some(iced::Background::Color(bg_color)),
-                    text_color,
-                    border: Border {
-                        radius: style::ROUNDING_EXTRA_SMALL.into(),
-                        ..Border::default()
-                    },
-                    shadow: iced::Shadow::default(),
-                    snap: false,
-                }
-            })
+            .style(style::hover_button(
+                bg,
+                text_color,
+                style::ROUNDING_EXTRA_SMALL,
+            ))
             .padding([style::PADDING_SMALL, style::PADDING_NORMAL])
             .width(Length::Fill)
             .into()
@@ -663,50 +628,6 @@ fn decode_raster(data: &[u8], path: &std::path::Path) -> Option<Vec<u8>> {
         ::image::imageops::FilterType::Triangle,
     );
     Some(resized.to_rgba8().into_raw())
-}
-
-fn scrollable_style(_theme: &Theme, status: scrollable::Status) -> scrollable::Style {
-    let scroller_color = match status {
-        scrollable::Status::Hovered {
-            is_vertical_scrollbar_hovered: true,
-            ..
-        }
-        | scrollable::Status::Dragged {
-            is_vertical_scrollbar_dragged: true,
-            ..
-        } => style::M3_PRIMARY,
-        scrollable::Status::Hovered { .. } => style::M3_ON_SURFACE_VARIANT,
-        _ => style::M3_OUTLINE,
-    };
-    let rail = scrollable::Rail {
-        background: Some(Background::Color(style::with_alpha(
-            style::M3_SURFACE_CONTAINER,
-            0.5,
-        ))),
-        border: Border {
-            radius: 3.0.into(),
-            ..Border::default()
-        },
-        scroller: scrollable::Scroller {
-            background: Background::Color(scroller_color),
-            border: Border {
-                radius: 3.0.into(),
-                ..Border::default()
-            },
-        },
-    };
-    scrollable::Style {
-        container: container::Style::default(),
-        vertical_rail: rail,
-        horizontal_rail: rail,
-        gap: None,
-        auto_scroll: scrollable::AutoScroll {
-            background: Background::Color(style::with_alpha(style::M3_SURFACE_CONTAINER, 0.9)),
-            border: Border::default(),
-            shadow: iced::Shadow::default(),
-            icon: style::M3_ON_SURFACE,
-        },
-    }
 }
 
 pub fn theme(_launcher: &Launcher, theme: &Theme) -> iced::theme::Style {

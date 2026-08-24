@@ -1,4 +1,4 @@
-use super::widgets::{panel_with_exit, GaugeProgram};
+use super::widgets::{panel_header, panel_with_exit, GaugeProgram};
 use crate::panel::PanelKind;
 use crate::services::sysinfo::{self, SysInfo};
 use crate::Message;
@@ -149,17 +149,7 @@ fn net_widget(sysinfo: &SysInfo) -> Element<'_, Message> {
 }
 
 pub fn view(sysinfo: &SysInfo) -> Element<'_, Message> {
-    let header = row![
-        text(style::ICON_SPEED)
-            .font(style::ICON_FONT)
-            .size(style::FONT_SIZE_LARGE)
-            .color(style::M3_PRIMARY),
-        text("System")
-            .size(style::FONT_SIZE_LARGE)
-            .color(style::M3_ON_SURFACE),
-    ]
-    .spacing(style::SPACING_SMALLER)
-    .align_y(Alignment::Center);
+    let header = panel_header(style::ICON_SPEED, "System", style::M3_PRIMARY);
 
     let top_row = row![
         gauge_widget(
@@ -192,7 +182,7 @@ pub fn view(sysinfo: &SysInfo) -> Element<'_, Message> {
         .padding(style::PADDING_LARGE)
         .width(Length::Fill)
         .height(Length::Shrink)
-        .style(style::audio_panel_container);
+        .style(style::panel_container);
 
     panel_with_exit(PanelKind::Sysinfo, panel.into())
 }

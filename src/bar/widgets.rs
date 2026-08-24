@@ -5,7 +5,7 @@ use crate::Message;
 use iced::widget::canvas::{self, path::Arc, Frame, Geometry, LineCap, Path, Stroke};
 use iced::widget::{button, container, mouse_area, text, toggler, Space};
 use iced::{
-    Alignment, Border, Color, Element, Length, Padding, Point, Radians, Rectangle, Renderer, Theme,
+    Alignment, Color, Element, Length, Padding, Point, Radians, Rectangle, Renderer, Theme,
 };
 use obayebar::style;
 
@@ -75,6 +75,31 @@ impl canvas::Program<Message> for GaugeProgram {
     }
 }
 
+/// Standard panel header: an icon and a title, ready for trailing content.
+///
+/// Returns the `Row` rather than a finished element because the six panels
+/// differ in what follows the title — nothing, a toggler, or a count badge —
+/// and hiding that behind a builder would need a parameter per variant. The
+/// icon colour is a parameter because the GitLab panel uses the tertiary
+/// accent while the others use primary.
+pub fn panel_header<'a>(
+    icon: &'a str,
+    title: &'a str,
+    icon_color: Color,
+) -> iced::widget::Row<'a, Message> {
+    iced::widget::row![
+        text(icon)
+            .font(style::ICON_FONT)
+            .size(style::FONT_SIZE_LARGE)
+            .color(icon_color),
+        text(title)
+            .size(style::FONT_SIZE_LARGE)
+            .color(style::M3_ON_SURFACE),
+    ]
+    .spacing(style::SPACING_SMALLER)
+    .align_y(Alignment::Center)
+}
+
 /// 1px horizontal line used between panel sections.
 pub fn separator<'a>() -> Element<'a, Message> {
     container(Space::new().width(Length::Fill).height(1.0))
@@ -119,30 +144,13 @@ pub fn panel_with_exit(kind: PanelKind, content: Element<'_, Message>) -> Elemen
     .into()
 }
 
-/// Reusable button style closure: transparent (or caller-supplied) background
-/// that switches to an 8%-alpha `M3_ON_SURFACE` wash on hover/press.
+/// Panel flavour of `style::hover_button`, pinned to the panels' corner
+/// radius so the six call sites do not each repeat it.
 pub fn hover_button_style(
     bg: Color,
     text_color: Color,
 ) -> impl Fn(&iced::Theme, button::Status) -> button::Style + 'static {
-    move |_theme, status| {
-        let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
-        let bg_color = if hover {
-            style::with_alpha(style::M3_ON_SURFACE, 0.08)
-        } else {
-            bg
-        };
-        button::Style {
-            background: Some(iced::Background::Color(bg_color)),
-            text_color,
-            border: Border {
-                radius: style::ROUNDING_SMALL.into(),
-                ..Border::default()
-            },
-            shadow: iced::Shadow::default(),
-            snap: false,
-        }
-    }
+    style::hover_button(bg, text_color, style::ROUNDING_SMALL)
 }
 
 /// Small icon-only button with `hover_button_style` and transparent baseline.

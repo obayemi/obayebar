@@ -1,4 +1,4 @@
-use super::widgets::{hover_button_style, panel_with_exit, separator, GaugeProgram};
+use super::widgets::{hover_button_style, panel_header, panel_with_exit, separator, GaugeProgram};
 use crate::panel::PanelKind;
 use crate::services::battery::BatteryInfo;
 use crate::Message;
@@ -136,17 +136,7 @@ fn gauge_widget(battery: &BatteryInfo) -> Element<'_, Message> {
 }
 
 pub fn view(battery: &BatteryInfo) -> Element<'_, Message> {
-    let header = iced::widget::row![
-        text(battery.icon_name)
-            .font(style::ICON_FONT)
-            .size(style::FONT_SIZE_LARGE)
-            .color(style::M3_PRIMARY),
-        text("Battery")
-            .size(style::FONT_SIZE_LARGE)
-            .color(style::M3_ON_SURFACE),
-    ]
-    .spacing(style::SPACING_SMALLER)
-    .align_y(Alignment::Center);
+    let header = panel_header(battery.icon_name, "Battery", style::M3_PRIMARY);
 
     // Time remaining text
     let time_text = if battery.charging && battery.time_to_full > 0 {
@@ -192,7 +182,7 @@ pub fn view(battery: &BatteryInfo) -> Element<'_, Message> {
         .padding(style::PADDING_LARGE)
         .width(Length::Fill)
         .height(Length::Shrink)
-        .style(style::audio_panel_container);
+        .style(style::panel_container);
 
     panel_with_exit(PanelKind::Battery, panel.into())
 }

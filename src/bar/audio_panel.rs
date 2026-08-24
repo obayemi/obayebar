@@ -1,4 +1,4 @@
-use super::widgets::{hover_button_style, panel_with_exit, separator};
+use super::widgets::{hover_button_style, panel_header, panel_with_exit, separator};
 use crate::panel::PanelKind;
 use crate::services::audio::AudioInfo;
 use crate::Message;
@@ -98,17 +98,7 @@ fn volume_section(audio: &AudioInfo) -> Element<'_, Message> {
 }
 
 pub fn view(audio: &AudioInfo) -> Element<'_, Message> {
-    let header = row![
-        text(audio.icon_name)
-            .font(style::ICON_FONT)
-            .size(style::FONT_SIZE_LARGE)
-            .color(style::M3_PRIMARY),
-        text("Audio")
-            .size(style::FONT_SIZE_LARGE)
-            .color(style::M3_ON_SURFACE),
-    ]
-    .spacing(style::SPACING_SMALLER)
-    .align_y(Alignment::Center);
+    let header = panel_header(audio.icon_name, "Audio", style::M3_PRIMARY);
 
     // Output device selection
     let mut sink_list = column![text("Output device")
@@ -140,7 +130,7 @@ pub fn view(audio: &AudioInfo) -> Element<'_, Message> {
         .padding(style::PADDING_LARGE)
         .width(Length::Fill)
         .height(Length::Shrink)
-        .style(style::audio_panel_container);
+        .style(style::panel_container);
 
     panel_with_exit(PanelKind::Audio, panel.into())
 }

@@ -671,7 +671,9 @@ pub fn panel_wrapper_container(theme: &iced::Theme) -> container::Style {
 }
 
 /// Audio panel overlay container
-pub fn audio_panel_container(theme: &iced::Theme) -> container::Style {
+/// Background and rounding for every settings panel. Not audio-specific
+/// despite its old name — all six panels use it.
+pub fn panel_container(theme: &iced::Theme) -> container::Style {
     let _ = theme;
     container::Style {
         background: Some(Background::Color(with_alpha(
@@ -697,6 +699,114 @@ pub fn transparent_button(
         border: Border::default(),
         shadow: iced::Shadow::default(),
         snap: false,
+    }
+}
+
+/// Hover-wash button style, parameterised by corner radius.
+///
+/// The bar's panels and the launcher had byte-identical copies of this closure
+/// differing only in the radius. It lives in the lib rather than in
+/// `bar::widgets` because `mod bar` is declared in the binary crate, so the
+/// launcher — a separate binary — cannot reach anything defined there.
+pub fn hover_button(
+    bg: Color,
+    text_color: Color,
+    radius: f32,
+) -> impl Fn(&iced::Theme, iced::widget::button::Status) -> iced::widget::button::Style + 'static {
+    move |_theme, status| {
+        let hovered = matches!(
+            status,
+            iced::widget::button::Status::Hovered | iced::widget::button::Status::Pressed
+        );
+        let background = if hovered {
+            with_alpha(M3_ON_SURFACE, 0.08)
+        } else {
+            bg
+        };
+        iced::widget::button::Style {
+            background: Some(Background::Color(background)),
+            text_color,
+            border: Border {
+                radius: radius.into(),
+                ..Border::default()
+            },
+            shadow: iced::Shadow::default(),
+            snap: false,
+        }
+    }
+}
+
+/// Right-side scrollbar styling, shared by the launcher and the GitLab panel.
+pub fn scrollbar(
+    _theme: &iced::Theme,
+    status: iced::widget::scrollable::Status,
+) -> iced::widget::scrollable::Style {
+    use iced::widget::scrollable;
+
+    let scroller_color = match status {
+        scrollable::Status::Hovered {
+            is_vertical_scrollbar_hovered: true,
+            ..
+        }
+        | scrollable::Status::Dragged {
+            is_vertical_scrollbar_dragged: true,
+            ..
+        } => M3_PRIMARY,
+        scrollable::Status::Hovered { .. } => M3_ON_SURFACE_VARIANT,
+        _ => M3_OUTLINE,
+    };
+    let rail = scrollable::Rail {
+        background: Some(Background::Color(with_alpha(M3_SURFACE_CONTAINER, 0.5))),
+        border: Border {
+            radius: 3.0.into(),
+            ..Border::default()
+        },
+        scroller: scrollable::Scroller {
+            background: Background::Color(scroller_color),
+            border: Border {
+                radius: 3.0.into(),
+                ..Border::default()
+            },
+        },
+    };
+    scrollable::Style {
+        container: container::Style::default(),
+        vertical_rail: rail,
+        horizontal_rail: rail,
+        gap: None,
+        auto_scroll: scrollable::AutoScroll {
+            background: Background::Color(with_alpha(M3_SURFACE_CONTAINER, 0.9)),
+            border: Border::default(),
+            shadow: iced::Shadow::default(),
+            icon: M3_ON_SURFACE,
+        },
+    }
+}
+
+/// Text-input styling, shared by the launcher's search field and the GitLab
+/// panel's token field.
+pub fn search_input(
+    _theme: &iced::Theme,
+    status: iced::widget::text_input::Status,
+) -> iced::widget::text_input::Style {
+    use iced::widget::text_input;
+
+    let border_color = match status {
+        text_input::Status::Focused { .. } => M3_PRIMARY,
+        text_input::Status::Hovered => M3_ON_SURFACE_VARIANT,
+        _ => M3_OUTLINE_VARIANT,
+    };
+    text_input::Style {
+        background: Background::Color(with_alpha(M3_SURFACE_CONTAINER, 0.95)),
+        border: Border {
+            radius: ROUNDING_EXTRA_SMALL.into(),
+            width: 1.0,
+            color: border_color,
+        },
+        icon: M3_ON_SURFACE_VARIANT,
+        placeholder: M3_ON_SURFACE_VARIANT,
+        value: M3_ON_SURFACE,
+        selection: with_alpha(M3_PRIMARY, 0.3),
     }
 }
 

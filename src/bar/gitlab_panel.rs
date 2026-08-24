@@ -1,55 +1,10 @@
-use super::widgets::{hover_button_style, panel_with_exit, separator};
+use super::widgets::{hover_button_style, panel_header, panel_with_exit, separator};
 use crate::panel::PanelKind;
 use crate::services::gitlab::{self, AuthState, GitlabInfo, TodoItem, TODO_PAGE_PATH};
 use crate::Message;
 use iced::widget::{button, column, container, row, scrollable, text, text_input, Space};
-use iced::{Alignment, Background, Border, Color, Element, Length};
+use iced::{Alignment, Color, Element, Length};
 use obayebar::style;
-
-/// Right-side scrollbar styled like the launcher's.
-fn scrollable_style(_theme: &iced::Theme, status: scrollable::Status) -> scrollable::Style {
-    let scroller_color = match status {
-        scrollable::Status::Hovered {
-            is_vertical_scrollbar_hovered: true,
-            ..
-        }
-        | scrollable::Status::Dragged {
-            is_vertical_scrollbar_dragged: true,
-            ..
-        } => style::M3_PRIMARY,
-        scrollable::Status::Hovered { .. } => style::M3_ON_SURFACE_VARIANT,
-        _ => style::M3_OUTLINE,
-    };
-    let rail = scrollable::Rail {
-        background: Some(Background::Color(style::with_alpha(
-            style::M3_SURFACE_CONTAINER,
-            0.5,
-        ))),
-        border: Border {
-            radius: 3.0.into(),
-            ..Border::default()
-        },
-        scroller: scrollable::Scroller {
-            background: Background::Color(scroller_color),
-            border: Border {
-                radius: 3.0.into(),
-                ..Border::default()
-            },
-        },
-    };
-    scrollable::Style {
-        container: container::Style::default(),
-        vertical_rail: rail,
-        horizontal_rail: rail,
-        gap: None,
-        auto_scroll: scrollable::AutoScroll {
-            background: Background::Color(style::with_alpha(style::M3_SURFACE_CONTAINER, 0.9)),
-            border: Border::default(),
-            shadow: iced::Shadow::default(),
-            icon: style::M3_ON_SURFACE,
-        },
-    }
-}
 
 fn todo_entry(item: &TodoItem) -> Element<'_, Message> {
     let action_label = format!(
@@ -130,25 +85,7 @@ fn token_input_row<'a>(value: &str) -> Element<'a, Message> {
         .size(style::FONT_SIZE_NORMAL)
         .padding(style::PADDING_SMALL)
         .width(Length::Fill)
-        .style(|_theme, status| {
-            let border_color = match status {
-                text_input::Status::Focused { .. } => style::M3_PRIMARY,
-                text_input::Status::Hovered => style::M3_ON_SURFACE_VARIANT,
-                _ => style::M3_OUTLINE_VARIANT,
-            };
-            text_input::Style {
-                background: Background::Color(style::with_alpha(style::M3_SURFACE_CONTAINER, 0.95)),
-                border: Border {
-                    radius: style::ROUNDING_EXTRA_SMALL.into(),
-                    width: 1.0,
-                    color: border_color,
-                },
-                icon: style::M3_ON_SURFACE_VARIANT,
-                placeholder: style::M3_ON_SURFACE_VARIANT,
-                value: style::M3_ON_SURFACE,
-                selection: style::with_alpha(style::M3_PRIMARY, 0.3),
-            }
-        });
+        .style(style::search_input);
 
     let paste = button(
         text(style::ICON_CONTENT_PASTE)
@@ -309,25 +246,15 @@ fn list_view(info: &GitlabInfo) -> Element<'_, Message> {
                 .scroller_width(6.0)
                 .spacing(style::SPACING_SMALL),
         ))
-        .style(scrollable_style)
+        .style(style::scrollbar)
         .height(Length::Fill)
         .into()
 }
 
 #[allow(clippy::too_many_lines)]
 pub fn view<'a>(info: &'a GitlabInfo, token_input: &'a str) -> Element<'a, Message> {
-    let mut header = row![
-        text(style::ICON_TASK_ALT)
-            .font(style::ICON_FONT)
-            .size(style::FONT_SIZE_LARGE)
-            .color(style::M3_TERTIARY),
-        text("GitLab todos")
-            .size(style::FONT_SIZE_LARGE)
-            .color(style::M3_ON_SURFACE),
-        Space::new().width(Length::Fill),
-    ]
-    .spacing(style::SPACING_SMALLER)
-    .align_y(Alignment::Center);
+    let mut header = panel_header(style::ICON_TASK_ALT, "GitLab todos", style::M3_TERTIARY)
+        .push(Space::new().width(Length::Fill));
 
     if info.total > 0 {
         header = header.push(
@@ -363,7 +290,7 @@ pub fn view<'a>(info: &'a GitlabInfo, token_input: &'a str) -> Element<'a, Messa
         .padding(style::PADDING_LARGE)
         .width(Length::Fill)
         .height(Length::Fill)
-        .style(style::audio_panel_container);
+        .style(style::panel_container);
 
     panel_with_exit(PanelKind::Gitlab, panel.into())
 }
