@@ -1,6 +1,6 @@
 //! XDG base-directory helpers, anchored to the obayebar subdir.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 const APP_DIR: &str = "obayebar";
 
@@ -46,4 +46,54 @@ pub fn runtime_dir() -> Option<PathBuf> {
         return None;
     }
     Some(PathBuf::from(base).join(APP_DIR))
+}
+
+/// Expand a leading `~` using `$HOME`.
+///
+/// Config files are hand-written, and `~/Images/wallpapers` is how a person
+/// writes that path. Only a leading `~` component expands — a `~` anywhere else
+/// is a legitimate filename character and is left alone.
+#[must_use]
+pub fn expand_tilde(path: &Path) -> PathBuf {
+    let Ok(rest) = path.strip_prefix("~") else {
+        return path.to_path_buf();
+    };
+    match std::env::var("HOME") {
+        Ok(home) if !home.is_empty() => PathBuf::from(home).join(rest),
+        _ => {
+            log::warn!(
+                "xdg: cannot expand {} because HOME is unset",
+                path.display()
+            );
+            path.to_path_buf()
+        }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::panic)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn absolute_and_relative_paths_are_untouched() {
+        assert_eq!(expand_tilde(Path::new("/etc/x")), PathBuf::from("/etc/x"));
+        assert_eq!(expand_tilde(Path::new("a/b")), PathBuf::from("a/b"));
+    }
+
+    #[test]
+    fn leading_tilde_expands() {
+        let expanded = expand_tilde(Path::new("~/a/b"));
+        assert!(!expanded.starts_with("~"));
+        assert!(expanded.ends_with("a/b"));
+    }
+
+    #[test]
+    fn tilde_inside_a_path_is_a_normal_character() {
+        // "~" is legal in a filename; only the leading component is special.
+        assert_eq!(
+            expand_tilde(Path::new("/tmp/~backup/x")),
+            PathBuf::from("/tmp/~backup/x")
+        );
+    }
 }

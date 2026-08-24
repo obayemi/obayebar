@@ -20,7 +20,7 @@
 //!   would truncate it.
 
 use std::fmt::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// `zindex` for the per-monitor blocks this module generates.
 ///
@@ -232,21 +232,6 @@ pub fn generated_path() -> Option<PathBuf> {
     crate::xdg::runtime_dir().map(|d| d.join("hyprlock.conf"))
 }
 
-/// Expand a leading `~` using `$HOME`.
-///
-/// Config files are hand-written, and `~/.config/hypr/hyprlock.conf` is how a
-/// person writes that path.
-#[must_use]
-pub fn expand_tilde(path: &Path) -> PathBuf {
-    let Ok(text) = path.strip_prefix("~") else {
-        return path.to_path_buf();
-    };
-    match std::env::var("HOME") {
-        Ok(home) if !home.is_empty() => PathBuf::from(home).join(text),
-        _ => path.to_path_buf(),
-    }
-}
-
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
@@ -389,21 +374,5 @@ mod tests {
             !has_monitorless_background(base),
             "a monitor-less input-field is not a monitor-less background"
         );
-    }
-
-    #[test]
-    fn expand_tilde_uses_home() {
-        // Only the leading component expands; a bare path is untouched.
-        assert_eq!(
-            expand_tilde(Path::new("/etc/x")),
-            PathBuf::from("/etc/x"),
-            "absolute paths are left alone"
-        );
-        let expanded = expand_tilde(Path::new("~/a/b"));
-        assert!(
-            !expanded.starts_with("~"),
-            "tilde should have been replaced"
-        );
-        assert!(expanded.ends_with("a/b"));
     }
 }

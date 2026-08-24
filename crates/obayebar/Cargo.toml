@@ -48,10 +48,12 @@ resvg.workspace = true
 reqwest.workspace = true
 rustls.workspace = true
 secret-service.workspace = true
-# Moves to obayebar-core with config.rs; still bar-side while this commit is a
-# pure file move.
-toml.workspace = true
 thiserror.workspace = true
 
 [lints]
 workspace = true
+
+# Only the config-precedence tests parse TOML directly; the schema and its
+# parsing live in obayebar-core.
+[dev-dependencies]
+toml.workspace = true

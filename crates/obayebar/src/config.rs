@@ -1,30 +1,19 @@
-//! TOML config from `$XDG_CONFIG_HOME/obayebar/config.toml` plus CLI overrides.
+//! The bar's own configuration policy: CLI overrides, env vars, and the
+//! precedence between them.
+//!
+//! The file *schema* lives in `obayebar_core::config`, because every binary
+//! parses the same file and `deny_unknown_fields` makes a partial view reject
+//! it. What is here is GitLab policy plus a process-global `OnceLock` that has
+//! no business in a crate the lock screen links.
 //!
 //! Per-field precedence: CLI flag > env var (where applicable) > config file > default.
 
-use std::path::PathBuf;
 use std::sync::OnceLock;
 
-use serde::Deserialize;
-
-use obayebar_core::xdg;
+pub use obayebar_core::config::Config;
 
 const DEFAULT_GITLAB_HOST: &str = "https://gitlab.com";
 const ENV_GITLAB_URL: &str = "OBAYEBAR_GITLAB_URL";
-
-/// File-shaped configuration, deserialized from TOML.
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct Config {
-    pub gitlab: GitlabConfig,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct GitlabConfig {
-    pub enable: bool,
-    pub url: Option<String>,
-}
 
 /// CLI flags that override file values.
 #[derive(Debug, Default, Clone)]
@@ -39,27 +28,6 @@ pub struct CliOverrides {
 pub struct Resolved {
     gitlab_enable: bool,
     gitlab_host: String,
-}
-
-impl Config {
-    #[must_use]
-    pub fn load() -> Self {
-        let Some(path) = config_file_path() else {
-            return Self::default();
-        };
-        let content = match std::fs::read_to_string(&path) {
-            Ok(s) => s,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Self::default(),
-            Err(e) => {
-                log::warn!("config: could not read {}: {e}", path.display());
-                return Self::default();
-            }
-        };
-        toml::from_str::<Self>(&content).unwrap_or_else(|e| {
-            log::warn!("config: ignoring {} ({e})", path.display());
-            Self::default()
-        })
-    }
 }
 
 impl Resolved {
@@ -102,10 +70,6 @@ fn normalize_host(s: &str) -> String {
     s.trim().trim_end_matches('/').to_string()
 }
 
-fn config_file_path() -> Option<PathBuf> {
-    xdg::config_dir().map(|d| d.join("config.toml"))
-}
-
 static RESOLVED: OnceLock<Resolved> = OnceLock::new();
 
 pub fn install(file: &Config, cli: &CliOverrides) {
@@ -126,36 +90,6 @@ mod tests {
 
     fn parse(s: &str) -> Config {
         toml::from_str(s).unwrap_or_else(|e| panic!("parse failed: {e}"))
-    }
-
-    #[test]
-    fn empty_file_yields_defaults() {
-        let cfg = parse("");
-        assert!(!cfg.gitlab.enable);
-        assert!(cfg.gitlab.url.is_none());
-    }
-
-    #[test]
-    fn parses_gitlab_enable_only() {
-        let cfg = parse("[gitlab]\nenable = true\n");
-        assert!(cfg.gitlab.enable);
-        assert!(cfg.gitlab.url.is_none());
-    }
-
-    #[test]
-    fn parses_gitlab_url_only() {
-        let cfg = parse("[gitlab]\nurl = \"https://gitlab.example.com\"\n");
-        assert!(!cfg.gitlab.enable);
-        assert_eq!(
-            cfg.gitlab.url.as_deref(),
-            Some("https://gitlab.example.com")
-        );
-    }
-
-    #[test]
-    fn unknown_field_is_rejected() {
-        let err = toml::from_str::<Config>("[gitlab]\nenabled = true\n");
-        assert!(err.is_err(), "expected typo to be rejected, got {err:?}");
     }
 
     #[test]

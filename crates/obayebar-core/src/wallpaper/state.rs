@@ -14,7 +14,9 @@ use serde::{Deserialize, Serialize};
 /// Bumped when the on-disk shape changes incompatibly. A file with any other
 /// version is discarded rather than migrated — it holds a wallpaper choice, so
 /// regenerating it costs one shuffle.
-pub const VERSION: u32 = 1;
+///
+/// v2 re-keyed `monitors` from the port name to `MonitorInfo::stable_key`.
+pub const VERSION: u32 = 2;
 
 /// File name inside the state directory.
 pub const FILE_NAME: &str = "wallpapers.json";
@@ -22,8 +24,13 @@ pub const FILE_NAME: &str = "wallpapers.json";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct State {
     pub version: u32,
-    /// Monitor name -> the wallpaper currently on it. A `BTreeMap` so the
-    /// serialized form is stable and diffable.
+    /// `MonitorInfo::stable_key` -> the wallpaper currently on that monitor.
+    ///
+    /// Keyed by the panel description rather than the port, because DPMS
+    /// cycles reshuffle ports: a wallpaper remembered against `DP-9` would be
+    /// lost the moment the same screen came back as `DP-10`, and the lock
+    /// screen — which keys on description too — would find nothing. A
+    /// `BTreeMap` so the serialized form is stable and diffable.
     pub monitors: BTreeMap<String, PathBuf>,
     /// The shuffled pool, so "next" means the same thing after a restart.
     pub order: Vec<PathBuf>,

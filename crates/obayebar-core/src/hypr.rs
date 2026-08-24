@@ -67,6 +67,22 @@ pub struct MonitorInfo {
 }
 
 impl MonitorInfo {
+    /// The key to remember this monitor by across disconnects.
+    ///
+    /// The description when there is one, because it names the physical panel:
+    /// port names get reshuffled across DPMS cycles, so a wallpaper remembered
+    /// against `DP-9` is lost the moment the same screen comes back as `DP-10`.
+    /// Falls back to the port name, which is at least unique per compositor.
+    #[must_use]
+    pub fn stable_key(&self) -> String {
+        let described = self.description.trim();
+        if described.is_empty() {
+            self.name.clone()
+        } else {
+            described.to_string()
+        }
+    }
+
     /// Whether this monitor can meaningfully carry its own content.
     #[must_use]
     pub fn is_usable(&self) -> bool {
