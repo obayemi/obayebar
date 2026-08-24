@@ -218,8 +218,8 @@ pub fn stream() -> impl Stream<Item = HyprEvent> {
                 Some((HyprEvent::State(hypr_state), State::Streaming(reader)))
             }
             State::Streaming(mut reader) => {
-                // Skip uninteresting events (windowtitle, submap, config reloaded,
-                // activewindowv2, etc.) without ever waking the UI thread.
+                // Loop until an event `classify_event` cares about, so noise
+                // (windowtitle, submap, activewindowv2, …) never wakes the UI.
                 loop {
                     let mut line = String::new();
                     match reader.read_line(&mut line).await {
@@ -245,25 +245,150 @@ pub fn stream() -> impl Stream<Item = HyprEvent> {
 async fn parse_event(line: &str) -> Option<HyprEvent> {
     let (event_name, data) = line.split_once(">>")?;
 
-    match event_name {
+    match classify_event(event_name) {
         // Active window: parse class,title directly from event data — no need
         // to re-query the socket. Event payload is "WINDOWCLASS,WINDOWTITLE".
-        "activewindow" => {
+        EventAction::ActiveWindow => {
             let win = data.split_once(',').map(|(class, title)| WindowInfo {
                 class: class.to_string(),
                 title: title.to_string(),
             });
             Some(HyprEvent::ActiveWindow(win.filter(|w| !w.class.is_empty())))
         }
-        // Window/workspace/monitor changes that affect what we render: refresh.
-        "workspace" | "workspacev2" | "createworkspace" | "createworkspacev2"
-        | "destroyworkspace" | "destroyworkspacev2" | "focusedmon" | "focusedmonv2"
-        | "openwindow" | "closewindow" | "movewindow" | "movewindowv2" | "monitoraddedv2"
-        | "monitorremoved" | "monitorremovedv2" | "changefloatingmode" | "urgent" => {
-            Some(HyprEvent::State(fetch_full_state().await))
+        EventAction::Refresh => Some(HyprEvent::State(fetch_full_state().await)),
+        EventAction::Ignore => {
+            // Logged so a Hyprland rename of a handled event shows up as a
+            // named unknown instead of silently becoming "we stopped
+            // refreshing". Trace level: this fires on every title change.
+            log::trace!("hyprland: ignoring event {event_name}");
+            None
         }
-        // Ignore high-frequency noise: title changes, submap changes, activewindowv2
-        // (duplicate of activewindow), config reloads, etc.
-        _ => None,
+    }
+}
+
+/// What a Hyprland IPC event name should make the bar do. Split out from the
+/// socket handling so the arm list is testable without a compositor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EventAction {
+    /// Parse the active window straight out of the event payload.
+    ActiveWindow,
+    /// Re-query full state: something we render changed.
+    Refresh,
+    /// High-frequency noise we deliberately drop.
+    Ignore,
+}
+
+/// Map a Hyprland event name to the action it requires.
+///
+/// The refresh set is everything that can change the workspace list, which
+/// monitor a workspace lives on, the focused monitor, or the set of connected
+/// monitors. `monitoradded` is listed alongside `monitoraddedv2`: Hyprland
+/// emits both, and relying on only one couples us to that staying true.
+#[must_use]
+pub fn classify_event(event_name: &str) -> EventAction {
+    match event_name {
+        "activewindow" => EventAction::ActiveWindow,
+        "workspace"
+        | "workspacev2"
+        | "createworkspace"
+        | "createworkspacev2"
+        | "destroyworkspace"
+        | "destroyworkspacev2"
+        // Moving a workspace between monitors changes exactly the
+        // monitor->workspace mapping the indicator renders.
+        | "moveworkspace"
+        | "moveworkspacev2"
+        | "focusedmon"
+        | "focusedmonv2"
+        | "openwindow"
+        | "closewindow"
+        | "movewindow"
+        | "movewindowv2"
+        | "monitoradded"
+        | "monitoraddedv2"
+        | "monitorremoved"
+        | "monitorremovedv2"
+        // A layout change can enable/disable or move an output without an
+        // add/remove pair.
+        | "monitorlayoutchanged"
+        // A reload can redefine monitors and workspace rules wholesale.
+        | "configreloaded"
+        | "changefloatingmode"
+        | "urgent" => EventAction::Refresh,
+        // Title changes, submap changes, activewindowv2 (a duplicate of
+        // activewindow), and everything else we do not render.
+        _ => EventAction::Ignore,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{classify_event, EventAction};
+
+    #[test]
+    fn active_window_is_parsed_from_the_payload() {
+        assert_eq!(classify_event("activewindow"), EventAction::ActiveWindow);
+    }
+
+    #[test]
+    fn monitor_topology_events_force_a_refresh() {
+        // These drive bar placement, so a miss here strands a monitor without
+        // a bar until some unrelated event happens to refresh.
+        for name in [
+            "monitoradded",
+            "monitoraddedv2",
+            "monitorremoved",
+            "monitorremovedv2",
+            "monitorlayoutchanged",
+            "configreloaded",
+        ] {
+            assert_eq!(classify_event(name), EventAction::Refresh, "{name}");
+        }
+    }
+
+    #[test]
+    fn workspace_moves_between_monitors_force_a_refresh() {
+        // The monitor->workspace mapping is what the indicator renders.
+        assert_eq!(classify_event("moveworkspace"), EventAction::Refresh);
+        assert_eq!(classify_event("moveworkspacev2"), EventAction::Refresh);
+    }
+
+    #[test]
+    fn workspace_and_window_events_force_a_refresh() {
+        for name in [
+            "workspace",
+            "workspacev2",
+            "createworkspace",
+            "createworkspacev2",
+            "destroyworkspace",
+            "destroyworkspacev2",
+            "focusedmon",
+            "focusedmonv2",
+            "openwindow",
+            "closewindow",
+            "movewindow",
+            "movewindowv2",
+            "changefloatingmode",
+            "urgent",
+        ] {
+            assert_eq!(classify_event(name), EventAction::Refresh, "{name}");
+        }
+    }
+
+    #[test]
+    fn high_frequency_noise_is_ignored() {
+        // activewindowv2 duplicates activewindow; the rest we do not render.
+        for name in ["windowtitle", "windowtitlev2", "activewindowv2", "submap"] {
+            assert_eq!(classify_event(name), EventAction::Ignore, "{name}");
+        }
+    }
+
+    #[test]
+    fn unknown_events_are_ignored_rather_than_refreshing() {
+        assert_eq!(
+            classify_event("somethinghyprlandaddedlater"),
+            EventAction::Ignore
+        );
+        assert_eq!(classify_event(""), EventAction::Ignore);
     }
 }

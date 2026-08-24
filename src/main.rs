@@ -262,7 +262,10 @@ pub enum Message {
     NotifHoverExit(u32),
     PanelOpen(PanelKind, Option<String>),
     Bluetooth(BluetoothInfo),
-    BluetoothToggleDevice { path: String, connected: bool },
+    BluetoothToggleDevice {
+        path: String,
+        connected: bool,
+    },
     BluetoothSetPowered(bool),
     BluetoothSetDiscovery(bool),
     BluetoothForgetDevice(String),
@@ -270,7 +273,11 @@ pub enum Message {
     NetworkConnect(String),
     NetworkDisconnect,
     CloseAllPanels,
+    /// Absolute target, from the audio panel's slider.
     AudioSetVolume(f32),
+    /// Relative change, from scrolling the bar's volume icon. Relative because
+    /// that handler lives inside a `lazy` subtree and must not capture state.
+    AudioNudgeVolume(f32),
     AudioSetMute(bool),
     AudioSetDefaultSink(u32),
     AudioOpenPavucontrol,
@@ -565,11 +572,11 @@ impl App {
                 Task::none()
             }
             Message::CloseAllPanels => self.close_all_panels(),
-            Message::AudioSetVolume(vol) => {
-                self.audio.volume = vol;
-                self.audio.icon_name = crate::services::audio::volume_icon(vol, self.audio.muted);
-                services::audio::send_command(AudioCommand::Volume(vol));
-                Task::none()
+            Message::AudioSetVolume(vol) => self.set_volume(vol),
+            Message::AudioNudgeVolume(delta) => {
+                // The bar's scroll handler is cached by `lazy`, so it sends a
+                // relative delta and the base volume is resolved here.
+                self.set_volume(self.audio.volume + delta)
             }
             Message::AudioSetMute(muted) => {
                 self.audio.muted = muted;
@@ -868,6 +875,17 @@ impl App {
         }
 
         Subscription::batch(subs)
+    }
+
+    /// Apply `volume` optimistically and forward it to `PipeWire`. The optimistic
+    /// update keeps the slider and icon responsive; the service's next
+    /// `AudioInfo` corrects it if the write did not land.
+    fn set_volume(&mut self, volume: f32) -> Task<Message> {
+        let volume = volume.clamp(0.0, 1.0);
+        self.audio.volume = volume;
+        self.audio.icon_name = services::audio::volume_icon(volume, self.audio.muted);
+        services::audio::send_command(AudioCommand::Volume(volume));
+        Task::none()
     }
 
     fn close_all_panels(&mut self) -> Task<Message> {

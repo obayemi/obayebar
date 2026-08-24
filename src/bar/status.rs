@@ -184,7 +184,6 @@ pub fn view(
         .spacing(style::SPACING_SMALLER / 2.0)
         .align_x(Alignment::Center);
 
-    let audio_volume = audio.volume;
     let audio_icon = mouse_area(
         text(audio.icon_name)
             .font(style::ICON_FONT)
@@ -197,13 +196,18 @@ pub fn view(
         monitor.map(String::from),
     ))
     .on_press(Message::AudioOpenPavucontrol)
-    .on_scroll(move |delta| {
+    // Emit a *relative* nudge rather than an absolute target. This subtree is
+    // built inside `lazy(status_cache_key(..))`, and that key deliberately
+    // tracks only `audio.icon_name` — which buckets at 1/33/66% — so a closure
+    // capturing the current volume would keep serving a stale base after the
+    // first scroll step and the volume would stop moving. Resolving the base in
+    // `update()` keeps this closure state-free, so caching it stays correct.
+    .on_scroll(|delta| {
         let dy = match delta {
             mouse::ScrollDelta::Lines { y, .. } => y,
             mouse::ScrollDelta::Pixels { y, .. } => y / 120.0,
         };
-        let new_vol = (audio_volume + dy * VOLUME_SCROLL_STEP).clamp(0.0, 1.0);
-        Message::AudioSetVolume(new_vol)
+        Message::AudioNudgeVolume(dy * VOLUME_SCROLL_STEP)
     });
 
     let network_icon = mouse_area(
