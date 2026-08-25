@@ -16,7 +16,10 @@ Toggles the application launcher drawn by the running obayebar.
   -V, --version   Print version";
 
 fn main() {
-    for arg in std::env::args().skip(1) {
+    // Every arm below is terminal, so only the first argument can ever be
+    // acted on; take it explicitly rather than looping over an iterator that
+    // is never advanced twice.
+    if let Some(arg) = std::env::args().nth(1) {
         match arg.as_str() {
             "-h" | "--help" => {
                 println!("{USAGE}");

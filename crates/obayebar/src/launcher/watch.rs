@@ -90,7 +90,7 @@ async fn wait_for_change() -> bool {
         }
     };
 
-    let mut watched: HashMap<WatchDescriptor, Option<OsString>> = HashMap::new();
+    let mut by_descriptor: HashMap<WatchDescriptor, Option<OsString>> = HashMap::new();
     let watches = inotify.watches();
     for target in &targets {
         let mut watches = watches.clone();
@@ -98,7 +98,7 @@ async fn wait_for_change() -> bool {
             // A directory can legitimately appear under two targets (an
             // application directory and the parent of a symlink to another);
             // inotify returns the same descriptor, and the broader watch wins.
-            Ok(wd) => match watched.entry(wd) {
+            Ok(wd) => match by_descriptor.entry(wd) {
                 std::collections::hash_map::Entry::Occupied(mut slot) => {
                     if target.name.is_none() {
                         slot.insert(None);
@@ -111,7 +111,7 @@ async fn wait_for_change() -> bool {
             Err(err) => log::debug!("launcher: not watching {} ({err})", target.dir.display()),
         }
     }
-    if watched.is_empty() {
+    if by_descriptor.is_empty() {
         return false;
     }
 
@@ -127,7 +127,7 @@ async fn wait_for_change() -> bool {
     loop {
         match events.next().await {
             Some(Ok(event)) => {
-                if is_relevant(&watched, &event.wd, event.name.as_deref()) {
+                if is_relevant(&by_descriptor, &event.wd, event.name.as_deref()) {
                     break;
                 }
             }
@@ -252,7 +252,7 @@ mod tests {
         std::fs::create_dir_all(&apps).unwrap();
 
         assert_eq!(
-            watch_targets(&[apps.clone()]),
+            watch_targets(std::slice::from_ref(&apps)),
             vec![Target {
                 dir: apps,
                 name: None
@@ -263,7 +263,7 @@ mod tests {
     #[test]
     fn a_directory_that_does_not_exist_is_not_watched() {
         let scratch = ScratchDir::new("absent");
-        assert!(watch_targets(&[scratch.0.join("nothing/applications")]).is_empty());
+        assert_eq!(watch_targets(&[scratch.0.join("nothing/applications")]), []);
     }
 
     #[test]
@@ -278,7 +278,7 @@ mod tests {
         std::os::unix::fs::symlink(scratch.0.join("generation-1"), &link).unwrap();
 
         let apps = link.join("share/applications");
-        let targets = watch_targets(&[apps.clone()]);
+        let targets = watch_targets(std::slice::from_ref(&apps));
 
         assert!(
             targets.contains(&Target {

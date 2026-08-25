@@ -93,7 +93,7 @@ fn write_cached(dir: &Path, id: &str, source: &Path, raw: &[u8]) {
 ///
 /// Without this the cache only ever grows: uninstalling an application, or an
 /// upgrade that renames its entry, leaves its pixels behind forever.
-pub fn prune(live_ids: &HashSet<&str>) {
+pub fn prune<S: std::hash::BuildHasher>(live_ids: &HashSet<&str, S>) {
     let Some(dir) = cache_dir() else {
         return;
     };

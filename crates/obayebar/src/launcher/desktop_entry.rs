@@ -153,9 +153,7 @@ fn convert(
     // shipped by a package whose binary lives elsewhere (or was removed) name
     // one, and listing them means offering a launch that cannot work.
     if let Some(try_exec) = entry.try_exec() {
-        if find_in_path(try_exec).is_none() {
-            return None;
-        }
+        find_in_path(try_exec)?;
     }
     if !shown_in(entry, desktops) {
         return None;

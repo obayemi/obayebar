@@ -74,7 +74,7 @@ pub struct Response {
 }
 
 impl Response {
-    fn stay(task: Task<Message>) -> Self {
+    const fn stay(task: Task<Message>) -> Self {
         Self {
             task,
             dismiss: false,
