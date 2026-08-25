@@ -13,17 +13,26 @@ want on my bar"* is out of scope on purpose.
 
 ## What it is
 
-A single, statically-typed binary (~27 MB unstripped) that draws a left-anchored
-vertical bar on every Hyprland output, plus a few satellite layer-shell windows
-for popups and panels:
+A cargo workspace producing four binaries, of which the bar is the big one — a
+left-anchored vertical bar on every Hyprland output, plus satellite layer-shell
+windows for popups and panels:
 
 - one bar per connected monitor, automatically respawned when outputs come back
   from sleep / disconnect
 - a dbus notification daemon with a stacked popup overlay
 - click-to-open settings panels: audio, network, bluetooth, battery / power
   profile, sysinfo, optional GitLab todos
-- a separate launcher binary (`obayebar-launcher`) that draws an app-launcher
-  layer surface
+
+| Binary                | What it does                                                    |
+|-----------------------|-----------------------------------------------------------------|
+| `obayebar`            | the bar itself                                                  |
+| `obayebar-launcher`   | an app-launcher layer surface                                   |
+| `obayebar-wallpaper`  | a random wallpaper per monitor, rotated on a timer              |
+| `obayebar-lock`       | locks the session, showing the wallpaper the desktop is showing |
+
+Only the first two link iced. The wallpaper renderer talks wlr-layer-shell
+directly and the lock screen draws nothing at all, so both build from a shared
+crate that has no GUI stack in it — see [Crate layout](#crate-layout).
 
 ## Modules on the bar
 
@@ -130,6 +139,66 @@ namespace-verification machinery the bar needs (see [Status](#status)) applies
 here. It draws into a `wl_shm` buffer, so it links neither iced nor wgpu and
 holds no VRAM.
 
+## Lock screen
+
+`obayebar-lock` locks the session showing the wallpaper the desktop is
+currently showing, blurred — not a fresh random one, which is what
+`hyprrandlock` did. It reads `wallpapers.json`, generates a hyprlock config
+with one `background` block per monitor, and runs hyprlock against it.
+
+```toml
+[lock]
+enable = true
+config = "~/.config/hypr/hyprlock.conf"   # default; your own file, see below
+blur_passes = 1
+blur_size = 3
+```
+
+```
+bind = SUPER, O, exec, obayebar-lock
+```
+
+`programs.obayebar.lock.idle.enable` sets up hypridle to run it after a
+timeout, and before suspend, so the screen is never briefly unlocked on resume.
+
+### Your base config is read, never replaced
+
+`[lock].config` points at *your* hyprlock config and obayebar only appends to a
+copy of it. That is deliberate: a config in this repository would not carry the
+`auth { fingerprint { … } }` block a real one does, and shipping a template
+would silently disable fingerprint unlock.
+
+Two hyprlock behaviours the generated config works around:
+
+- **Widget matching is additive.** A monitor-less `background` plus a
+  per-monitor one gives that monitor *two* backgrounds. The scripts relied on
+  the appended block happening to be drawn last; the generated blocks carry an
+  explicit `zindex` above hyprlock's default instead, so the order is defined.
+- **The monitor-less block is kept on purpose.** A screen that wakes *while the
+  session is locked* can only be matched by a block with no `monitor` set;
+  without one its surface renders transparent. If your base config has no such
+  block, `obayebar-lock` warns rather than editing your file.
+
+Since hyprlock parses its config only *after* connecting to Wayland, there is
+no way to pre-flight one without locking the screen — hence `--print` to dump
+the generated config and `--check` to validate it.
+
+### Why not a native lock screen
+
+Writing the locker in Rust against `ext-session-lock-v1` would be the obvious
+move, and it is the one thing here deliberately *not* done. The available iced
+binding `delegate_noop!`s `ExtSessionLockV1`, so the protocol's `locked` and
+`finished` events are discarded and the client can never learn whether the lock
+took effect; `unlock_and_destroy` then fires unconditionally, and the resulting
+`invalid_unlock` protocol error lands on an `.expect()`.
+
+The protocol says a compositor "must not unlock the session" when the client
+dies, and with `misc:allow_session_lock_restore` off — the default — Hyprland
+will not let a replacement take over. A crashed locker therefore means a
+machine you can only recover by killing the compositor from a TTY or over SSH,
+losing the session. hyprlock is a worse programming model and a much better
+failure mode.
+
 ## Why it stays light
 
 The whole point of this rewrite was to **not** be caelestia-shell. Concrete
@@ -215,6 +284,7 @@ think about — it just works.
 |------------------------------|-----------------------------------------------------------|
 | `iced` 0.14                  | Reactive UI runtime, wgpu renderer, canvas, lazy widgets  |
 | `iced_layershell` 0.19       | wlr-layer-shell integration on top of iced                |
+| `smithay-client-toolkit` 0.20| Raw wlr-layer-shell + wl_shm for the wallpaper renderer   |
 | `zbus` 5                     | Async dbus for NetworkManager / BlueZ / UPower / SNI / …  |
 | `pipewire` 0.10              | Native PipeWire client for audio                          |
 | `tokio` 1.x                  | Async runtime, signal/timer plumbing                      |
@@ -226,6 +296,7 @@ think about — it just works.
 | `secret-service`             | Storing the GitLab PAT in the kernel keyring              |
 | `serde` + `toml`             | Config file parsing                                       |
 | `ab_glyph` + `fontdb`        | Vector text rendering on the workspace canvas             |
+| `thiserror`                  | Typed errors across the IPC and rendering paths           |
 
 ## Build & run
 
@@ -284,7 +355,43 @@ obayebar [OPTIONS]
   -V, --version         Print version
 ```
 
+```
+obayebar-lock [OPTIONS]
+
+  -c, --config <PATH>   Base hyprlock config to extend
+      --no-wallpaper    Lock with the base config unchanged
+      --print           Print the generated config and exit, without locking
+      --check           Validate and exit non-zero on any problem
+      --blur <P>x<S>    Blur passes and size, e.g. 2x5
+  -g, --grace <SECS>    Seconds before a password is required
+```
+
+`obayebar-wallpaper`'s flags are in [Wallpapers](#wallpapers).
+
 Persistent settings: `$XDG_CONFIG_HOME/obayebar/config.toml`.
+
+## Crate layout
+
+```
+crates/obayebar-core        no iced — monitor detection, wallpaper selection, config schema
+crates/obayebar             the bar and the launcher (iced + wgpu)
+crates/obayebar-wallpaper   wlr-layer-shell + wl_shm renderer
+crates/obayebar-lock        generates a hyprlock config and runs it
+```
+
+The split is drawn along one line: whether a binary needs a GUI stack.
+`obayebar-core` pulls 81 crates against the bar's 1198, which is what lets the
+lock screen be a fast, small program and lets the shared logic's tests run
+without compiling wgpu.
+
+Run cargo from the workspace root; `cargo test` covers every member. Use
+`cargo run -p obayebar-wallpaper` to run one binary in particular.
+
+Two workspace rules worth knowing before adding a crate. `[profile.dev]` and
+`cargo-features` must stay in the root manifest — cargo ignores a profile in a
+member and only warns, silently losing the cranelift backend. And every member
+needs `[lints] workspace = true`: omitting it is **completely silent** and drops
+`unsafe_code = "forbid"` along with the whole deny set.
 
 ## Status
 
