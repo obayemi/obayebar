@@ -208,7 +208,7 @@ pub fn audio_panel_height(sink_count: usize) -> u32 {
     // Each sink button: text + vertical padding
     let per_sink = PADDING_SMALL.mul_add(2.0, FONT_SIZE_NORMAL * LINE_HEIGHT);
     // N entries + label = (N+1) items → N gaps of 2px
-    let sink_list = sink_label + n * per_sink + n * 2.0;
+    let sink_list = n.mul_add(per_sink + 2.0, sink_label);
 
     // Separator
     let separator = 1.0;
@@ -488,9 +488,10 @@ pub fn bluetooth_panel_height(
     // 4 gaps: header→separator, separator→discovery, discovery→separator2, separator2→list
     let outer_spacing = SPACING_NORMAL * 4.0;
     let safety = 20.0;
+    let separators = separator * 2.0;
     (container_padding
         + header
-        + separator * 2.0
+        + separators
         + outer_spacing
         + discovery_btn
         + device_list
@@ -516,7 +517,8 @@ pub fn sysinfo_panel_height() -> u32 {
     // 2 rows + 2 gaps (header→row1, row1→row2)
     let outer_spacing = SPACING_NORMAL * 2.0;
     let safety = 15.0;
-    (container_padding + header + per_row * 2.0 + outer_spacing + safety).ceil() as u32
+    let rows = per_row * 2.0;
+    (container_padding + header + rows + outer_spacing + safety).ceil() as u32
 }
 
 /// Scan `dir` (and one level of subdirectories — font packages nest fonts

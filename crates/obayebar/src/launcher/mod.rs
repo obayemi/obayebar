@@ -548,8 +548,7 @@ fn load_icons_from_paths(icon_paths: &HashMap<String, PathBuf>) -> HashMap<Strin
             let cached = dir.join(format!("{desktop_id}.rgba"));
             let path_file = dir.join(format!("{desktop_id}.path"));
             let path_matches = std::fs::read_to_string(&path_file)
-                .ok()
-                .is_some_and(|p| p == source_path.to_string_lossy());
+                .is_ok_and(|p| p == source_path.to_string_lossy());
             if path_matches {
                 if let Ok(data) = std::fs::read(&cached) {
                     if data.len() == expected_len {

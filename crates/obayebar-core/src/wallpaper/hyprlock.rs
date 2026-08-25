@@ -281,7 +281,7 @@ mod tests {
         assert!(out.config.contains("path = /w/a.jpg"));
         assert!(out.config.contains("blur_passes = 2"));
         assert!(out.config.contains("blur_size = 5"));
-        assert!(out.rejected.is_empty());
+        assert!(out.rejected.is_empty(), "{:?}", out.rejected);
     }
 
     #[test]

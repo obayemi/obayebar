@@ -132,11 +132,9 @@ pub fn prepare(path: &Path, width: u32, height: u32) -> Result<Wallpaper, Decode
     // compositor's own background through it. Done in place: at panel
     // resolution this buffer is megabytes, and a second one is pure waste.
     let mut bgra = dst.into_vec();
-    for px in bgra.chunks_exact_mut(BYTES_PER_PIXEL) {
+    for px in bgra.as_chunks_mut::<BYTES_PER_PIXEL>().0 {
         px.swap(0, 2);
-        if let Some(alpha) = px.last_mut() {
-            *alpha = 0xFF;
-        }
+        px[BYTES_PER_PIXEL - 1] = 0xFF;
     }
 
     if bgra.is_empty() {
@@ -216,7 +214,7 @@ mod tests {
             "little-endian Argb8888 is B,G,R,A in memory"
         );
         assert!(
-            out.bgra.chunks_exact(4).all(|px| px[3] == 0xFF),
+            out.bgra.as_chunks::<4>().0.iter().all(|px| px[3] == 0xFF),
             "wallpapers must be fully opaque"
         );
         let _ = std::fs::remove_dir_all(&dir);

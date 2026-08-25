@@ -166,7 +166,7 @@ mod tests {
         );
         assert!(out.rendered.config.contains("monitor = desc:Dell TBQ5L"));
         assert!(out.rendered.config.contains(&wall.display().to_string()));
-        assert!(out.skipped.is_empty());
+        assert!(out.skipped.is_empty(), "{:?}", out.skipped);
     }
 
     #[test]
@@ -191,7 +191,7 @@ mod tests {
         let wall = real_file("c.jpg");
         let state = state_with(&[("DP-1", wall)]);
         let out = compose(BASE, &[monitor("DP-1", "")], Some(&state), Blur::default());
-        assert!(out.skipped.is_empty());
+        assert!(out.skipped.is_empty(), "{:?}", out.skipped);
         assert!(out.rendered.config.contains("monitor = DP-1"));
     }
 

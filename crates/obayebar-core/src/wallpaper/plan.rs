@@ -220,7 +220,8 @@ mod tests {
 
     #[test]
     fn order_of_one_or_none_is_left_alone() {
-        assert!(build_order(&[], 7).is_empty());
+        let empty = build_order(&[], 7);
+        assert!(empty.is_empty(), "{empty:?}");
         assert_eq!(build_order(&paths(&["only"]), 7), paths(&["only"]));
     }
 
@@ -258,14 +259,14 @@ mod tests {
         // Guards the crash the script would have had: `$WALLPAPERS[1]` of an
         // empty list, and a modulo by zero.
         let plan = plan_wallpapers(&monitors(&["a"]), &[], 3, &HashMap::new());
-        assert!(plan.assign.is_empty());
+        assert!(plan.assign.is_empty(), "{:?}", plan.assign);
         assert_eq!(plan.cursor, 3);
     }
 
     #[test]
     fn no_monitors_assigns_nothing() {
         let plan = plan_wallpapers(&[], &paths(&["a"]), 0, &HashMap::new());
-        assert!(plan.assign.is_empty());
+        assert!(plan.assign.is_empty(), "{:?}", plan.assign);
     }
 
     #[test]

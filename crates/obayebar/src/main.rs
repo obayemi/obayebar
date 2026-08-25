@@ -1822,7 +1822,7 @@ mod reconcile_tests {
     fn an_empty_setup_spawns_for_one_monitor() {
         let plan = plan_from_observation(Some(&observed([])), &expected(["DP-1"]), &HashMap::new());
         assert_eq!(plan.spawn.as_deref(), Some("DP-1"));
-        assert!(plan.close.is_empty());
+        assert!(plan.close.is_empty(), "{:?}", plan.close);
     }
 
     #[test]
@@ -1848,7 +1848,7 @@ mod reconcile_tests {
         );
         assert_eq!(plan.verified, vec![a]);
         assert_eq!(plan.spawn, None);
-        assert!(plan.close.is_empty());
+        assert!(plan.close.is_empty(), "{:?}", plan.close);
     }
 
     #[test]
@@ -1910,7 +1910,7 @@ mod reconcile_tests {
             &tracked([(a, "DP-2", "obayebar-bar-1", true)]),
         );
         assert_eq!(plan.forget, vec![(a, "monitor disconnected")]);
-        assert!(plan.close.is_empty());
+        assert!(plan.close.is_empty(), "{:?}", plan.close);
     }
 
     #[test]
@@ -1942,7 +1942,7 @@ mod reconcile_tests {
         );
         assert_eq!(plan.pending, vec![a]);
         assert_eq!(plan.spawn, None, "must not double-spawn while mapping");
-        assert!(plan.forget.is_empty());
+        assert!(plan.forget.is_empty(), "{:?}", plan.forget);
     }
 
     #[test]
@@ -1971,7 +1971,7 @@ mod reconcile_tests {
         );
         assert_eq!(plan.verified, vec![a]);
         assert_eq!(plan.spawn, None);
-        assert!(plan.close.is_empty());
+        assert!(plan.close.is_empty(), "{:?}", plan.close);
     }
 
     #[test]
@@ -1992,9 +1992,9 @@ mod reconcile_tests {
             ]),
         );
         assert_eq!(plan.spawn, None);
-        assert!(plan.close.is_empty());
-        assert!(plan.forget.is_empty());
-        assert!(plan.drop_state_for.is_empty());
+        assert!(plan.close.is_empty(), "{:?}", plan.close);
+        assert!(plan.forget.is_empty(), "{:?}", plan.forget);
+        assert!(plan.drop_state_for.is_empty(), "{:?}", plan.drop_state_for);
         assert_eq!(plan.verified.len(), 2);
     }
 

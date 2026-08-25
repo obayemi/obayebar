@@ -196,6 +196,7 @@ mod tests {
     fn discover_of_a_missing_directory_is_empty_not_fatal() {
         let missing = std::env::temp_dir().join("obayebar-wallpaper-test-does-not-exist");
         let _ = std::fs::remove_dir_all(&missing);
-        assert!(discover(&missing).is_empty());
+        let found = discover(&missing);
+        assert!(found.is_empty(), "{found:?}");
     }
 }

@@ -196,7 +196,7 @@ mod tests {
     fn default_is_current_and_empty() {
         let state = State::default();
         assert!(state.is_current());
-        assert!(state.monitors.is_empty());
+        assert!(state.monitors.is_empty(), "{:?}", state.monitors);
         assert_eq!(state.cursor, 0);
     }
 }
