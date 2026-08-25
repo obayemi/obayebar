@@ -14,9 +14,12 @@ use std::collections::HashMap;
 
 use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState, Region};
 use smithay_client_toolkit::output::{OutputHandler, OutputState};
+use smithay_client_toolkit::reexports::client::delegate_noop;
 use smithay_client_toolkit::reexports::client::globals::registry_queue_init;
 use smithay_client_toolkit::reexports::client::protocol::{wl_output, wl_shm, wl_surface};
 use smithay_client_toolkit::reexports::client::{Connection, QueueHandle};
+use smithay_client_toolkit::reexports::protocols::wp::viewporter::client::wp_viewport::WpViewport;
+use smithay_client_toolkit::reexports::protocols::wp::viewporter::client::wp_viewporter::WpViewporter;
 use smithay_client_toolkit::registry::{ProvidesRegistryState, RegistryState};
 use smithay_client_toolkit::shell::wlr_layer::{
     Anchor, KeyboardInteractivity, Layer, LayerShell, LayerShellHandler, LayerSurface,
@@ -50,16 +53,21 @@ struct Output {
     /// *surface-local* coordinates, which on a scaled output is smaller than
     /// the panel's real pixel grid.
     size: (u32, u32),
-    /// The output's integer buffer scale, never below 1.
-    ///
-    /// Drawing at the configure size alone would hand a 1920x1280 buffer to a
-    /// panel with more pixels than that and let the compositor upscale it,
-    /// which is visibly soft. Rendering at `size * scale` and declaring the
-    /// scale gives the compositor a buffer at the panel's own density. On a
-    /// fractionally-scaled output Hyprland reports the ceiling here, so this
-    /// over-renders slightly and the compositor scales down — sharp, at the
-    /// cost of some memory.
+    /// The output's integer buffer scale, never below 1. Only used when there
+    /// is no viewport to size the buffer exactly.
     scale: i32,
+    /// The panel's real pixel dimensions, from its current mode.
+    ///
+    /// This is what the buffer should be, and it is usually neither the
+    /// surface-local configure size nor that size times the integer scale. On
+    /// this machine the panel is 2256x1504 while the configure says 1920x1280
+    /// and the advertised scale is 2 — so sizing by `configure * scale` meant
+    /// rendering 3840x2560, nearly three times the pixels the display can
+    /// show, only for the compositor to scale them back down.
+    mode: Option<(u32, u32)>,
+    /// Set when the surface has a viewport, which is what allows a buffer of
+    /// arbitrary size to be mapped onto the surface's logical size.
+    viewport: Option<WpViewport>,
     /// What is currently drawn, so a redraw for an unchanged picture at an
     /// unchanged size can be skipped.
     drawn: Option<Wallpaper>,
@@ -74,6 +82,9 @@ pub struct Renderer {
     compositor: CompositorState,
     layer_shell: LayerShell,
     shm: Shm,
+    /// `None` when the compositor does not offer `wp_viewporter`, in which case
+    /// buffers fall back to the integer-scale sizing.
+    viewporter: Option<WpViewporter>,
     pool: Option<SlotPool>,
     outputs: HashMap<u32, Output>,
     /// Set when the compositor closes a surface under us, so `run` can stop.
@@ -129,6 +140,12 @@ impl Renderer {
         let layer_shell = LayerShell::bind(&globals, &qh)
             .map_err(|_| SetupError::MissingGlobal("zwlr_layer_shell_v1"))?;
         let shm = Shm::bind(&globals, &qh).map_err(|_| SetupError::MissingGlobal("wl_shm"))?;
+        // Optional. Without it buffers fall back to integer-scale sizing,
+        // which costs pixels but still renders correctly.
+        let viewporter = globals.bind::<WpViewporter, _, _>(&qh, 1..=1, ()).ok();
+        if viewporter.is_none() {
+            log::info!("wallpaper: no wp_viewporter, sizing buffers by integer scale");
+        }
 
         Ok((
             Self {
@@ -137,6 +154,7 @@ impl Renderer {
                 compositor,
                 layer_shell,
                 shm,
+                viewporter,
                 pool: None,
                 outputs: HashMap::new(),
                 exit: false,
@@ -219,6 +237,11 @@ impl Renderer {
         layer.set_keyboard_interactivity(KeyboardInteractivity::None);
         layer.commit();
 
+        let viewport = self
+            .viewporter
+            .as_ref()
+            .map(|v| v.get_viewport(layer.wl_surface(), qh, ()));
+
         self.outputs.insert(
             id,
             Output {
@@ -226,6 +249,8 @@ impl Renderer {
                 layer,
                 size: (0, 0),
                 scale: 1,
+                mode: None,
+                viewport,
                 drawn: None,
                 wanted: None,
                 configured: false,
@@ -245,15 +270,23 @@ impl Renderer {
         if logical_w == 0 || logical_h == 0 {
             return;
         }
-        // The buffer is in panel pixels, the configure is in surface-local
-        // ones; `set_buffer_scale` in `present` tells the compositor which is
-        // which.
-        let scale = u32::try_from(output.scale.max(1)).unwrap_or(1);
-        let (Some(width), Some(height)) =
-            (logical_w.checked_mul(scale), logical_h.checked_mul(scale))
-        else {
-            log::warn!("wallpaper: {logical_w}x{logical_h} at scale {scale} overflows");
-            return;
+        // Prefer the panel's real mode: it is the only size that is neither
+        // starved of detail nor wasteful. Sizing by `configure * integer scale`
+        // instead meant rendering 3840x2560 for a 2256x1504 panel — nearly
+        // three times the pixels, and the resize is around 92% of the time it
+        // takes to put a wallpaper up. A viewport is what lets the buffer be
+        // that size without the surface changing shape.
+        let sized_by_mode = output.viewport.as_ref().and(output.mode);
+        let (width, height) = if let Some(mode) = sized_by_mode {
+            mode
+        } else {
+            let scale = u32::try_from(output.scale.max(1)).unwrap_or(1);
+            let (Some(w), Some(h)) = (logical_w.checked_mul(scale), logical_h.checked_mul(scale))
+            else {
+                log::warn!("wallpaper: {logical_w}x{logical_h} at scale {scale} overflows");
+                return;
+            };
+            (w, h)
         };
         let Some(wanted) = output.wanted.clone() else {
             return;
@@ -317,13 +350,33 @@ impl Renderer {
             return Err(PresentError::OutputGone);
         };
         let surface = output.layer.wl_surface();
-        surface.set_buffer_scale(output.scale.max(1));
+        match output.viewport.as_ref() {
+            // The viewport maps whatever size the buffer is onto the surface's
+            // logical size, so the two no longer have to be related by an
+            // integer. Buffer scale must stay 1 — the two mechanisms would
+            // otherwise multiply.
+            Some(viewport) => {
+                surface.set_buffer_scale(1);
+                let (logical_w, logical_h) = output.size;
+                if let (Ok(w), Ok(h)) = (i32::try_from(logical_w), i32::try_from(logical_h)) {
+                    viewport.set_destination(w, h);
+                }
+            }
+            None => surface.set_buffer_scale(output.scale.max(1)),
+        }
 
         // Declaring the whole surface opaque lets the compositor skip whatever
         // is behind it. A wallpaper always covers its output completely.
+        // The region is in surface-local coordinates, not buffer pixels.
         match Region::new(&self.compositor) {
             Ok(region) => {
-                region.add(0, 0, width, height);
+                let (logical_w, logical_h) = output.size;
+                region.add(
+                    0,
+                    0,
+                    i32::try_from(logical_w).unwrap_or(i32::MAX),
+                    i32::try_from(logical_h).unwrap_or(i32::MAX),
+                );
                 surface.set_opaque_region(Some(region.wl_region()));
             }
             Err(e) => log::debug!("wallpaper: no opaque region ({e})"),
@@ -426,8 +479,9 @@ impl OutputHandler for Renderer {
         );
         self.create_surface(qh, &output, info.id);
         if let Some(entry) = self.outputs.get_mut(&info.id) {
-            entry.name = info.name;
+            entry.mode = current_mode(&info);
             entry.scale = info.scale_factor.max(1);
+            entry.name = info.name;
         }
         self.outputs_changed = true;
     }
@@ -446,8 +500,9 @@ impl OutputHandler for Renderer {
                 // assignment addressed to a nameless output was dropped, so
                 // this counts as a change worth re-running selection for.
                 let named = entry.name.is_none() && info.name.is_some();
-                entry.name = info.name;
+                entry.mode = current_mode(&info);
                 entry.scale = info.scale_factor.max(1);
+                entry.name = info.name;
                 if named {
                     self.outputs_changed = true;
                 }
@@ -525,3 +580,18 @@ delegate_output!(Renderer);
 delegate_shm!(Renderer);
 delegate_layer!(Renderer);
 delegate_registry!(Renderer);
+
+// wp_viewporter and wp_viewport have no events, so there is nothing to
+// dispatch and no handler worth writing.
+delegate_noop!(Renderer: ignore WpViewporter);
+delegate_noop!(Renderer: ignore WpViewport);
+
+/// The output's current mode in real pixels, if it reported one.
+fn current_mode(info: &smithay_client_toolkit::output::OutputInfo) -> Option<(u32, u32)> {
+    let (w, h) = info
+        .modes
+        .iter()
+        .find(|m| m.current)
+        .map(|m| m.dimensions)?;
+    Some((u32::try_from(w).ok()?, u32::try_from(h).ok()?))
+}

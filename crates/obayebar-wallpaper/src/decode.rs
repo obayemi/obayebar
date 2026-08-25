@@ -86,12 +86,15 @@ pub fn prepare(path: &Path, width: u32, height: u32) -> Result<Wallpaper, Decode
             source,
         })?;
 
+    let started = std::time::Instant::now();
     let decoded = reader.decode().map_err(|source| DecodeError::Decode {
         path: display.clone(),
         source,
     })?;
+    let decoded_at = started.elapsed();
 
     let filled = decoded.resize_to_fill(width, height, FilterType::Lanczos3);
+    let resized_at = started.elapsed();
     let rgba = filled.into_rgba8();
 
     let pixels = (width as usize)
@@ -112,6 +115,14 @@ pub fn prepare(path: &Path, width: u32, height: u32) -> Result<Wallpaper, Decode
     if bgra.is_empty() {
         return Err(DecodeError::Empty { path: display });
     }
+
+    log::debug!(
+        "wallpaper: {display} -> {width}x{height} in {}ms (decode {}ms, resize {}ms, pack {}ms)",
+        started.elapsed().as_millis(),
+        decoded_at.as_millis(),
+        resized_at.saturating_sub(decoded_at).as_millis(),
+        started.elapsed().saturating_sub(resized_at).as_millis(),
+    );
 
     Ok(Wallpaper {
         path: path.to_path_buf(),
