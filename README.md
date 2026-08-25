@@ -146,10 +146,11 @@ The flake exports `homeManagerModules.default`. The module installs the
 programs, writes the configuration file, and starts the systemd user units.
 
 ```nix
-{
-  inputs.obayebar.url = "github:obayemi/obayebar";
+# In flake.nix: inputs.obayebar.url = "github:obayemi/obayebar";
 
-  # in your home-manager configuration
+# Then, in your home-manager configuration (`inputs` via `extraSpecialArgs`):
+{ config, inputs, ... }:
+{
   imports = [ inputs.obayebar.homeManagerModules.default ];
 
   programs.obayebar = {
@@ -163,13 +164,13 @@ programs, writes the configuration file, and starts the systemd user units.
 
     wallpaper = {
       enable = true;
-      directory = "/home/you/Images/wallpapers/enabled";
+      directory = "${config.home.homeDirectory}/Images/wallpapers/enabled";
       interval = "30m";
     };
 
     lock = {
       enable = true;
-      config = "/home/you/.config/hypr/hyprlock.conf";
+      config = "${config.xdg.configHome}/hypr/hyprlock.conf";
       blurPasses = 2;
       blurSize = 5;
       idle = {
@@ -180,6 +181,13 @@ programs, writes the configuration file, and starts the systemd user units.
   };
 }
 ```
+
+The path options take an absolute path. Nix expands neither `~` nor `$HOME`
+in a string, and the module writes the string as it is. Thus build the path
+from home-manager itself: `config.home.homeDirectory` for the home, and
+`config.xdg.configHome`, `config.xdg.dataHome` or `config.xdg.cacheHome` for
+the XDG directories. The `~` form works only in a hand-written
+`config.toml`, which obayebar reads itself.
 
 ### What the module does
 

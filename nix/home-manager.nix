@@ -109,7 +109,7 @@ in {
       directory = mkOption {
         type = types.nullOr types.path;
         default = null;
-        example = "/home/you/Images/wallpapers/enabled";
+        example = lib.literalExpression ''"''${config.home.homeDirectory}/Images/wallpapers/enabled"'';
         description = ''
           Where to look for wallpapers. When null, obayebar-wallpaper uses
           ~/Images/wallpapers/enabled.
@@ -133,7 +133,7 @@ in {
       config = mkOption {
         type = types.nullOr types.path;
         default = null;
-        example = "/home/you/.config/hypr/hyprlock.conf";
+        example = lib.literalExpression ''"''${config.xdg.configHome}/hypr/hyprlock.conf"'';
         description = ''
           Base hyprlock config to extend with one background per monitor.
           Deliberately a path to your own file rather than a generated one:
