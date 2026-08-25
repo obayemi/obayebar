@@ -95,6 +95,13 @@ indexing_slicing = "deny"
 arithmetic_side_effects = "warn"
 # transitive dependency version conflicts are not fixable in our code
 multiple_crate_versions = "allow"
+# Sizing a future means computing its layout, and on rustc 1.100.0-nightly
+# (fb6531d55) that ICEs — "unexpected rigid alias in layout_of after
+# normalization" — for the opaque future of a generic `async fn`, which is
+# exactly `hypr::query_or_log`. It takes the whole workspace's clippy run down
+# with it, so nothing else gets linted either. Nothing we can fix in our own
+# code; drop this line when the toolchain moves on.
+large_futures = "allow"
 
 # Must stay at the workspace root: cargo ignores `[profile.*]` in a member and
 # only warns, so a copy in a member would silently lose cranelift.
