@@ -3013,6 +3013,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "obayebar-wallpaper"
+version = "0.1.0"
+dependencies = [
+ "env_logger",
+ "image",
+ "log",
+ "obayebar-core",
+ "smithay-client-toolkit 0.20.0",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "objc"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"

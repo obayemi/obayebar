@@ -1,0 +1,27 @@
+[package]
+name = "obayebar-wallpaper"
+description = "Per-monitor wallpaper renderer on wlr-layer-shell background surfaces"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[[bin]]
+name = "obayebar-wallpaper"
+path = "src/main.rs"
+
+# No tokio and no dbus: monitors come from the blocking Hyprland query and the
+# control channel is a unix socket, so this stays a small synchronous program.
+[dependencies]
+obayebar-core = { workspace = true, features = ["images"] }
+smithay-client-toolkit.workspace = true
+image.workspace = true
+log.workspace = true
+env_logger.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

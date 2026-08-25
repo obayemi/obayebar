@@ -9,6 +9,7 @@ pub mod hyprlock;
 pub mod plan;
 pub mod state;
 
+#[cfg(feature = "images")]
 use std::path::{Path, PathBuf};
 
 pub use plan::{build_order, parse_interval, plan_wallpapers, IntervalError, WallpaperPlan};
@@ -18,6 +19,7 @@ pub use state::State;
 ///
 /// `image::guess_format` only ever inspects a short magic-number prefix; the
 /// longest signature the enabled decoders use is well inside this.
+#[cfg(feature = "images")]
 const SNIFF_BYTES: usize = 64;
 
 /// Find the usable wallpapers in `dir`, sorted by path.
@@ -30,6 +32,7 @@ const SNIFF_BYTES: usize = 64;
 ///
 /// The sort is what makes a seeded shuffle reproducible: `read_dir` returns
 /// entries in filesystem order, which is neither stable nor meaningful.
+#[cfg(feature = "images")]
 #[must_use]
 pub fn discover(dir: &Path) -> Vec<PathBuf> {
     let entries = match std::fs::read_dir(dir) {
@@ -68,6 +71,7 @@ pub fn discover(dir: &Path) -> Vec<PathBuf> {
 /// Checked against the `image` features actually compiled in, so a WebP in the
 /// directory is reported as unsupported here rather than failing later at
 /// decode time with the surface already created.
+#[cfg(feature = "images")]
 #[must_use]
 pub fn is_supported_image(path: &Path) -> bool {
     let Some(header) = read_header(path) else {
@@ -91,6 +95,7 @@ pub fn is_supported_image(path: &Path) -> bool {
     })
 }
 
+#[cfg(feature = "images")]
 fn read_header(path: &Path) -> Option<Vec<u8>> {
     use std::io::Read;
 
@@ -103,7 +108,7 @@ fn read_header(path: &Path) -> Option<Vec<u8>> {
     Some(buf)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "images"))]
 #[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
     use super::*;

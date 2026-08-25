@@ -9,17 +9,26 @@ readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+# Both features are on by default for the bar's benefit and turned off by the
+# small binaries. `async` drags in the whole tokio runtime, which a one-shot
+# that makes a single IPC request and exits has no use for; `images` pulls the
+# decoders, which only something that actually draws a wallpaper needs.
+[features]
+default = ["async", "images"]
+async = ["dep:tokio"]
+images = ["dep:image"]
+
 # Deliberately no iced, no wgpu, no GUI stack. That is the whole point of the
 # boundary: it lets obayebar-lock be a small std-only binary and lets the
-# reconciler's tests run without compiling 418 crates.
+# wallpaper renderer talk wlr-layer-shell without a compositor toolkit.
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
 log.workspace = true
 thiserror.workspace = true
-image.workspace = true
-tokio.workspace = true
+image = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
 
 [lints]
 workspace = true

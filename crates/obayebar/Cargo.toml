@@ -23,7 +23,7 @@ name = "obayebar-launcher"
 path = "src/bin/launcher.rs"
 
 [dependencies]
-obayebar-core.workspace = true
+obayebar-core = { workspace = true, features = ["async", "images"] }
 iced.workspace = true
 iced_layershell.workspace = true
 iced_runtime.workspace = true

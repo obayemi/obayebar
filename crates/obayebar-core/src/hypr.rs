@@ -17,7 +17,9 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use serde::Deserialize;
+#[cfg(feature = "async")]
 use tokio::io::AsyncWriteExt;
+#[cfg(feature = "async")]
 use tokio::net::UnixStream;
 
 /// How long the blocking query waits on a compositor that accepted the
@@ -175,6 +177,7 @@ pub fn socket_dir() -> Option<PathBuf> {
 ///
 /// Returns [`IpcError`] naming the step that failed: no socket directory,
 /// connect, write, read, non-UTF-8 reply, or a reply that did not match `T`.
+#[cfg(feature = "async")]
 pub async fn query_json<T: serde::de::DeserializeOwned>(command: &str) -> Result<T, IpcError> {
     let dir = socket_dir().ok_or(IpcError::NoSocketDir)?;
     let sock_path = dir.join(".socket.sock");
@@ -267,6 +270,7 @@ pub fn query_json_blocking<T: serde::de::DeserializeOwned>(command: &str) -> Res
 
 /// Run a query, logging the reason on failure. `None` here means "we could not
 /// find out", which callers must never action as "there is nothing".
+#[cfg(feature = "async")]
 pub async fn query_or_log<T: serde::de::DeserializeOwned>(command: &str) -> Option<T> {
     match query_json(command).await {
         Ok(value) => Some(value),
@@ -311,6 +315,7 @@ fn reject_empty(monitors: Vec<MonitorInfo>) -> Option<Vec<MonitorInfo>> {
 ///
 /// `None` means the query failed or came back empty, both of which mean
 /// "unknown" rather than "none connected".
+#[cfg(feature = "async")]
 pub async fn monitors() -> Option<Vec<MonitorInfo>> {
     let values: Vec<serde_json::Value> = query_or_log("j/monitors").await?;
     reject_empty(parse_lenient(values))
@@ -325,10 +330,14 @@ pub async fn monitors() -> Option<Vec<MonitorInfo>> {
 /// the "unknown" distinction should treat both as "place nothing per-monitor".
 pub fn monitors_blocking() -> Result<Vec<MonitorInfo>, IpcError> {
     let values: Vec<serde_json::Value> = query_json_blocking("j/monitors")?;
-    Ok(parse_lenient(values))
+    // Same guard as the async twin, and it warns for the same reason. The
+    // caller still gets a list — an empty one — because a lock screen with no
+    // per-monitor backgrounds is a far better outcome than no lock at all.
+    Ok(reject_empty(parse_lenient(values)).unwrap_or_default())
 }
 
 /// One entry in Hyprland's `j/layers` output.
+#[cfg(feature = "async")]
 #[derive(Debug, Clone, Deserialize)]
 struct LayerEntry {
     #[serde(default)]
@@ -336,6 +345,7 @@ struct LayerEntry {
 }
 
 /// The `levels` map Hyprland nests layer surfaces under, keyed by layer level.
+#[cfg(feature = "async")]
 #[derive(Debug, Clone, Default, Deserialize)]
 struct MonitorLayers {
     #[serde(default)]
@@ -357,6 +367,7 @@ pub type LayerMap = HashMap<String, Vec<String>>;
 ///
 /// `None` means the query failed, which callers must treat as "unknown" and
 /// never as "no layers are mapped".
+#[cfg(feature = "async")]
 pub async fn fetch_layer_namespaces() -> Option<LayerMap> {
     let raw: HashMap<String, MonitorLayers> = query_or_log("j/layers").await?;
     Some(

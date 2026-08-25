@@ -41,9 +41,94 @@ for popups and panels:
 | Sysinfo         | `/proc`, NVML                            | CPU + GPU + RAM usage, network rates, threshold colouring                |
 | Notifications   | `org.freedesktop.Notifications` (dbus)   | Replaces `mako` / `dunst`, stacks with overflow summary at 2/5 of screen |
 
-Configuration lives in `$XDG_CONFIG_HOME/obayebar/config.toml` (currently the
-GitLab module is the only thing exposed there); CLI flags override the file,
-env vars override that. A home-manager module ships in `flake.nix`.
+Configuration lives in `$XDG_CONFIG_HOME/obayebar/config.toml` — `[gitlab]`,
+`[wallpaper]` and `[lock]`; CLI flags override the file, env vars override
+that. A home-manager module ships in `flake.nix`.
+
+## Wallpapers
+
+`obayebar-wallpaper` puts a different random wallpaper on every monitor and
+rotates them on a timer. It replaces a pair of fish scripts (`hyprwallp`,
+`hyprrandlock`) that shelled out to `hyprctl`, `jq`, `find` and `shuf`, and it
+does **not** use hyprpaper — see [Why not hyprpaper](#why-not-hyprpaper).
+
+```toml
+# $XDG_CONFIG_HOME/obayebar/config.toml
+[wallpaper]
+enable = true
+directory = "~/Images/wallpapers/enabled"   # default
+interval = "30m"                            # "45s", "2h", "1d", or "off"
+```
+
+```
+obayebar-wallpaper [OPTIONS]
+
+  -d, --directory <DIR>   Override the wallpaper directory
+  -i, --interval <SPEC>   Override the rotation interval
+      --once              Assign once, write the state file, exit
+      --next              Tell the running daemon to rotate now
+      --reload            Tell it to re-scan the directory
+  -h, --help              Print this help
+  -V, --version           Print version
+```
+
+Bind `--next` to a key if you want a wallpaper you dislike gone immediately:
+
+```
+bind = SUPER, W, exec, obayebar-wallpaper --next
+```
+
+### How pictures get picked
+
+- **Files are identified by content, not by extension.** `image::open` and
+  friends dispatch on the file extension, which silently misses the two shapes
+  a real wallpaper directory actually contains — a `.jpe` file, and one named
+  `…wallpaper.jpg.png`. Every candidate is sniffed by magic bytes instead, so a
+  mislabelled picture works and a `.txt` renamed to `.png` is skipped rather
+  than rendered as nothing.
+- **The order is a seeded shuffle with a cursor**, both persisted. That is what
+  makes "next" mean something across a restart. The scripts reshuffled from
+  scratch on every run, so there was no such thing as *next* and the same
+  picture could come back immediately.
+- **A monitor never gets the wallpaper it is already showing.** The scripts
+  tried this with `find ! -name "$(basename "$CURRENT_WALL")"`, but
+  `CURRENT_WALL` was never set, so the filter excluded nothing and was dead
+  code.
+- **Fewer wallpapers than monitors wraps**, matching the scripts' modulo.
+- **Rotation is lockstep**: every monitor changes together, from one cursor.
+  Startup and hotplug are *not* rotations — a monitor coming back gets its
+  previous wallpaper, and only genuinely new monitors are assigned.
+
+### State
+
+The current selection lives in `$XDG_DATA_HOME/obayebar/wallpapers.json`,
+written atomically because the lock screen reads it while the timer may be
+writing it. `obayebar-wallpaper` is its only writer.
+
+It is keyed on the monitor **description** (`Dell Inc. DELL U2518D 3C4YP95TBQ5L`),
+not the port. Two identical panels differ only by the serial in that string, and
+DPMS cycles reshuffle which port is which — a wallpaper remembered against
+`DP-9` would be lost the moment the same screen came back as `DP-10`. The data
+dir rather than the cache dir, so the desktop comes back looking as it was left
+instead of reshuffling on every login.
+
+### Why not hyprpaper
+
+hyprpaper 0.8.4 leaks roughly 4 MB per `wallpaper` IPC request, unbounded: a
+fresh daemon driven through ~130 requests grew from 84 MB to 1.55 GB RSS, and it
+is per-request rather than per-image — the same picture set repeatedly leaks
+just as fast. The `preload`/`unload` verbs that used to bound it are gone in
+0.8.4, so the only way to reclaim the memory is to restart hyprpaper, which
+wipes every wallpaper with no event to notice it by. For a feature whose entire
+purpose is to send that request on a timer, that is disqualifying.
+
+Rendering directly also removes a whole class of bug rather than working around
+it. `obayebar-wallpaper` talks wlr-layer-shell through
+`smithay-client-toolkit`, whose `create_layer_surface` binds a `wl_output`
+**object** — so a wallpaper cannot land on the wrong monitor, and none of the
+namespace-verification machinery the bar needs (see [Status](#status)) applies
+here. It draws into a `wl_shm` buffer, so it links neither iced nor wgpu and
+holds no VRAM.
 
 ## Why it stays light
 

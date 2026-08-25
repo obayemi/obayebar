@@ -5,6 +5,7 @@ resolver = "2"
 members = [
     "crates/obayebar-core",
     "crates/obayebar",
+    "crates/obayebar-wallpaper",
 ]
 # No `default-members`: it would narrow bare `cargo build`/`cargo test` to the
 # listed crates, which is the opposite of what this repo wants — every member
@@ -21,7 +22,9 @@ keywords = ["wayland", "bar", "status-bar", "hyprland"]
 categories = ["gui"]
 
 [workspace.dependencies]
-obayebar-core = { path = "crates/obayebar-core" }
+# default-features off at the root so members opt in explicitly; the small
+# binaries take neither tokio nor the image decoders.
+obayebar-core = { path = "crates/obayebar-core", default-features = false }
 
 iced = { version = "0.14.0", default-features = false, features = ["wgpu", "crisp", "linux-theme-detection", "wayland", "tokio", "canvas", "image-without-codecs", "lazy"] }
 iced_layershell = "0.19.1"
