@@ -185,6 +185,18 @@ fn run(args: &cli::Args) -> i32 {
 
 /// Run hyprlock against `config` and turn the result into an exit code.
 fn finish(config: &Path, args: &cli::Args) -> i32 {
+    // The one line that says the lock was actually asked for, as opposed to
+    // the process having started and fallen over somewhere. Whatever invoked
+    // this — a keybind, hypridle, a suspend hook — leaves no trace of its own.
+    log::info!(
+        "lock: locking with {}{}",
+        config.display(),
+        if args.no_scope {
+            " (no systemd scope)"
+        } else {
+            ""
+        }
+    );
     let outcome = spawn::lock(
         config,
         spawn::Options {

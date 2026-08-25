@@ -103,7 +103,13 @@ pub fn poll(listener: &UnixListener) -> Vec<Command> {
                 let mut line = String::new();
                 if BufReader::new(stream).read_line(&mut line).is_ok() {
                     match Command::parse(&line) {
-                        Some(cmd) => out.push(cmd),
+                        Some(cmd) => {
+                            log::info!(
+                                "wallpaper: received {} over the control socket",
+                                cmd.as_str()
+                            );
+                            out.push(cmd);
+                        }
                         None => log::warn!("wallpaper: ignoring command {:?}", line.trim()),
                     }
                 }

@@ -52,6 +52,7 @@ struct NotificationServer {
 #[allow(clippy::unused_self)]
 impl NotificationServer {
     fn get_capabilities(&self) -> Vec<String> {
+        log::info!("notifications: GetCapabilities");
         vec![
             "body".to_string(),
             "body-markup".to_string(),
@@ -78,6 +79,17 @@ impl NotificationServer {
         } else {
             self.next_id.fetch_add(1, Ordering::SeqCst)
         };
+
+        // Deliberately not the summary or the body. A notification's text is
+        // the message itself — a chat preview, a 2FA code — and the journal is
+        // a much longer-lived, more widely readable place than the popup it
+        // was meant for. `debug` carries the summary for when that is what you
+        // are actually debugging; the body stays out of the log entirely.
+        log::info!(
+            "notifications: Notify from {app_name:?} -> id {id}{}",
+            if replaces_id > 0 { " (replacing)" } else { "" }
+        );
+        log::debug!("notifications: id {id} summary {summary:?}");
 
         let action_pairs: Vec<(String, String)> = actions
             .chunks(2)
@@ -135,6 +147,7 @@ impl NotificationServer {
         id: u32,
         #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
     ) -> zbus::fdo::Result<()> {
+        log::info!("notifications: CloseNotification for id {id}");
         let _ = self.sender.send(NotifEvent::Closed(id)).await;
         // Emit from the method's own emitter rather than re-entering
         // `object_server().interface()`, which would contend with this call's
@@ -147,6 +160,7 @@ impl NotificationServer {
     }
 
     fn get_server_information(&self) -> (String, String, String, String) {
+        log::info!("notifications: GetServerInformation");
         (
             "obayebar".to_string(),
             "obayebar".to_string(),
