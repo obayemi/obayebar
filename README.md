@@ -11,364 +11,241 @@ no general-purpose abstraction layer. Hardware-wise it isn't picky (anything
 with wgpu and PipeWire works), but anything outside *"things I personally
 want on my bar"* is out of scope on purpose.
 
-## What it is
+## The four programs
 
-A cargo workspace producing four binaries, of which the bar is the big one — a
-left-anchored vertical bar on every Hyprland output, plus satellite layer-shell
-windows for popups and panels:
+The cargo workspace makes four programs. The bar is the primary program.
 
-- one bar per connected monitor, automatically respawned when outputs come back
-  from sleep / disconnect
-- a dbus notification daemon with a stacked popup overlay
-- click-to-open settings panels: audio, network, bluetooth, battery / power
-  profile, sysinfo, optional GitLab todos
+| Program              | Function                                                               |
+|----------------------|------------------------------------------------------------------------|
+| `obayebar`           | Shows one vertical bar on each monitor, with popups and panels.        |
+| `obayebar-launcher`  | Shows an application launcher.                                         |
+| `obayebar-wallpaper` | Puts a different wallpaper on each monitor, and changes the wallpapers.|
+| `obayebar-lock`      | Locks the session, and shows the wallpaper that each monitor shows.    |
 
-| Binary                | What it does                                                    |
-|-----------------------|-----------------------------------------------------------------|
-| `obayebar`            | the bar itself                                                  |
-| `obayebar-launcher`   | an app-launcher layer surface                                   |
-| `obayebar-wallpaper`  | a random wallpaper per monitor, rotated on a timer              |
-| `obayebar-lock`       | locks the session, showing the wallpaper the desktop is showing |
+Only the bar and the launcher link iced. The wallpaper program speaks
+wlr-layer-shell directly, and the lock program draws no pixels. Thus the
+wallpaper program and the lock program build from a shared crate that contains
+no GUI stack. Refer to [Crate layout](#crate-layout).
 
-Only the first two link iced. The wallpaper renderer talks wlr-layer-shell
-directly and the lock screen draws nothing at all, so both build from a shared
-crate that has no GUI stack in it — see [Crate layout](#crate-layout).
+---
+
+## Quickstart
+
+### 1. Install the programs
+
+The flake gives all four programs. Start the bar immediately:
+
+```sh
+nix run github:obayemi/obayebar#default
+```
+
+Or put the four binaries in `./result/bin`:
+
+```sh
+nix build github:obayemi/obayebar#default
+```
+
+For a permanent installation on NixOS, refer to
+[NixOS and home-manager](#nixos-and-home-manager). For a build without Nix,
+refer to [Build from source](#build-from-source).
+
+### 2. Start the programs
+
+```sh
+obayebar             # the bar
+obayebar-wallpaper   # the wallpaper daemon
+obayebar-launcher    # the launcher
+obayebar-lock        # locks the session now
+```
+
+Obey these rules:
+
+- Start only one instance of `obayebar`. One instance makes one bar on each
+  monitor, and makes a new bar when a monitor comes back.
+- Start only one instance of `obayebar-wallpaper`. The program stays in memory
+  and changes the wallpapers on the interval. To assign the wallpapers one
+  time and exit, give the `--once` flag.
+- Start `obayebar-launcher` for each use. The launcher exits when you start an
+  application, or when you push `Esc`.
+- `obayebar-lock` starts hyprlock and waits. The program exits when you unlock
+  the session.
+- Stop `mako`, `dunst`, and all other notification daemons. Only one program
+  can own the `org.freedesktop.Notifications` dbus name.
+- Stop `hyprpaper` before you start `obayebar-wallpaper`. Two wallpaper
+  programs fight for the background layer.
+
+### 3. Configure Hyprland
+
+Add these lines to `~/.config/hypr/hyprland.conf`:
+
+```
+# start the bar and the wallpaper daemon with the session
+exec-once = obayebar
+exec-once = obayebar-wallpaper
+
+# keys
+bind = SUPER, D, exec, obayebar-launcher
+bind = SUPER, W, exec, obayebar-wallpaper --next
+bind = SUPER, O, exec, obayebar-lock
+
+# blur all the surfaces of obayebar
+layerrule = blur, ^obayebar
+```
+
+If home-manager starts the bar and the wallpaper daemon, remove the two
+`exec-once` lines. Refer to [NixOS and home-manager](#nixos-and-home-manager).
+
+**Each surface has its own layer-shell namespace.** The namespaces are
+`obayebar-bar-N` (one for each bar), `obayebar-panel-<kind>` (audio, network,
+bluetooth, battery, sysinfo, gitlab) and `obayebar-notifications`. Thus a rule
+must match a prefix, as in the example above. A rule that matches the exact
+name `obayebar` matches no surface. A rule can also match one kind of surface,
+and not the other kinds.
+
+### 4. Configure obayebar
+
+The three programs read `$XDG_CONFIG_HOME/obayebar/config.toml`, usually
+`~/.config/obayebar/config.toml`. All the sections are optional. An unknown
+key makes a parse error. The program then writes a warning, and uses the
+default values for the full file.
+
+```toml
+[gitlab]
+enable = true                               # show the GitLab todos module
+url = "https://gitlab.example.com"          # default: https://gitlab.com
+
+[wallpaper]
+enable = true                               # for the home-manager module only
+directory = "~/Images/wallpapers/enabled"   # default
+interval = "30m"                            # "45s", "2h", "1d", or "off"
+
+[lock]
+enable = true                               # for the home-manager module only
+config = "~/.config/hypr/hyprlock.conf"     # default; your own file
+blur_passes = 1                             # default
+blur_size = 3                               # default
+```
+
+The precedence for each field is: command-line flag, then environment
+variable, then configuration file, then the default value.
+
+`[gitlab].enable` controls the module on the bar. `[wallpaper].enable` and
+`[lock].enable` control the systemd units of the home-manager module. The
+`obayebar-wallpaper` and `obayebar-lock` programs do not read the two `enable`
+keys: a program that you start manually always operates.
+
+The GitLab token does not go in this file. The bar reads the token from the
+`OBAYEBAR_GITLAB_TOKEN` environment variable, then from Secret Service, then
+from `~/.config/obayebar/gitlab_token`.
+
+---
+
+## NixOS and home-manager
+
+The flake exports `homeManagerModules.default`. The module installs the
+programs, writes the configuration file, and starts the systemd user units.
+
+```nix
+{
+  inputs.obayebar.url = "github:obayemi/obayebar";
+
+  # in your home-manager configuration
+  imports = [ inputs.obayebar.homeManagerModules.default ];
+
+  programs.obayebar = {
+    enable = true;
+
+    gitlab = {
+      enable = true;
+      url = "https://gitlab.example.com";
+      tokenFile = "/run/secrets/obayebar-gitlab-token";
+    };
+
+    wallpaper = {
+      enable = true;
+      directory = "/home/you/Images/wallpapers/enabled";
+      interval = "30m";
+    };
+
+    lock = {
+      enable = true;
+      config = "/home/you/.config/hypr/hyprlock.conf";
+      blurPasses = 2;
+      blurSize = 5;
+      idle = {
+        enable = true;
+        timeout = 300;
+      };
+    };
+  };
+}
+```
+
+### What the module does
+
+- The module adds the package to `home.packages`. Thus all four programs are
+  on the `PATH`.
+- The module writes `~/.config/obayebar/config.toml` from the options. The
+  module writes only the sections that you enable. If you enable no section,
+  the module writes no file.
+- The module adds the `obayebar` systemd user service. The service starts with
+  `programs.obayebar.systemd.target`, and starts again after a failure.
+- If `wallpaper.enable` is true, the module adds a second service,
+  `obayebar-wallpaper`. The service is independent of the bar: a failure of
+  the bar does not remove the wallpapers, and a restart of the bar does not
+  make the wallpapers flash.
+- `systemctl --user reload obayebar-wallpaper` runs `obayebar-wallpaper
+  --reload`. The daemon then reads the directory again, and does not change
+  the picture on the screen.
+- If `lock.enable` and `lock.idle.enable` are true, the module configures
+  hypridle. hypridle then runs `obayebar-lock` after the timeout, and runs
+  `obayebar-lock --detach` before the machine goes to sleep.
+- The module reads `gitlab.tokenFile` at start, and puts the contents in
+  `OBAYEBAR_GITLAB_TOKEN`. The module reads the path at run time. Thus the
+  token does not go into the Nix store.
+
+### Options
+
+| Option                             | Type    | Default                        | Function                                                     |
+|------------------------------------|---------|--------------------------------|--------------------------------------------------------------|
+| `programs.obayebar.enable`         | bool    | `false`                        | Install obayebar and start the bar.                          |
+| `programs.obayebar.package`        | package | the package of this flake      | The package to install.                                      |
+| `systemd.enable`                   | bool    | `true`                         | Add the systemd user services.                               |
+| `systemd.target`                   | str     | `config.wayland.systemd.target`| The target that starts the services.                         |
+| `gitlab.enable`                    | bool    | `false`                        | Show the GitLab todos panel.                                 |
+| `gitlab.url`                       | str     | `null`                         | The GitLab instance. `null` gives `https://gitlab.com`.      |
+| `gitlab.tokenFile`                 | path    | `null`                         | A file that contains the personal access token.              |
+| `wallpaper.enable`                 | bool    | `false`                        | Start the wallpaper daemon.                                  |
+| `wallpaper.directory`              | path    | `null`                         | `null` gives `~/Images/wallpapers/enabled`.                  |
+| `wallpaper.interval`               | str     | `null`                         | `null` gives `30m`. Use `off` to select one time.            |
+| `lock.enable`                      | bool    | `false`                        | Enable the lock screen configuration.                        |
+| `lock.config`                      | path    | `null`                         | Your hyprlock config. `null` gives `~/.config/hypr/hyprlock.conf`. |
+| `lock.blurPasses`                  | int     | `null`                         | `null` gives 1.                                              |
+| `lock.blurSize`                    | int     | `null`                         | `null` gives 3.                                              |
+| `lock.idle.enable`                 | bool    | `false`                        | Configure hypridle to lock the session.                      |
+| `lock.idle.timeout`                | int     | `300`                          | Seconds of inactivity before the lock.                       |
+
+An overlay is also available. The overlay adds `obayebar` to `pkgs`.
+
+---
 
 ## Modules on the bar
 
 | Module          | Source                                   | Notes                                                                    |
 |-----------------|------------------------------------------|--------------------------------------------------------------------------|
-| Workspaces      | Hyprland IPC (`j/workspaces`, socket2)   | Per-monitor, animated indicator with a small physics spring              |
-| Active window   | Hyprland IPC (`activewindow` event)      | Class + title, vertical text rendered to a canvas                        |
-| System tray     | StatusNotifierItem (dbus)                | Click → activate, with cached icons                                      |
-| GitLab todos    | GitLab REST API + Secret Service keyring | Opt-in via `--gitlab` / config / home-manager option                     |
-| Clock           | local time tick                          |                                                                          |
-| Audio           | PipeWire (native, via `pipewire-rs`)     | Volume, mute, sink switching, panel with sliders                         |
-| Network         | NetworkManager (dbus)                    | Wi-Fi list, connect/disconnect, wired indicator                          |
-| Bluetooth       | BlueZ (dbus)                             | Adapter on/off, discovery, paired devices, forget                        |
-| Battery / power | UPower + `power-profiles-daemon` (dbus)  | Percentage, profile switching                                            |
-| Sysinfo         | `/proc`, NVML                            | CPU + GPU + RAM usage, network rates, threshold colouring                |
-| Notifications   | `org.freedesktop.Notifications` (dbus)   | Replaces `mako` / `dunst`, stacks with overflow summary at 2/5 of screen |
+| Workspaces      | Hyprland IPC (`j/workspaces`, socket2)   | One set for each monitor. A small spring moves the indicator.            |
+| Active window   | Hyprland IPC (`activewindow` event)      | Shows the class and the title. The bar draws the text vertically.       |
+| System tray     | StatusNotifierItem (dbus)                | A click activates the item. The bar keeps the icons in a cache.         |
+| GitLab todos    | GitLab REST API + Secret Service keyring | Off by default. Use `--gitlab`, the config file, or the Nix option.     |
+| Clock           | local time tick                          | Shows the local time.                                                   |
+| Audio           | PipeWire (native, with `pipewire-rs`)    | Shows the volume. The panel has sliders, mute, and sink selection.      |
+| Network         | NetworkManager (dbus)                    | The panel shows the Wi-Fi list, and connects or disconnects.            |
+| Bluetooth       | BlueZ (dbus)                             | The panel starts the adapter, finds devices, and forgets devices.       |
+| Battery / power | UPower + `power-profiles-daemon` (dbus)  | Shows the percentage. The panel changes the power profile.              |
+| Sysinfo         | `/proc`, NVML                            | Shows CPU, GPU, RAM, and network rates. The color changes at a limit.   |
+| Notifications   | `org.freedesktop.Notifications` (dbus)   | Replaces `mako` and `dunst`. Maximum height is 2/5 of the monitor.      |
 
-Configuration lives in `$XDG_CONFIG_HOME/obayebar/config.toml` — `[gitlab]`,
-`[wallpaper]` and `[lock]`; CLI flags override the file, env vars override
-that. A home-manager module ships in `flake.nix`.
-
-## Wallpapers
-
-`obayebar-wallpaper` puts a different random wallpaper on every monitor and
-rotates them on a timer. It replaces a pair of fish scripts (`hyprwallp`,
-`hyprrandlock`) that shelled out to `hyprctl`, `jq`, `find` and `shuf`, and it
-does **not** use hyprpaper — see [Why not hyprpaper](#why-not-hyprpaper).
-
-```toml
-# $XDG_CONFIG_HOME/obayebar/config.toml
-[wallpaper]
-enable = true
-directory = "~/Images/wallpapers/enabled"   # default
-interval = "30m"                            # "45s", "2h", "1d", or "off"
-```
-
-```
-obayebar-wallpaper [OPTIONS]
-
-  -d, --directory <DIR>   Override the wallpaper directory
-  -i, --interval <SPEC>   Override the rotation interval
-      --once              Assign once, write the state file, exit
-      --next              Tell the running daemon to rotate now
-      --reload            Tell it to re-scan the directory
-  -h, --help              Print this help
-  -V, --version           Print version
-```
-
-Bind `--next` to a key if you want a wallpaper you dislike gone immediately:
-
-```
-bind = SUPER, W, exec, obayebar-wallpaper --next
-```
-
-### How pictures get picked
-
-- **Files are identified by content, not by extension.** `image::open` and
-  friends dispatch on the file extension, which silently misses the two shapes
-  a real wallpaper directory actually contains — a `.jpe` file, and one named
-  `…wallpaper.jpg.png`. Every candidate is sniffed by magic bytes instead, so a
-  mislabelled picture works and a `.txt` renamed to `.png` is skipped rather
-  than rendered as nothing.
-- **The order is a seeded shuffle with a cursor**, both persisted. That is what
-  makes "next" mean something across a restart. The scripts reshuffled from
-  scratch on every run, so there was no such thing as *next* and the same
-  picture could come back immediately.
-- **A monitor never gets the wallpaper it is already showing.** The scripts
-  tried this with `find ! -name "$(basename "$CURRENT_WALL")"`, but
-  `CURRENT_WALL` was never set, so the filter excluded nothing and was dead
-  code.
-- **Fewer wallpapers than monitors wraps**, matching the scripts' modulo.
-- **Rotation is lockstep**: every monitor changes together, from one cursor.
-  Startup and hotplug are *not* rotations — a monitor coming back gets its
-  previous wallpaper, and only genuinely new monitors are assigned.
-
-### State
-
-The current selection lives in `$XDG_DATA_HOME/obayebar/wallpapers.json`,
-written atomically because the lock screen reads it while the timer may be
-writing it. `obayebar-wallpaper` is its only writer.
-
-It is keyed on the monitor **description** (`Dell Inc. DELL U2518D 3C4YP95TBQ5L`),
-not the port. Two identical panels differ only by the serial in that string, and
-DPMS cycles reshuffle which port is which — a wallpaper remembered against
-`DP-9` would be lost the moment the same screen came back as `DP-10`. The data
-dir rather than the cache dir, so the desktop comes back looking as it was left
-instead of reshuffling on every login.
-
-### What it costs to change a wallpaper
-
-About **50 ms** per monitor in a release build: roughly 25 ms to decode the
-JPEG, 20 ms to scale it, 3 ms to pack it into the buffer. Two things got it
-there, and both were found by measuring rather than guessing — the phase
-breakdown is logged at `debug` if you want to check it on your own hardware.
-
-**Buffers are sized to the panel, not to the surface.** Sizing them the obvious
-way — the layer surface's logical size times the output's integer scale — meant
-rendering 3840×2560 for a 2256×1504 panel, three times the pixels the display
-can show, with the compositor scaling them back down again. `wp_viewporter`
-decouples buffer size from surface size so the buffer can be the panel's real
-mode. That alone halved it.
-
-**Scaling uses `fast_image_resize`, not the `image` crate.** Scaling was ~92% of
-the remaining time and `image` does it with scalar code; the SIMD version is
-around 20× faster, which is what takes a wallpaper change from *noticeable* to
-*instant*. Filter choice turned out to be nearly irrelevant by comparison —
-CatmullRom bought 15% over Lanczos3 — so it keeps Lanczos3 and the quality.
-
-A **debug build is ~14 s per wallpaper**, almost all of it unoptimised scaling.
-If you are judging responsiveness from `cargo run`, add `--release`.
-
-### Why not hyprpaper
-
-hyprpaper 0.8.4 leaks roughly 4 MB per `wallpaper` IPC request, unbounded: a
-fresh daemon driven through ~130 requests grew from 84 MB to 1.55 GB RSS, and it
-is per-request rather than per-image — the same picture set repeatedly leaks
-just as fast. The `preload`/`unload` verbs that used to bound it are gone in
-0.8.4, so the only way to reclaim the memory is to restart hyprpaper, which
-wipes every wallpaper with no event to notice it by. For a feature whose entire
-purpose is to send that request on a timer, that is disqualifying.
-
-Rendering directly also removes a whole class of bug rather than working around
-it. `obayebar-wallpaper` talks wlr-layer-shell through
-`smithay-client-toolkit`, whose `create_layer_surface` binds a `wl_output`
-**object** — so a wallpaper cannot land on the wrong monitor, and none of the
-namespace-verification machinery the bar needs (see [Status](#status)) applies
-here. It draws into a `wl_shm` buffer, so it links neither iced nor wgpu and
-holds no VRAM.
-
-## Lock screen
-
-`obayebar-lock` locks the session showing the wallpaper the desktop is
-currently showing, blurred — not a fresh random one, which is what
-`hyprrandlock` did. It reads `wallpapers.json`, generates a hyprlock config
-with one `background` block per monitor, and runs hyprlock against it.
-
-```toml
-[lock]
-enable = true
-config = "~/.config/hypr/hyprlock.conf"   # default; your own file, see below
-blur_passes = 1
-blur_size = 3
-```
-
-```
-bind = SUPER, O, exec, obayebar-lock
-```
-
-`programs.obayebar.lock.idle.enable` sets up hypridle to run it after a
-timeout, and before suspend, so the screen is never briefly unlocked on resume.
-
-### Your base config is read, never replaced
-
-`[lock].config` points at *your* hyprlock config and obayebar only appends to a
-copy of it. That is deliberate: a config in this repository would not carry the
-`auth { fingerprint { … } }` block a real one does, and shipping a template
-would silently disable fingerprint unlock.
-
-Two hyprlock behaviours the generated config works around:
-
-- **Widget matching is additive.** A monitor-less `background` plus a
-  per-monitor one gives that monitor *two* backgrounds. The scripts relied on
-  the appended block happening to be drawn last; the generated blocks carry an
-  explicit `zindex` above hyprlock's default instead, so the order is defined.
-- **The monitor-less block is kept on purpose.** A screen that wakes *while the
-  session is locked* can only be matched by a block with no `monitor` set;
-  without one its surface renders transparent. If your base config has no such
-  block, `obayebar-lock` warns rather than editing your file.
-
-Since hyprlock parses its config only *after* connecting to Wayland, there is
-no way to pre-flight one without locking the screen — hence `--print` to dump
-the generated config and `--check` to validate it.
-
-### Why not a native lock screen
-
-Writing the locker in Rust against `ext-session-lock-v1` would be the obvious
-move, and it is the one thing here deliberately *not* done. The available iced
-binding `delegate_noop!`s `ExtSessionLockV1`, so the protocol's `locked` and
-`finished` events are discarded and the client can never learn whether the lock
-took effect; `unlock_and_destroy` then fires unconditionally, and the resulting
-`invalid_unlock` protocol error lands on an `.expect()`.
-
-The protocol says a compositor "must not unlock the session" when the client
-dies, and with `misc:allow_session_lock_restore` off — the default — Hyprland
-will not let a replacement take over. A crashed locker therefore means a
-machine you can only recover by killing the compositor from a TTY or over SSH,
-losing the session. hyprlock is a worse programming model and a much better
-failure mode.
-
-## Why it stays light
-
-The whole point of this rewrite was to **not** be caelestia-shell. Concrete
-choices that follow from that:
-
-- **No QtQuick, no JavaScript, no shell runtime.** Just a Rust binary on
-  [`iced`](https://iced.rs) + [`iced_layershell`](https://github.com/waycrate/exwlshelleventloop)
-  driving wlr-layer-shell directly. No QML interpreter, no V8, no Qt scene graph.
-- **wgpu renderer with aggressive lazy/cached widgets.** Workspace indicators
-  are drawn on a `canvas::Cache` that is only invalidated when state actually
-  changes; clock / status / tray sections are wrapped in `iced::widget::lazy`
-  with hand-rolled cache keys so a CPU/RAM number bumping by 0.1 % doesn't
-  rebuild the widget tree. Spring animation only ticks at 60 Hz **while it is
-  animating** — the bar is fully idle (no wake-ups, no draws) when nothing on
-  screen is moving.
-- **Push-only event sources, never polling.**
-  - Hyprland: one persistent `socket2` connection, parsed line by line, and
-    only events that actually affect the rendered state
-    (workspace/window/monitor changes) cause a refresh — high-frequency noise
-    like `activewindowv2` and `windowtitle` is dropped without waking the UI
-    thread.
-  - dbus services (network, bluetooth, notifications, battery, power-profiles,
-    upower, gitlab, tray) all use signal subscriptions via `zbus`.
-  - Audio comes straight from PipeWire's native protocol (`pipewire-rs`), not
-    from `pactl` or polling `pavucontrol`.
-- **Per-second clock, not per-frame.** The clock uses a custom timer
-  subscription (`services::timers::clock_stream`) that wakes exactly on the
-  next minute boundary and on the next pending notification expiry — never on
-  a fixed interval.
-- **Notification popup is auto-sized.** The popup is pinned to a known output
-  and resizes to fit the current notifications, capped at 2/5 of *that*
-  monitor's logical height; anything that doesn't fit is collapsed into a
-  single "*N more notifications*" entry rather than rendering offscreen
-  widgets. It follows the focused monitor by being recreated there, since a
-  layer surface can be resized but not moved.
-- **Launcher cache.** `obayebar-launcher` persists desktop-entry parsing and
-  resolved icon paths to `XDG_CACHE_HOME` and launch frequencies to
-  `XDG_DATA_HOME`, so cold start is almost instant after the first run. A cache
-  written by an older version is discarded rather than migrated, so the entry
-  list is simply rediscovered once after an upgrade.
-- **Terminal applications launch in a terminal.** Entries with
-  `Terminal=true` (htop, vim, ranger, …) are wrapped in `$TERMINAL`, falling
-  back to the first of foot, kitty, alacritty, wezterm, konsole,
-  gnome-terminal, xfce4-terminal or xterm found on `PATH`. `Exec` lines run
-  through `sh -c`, so quoted arguments, `env VAR=value` prefixes and
-  `sh -c "…"` wrapper entries get the argv the desktop-entry spec asks for.
-- **Smithay clipboard worker disabled.** No surface in the bar is
-  keyboard-interactive, so the upstream always-on clipboard thread is
-  switched off via `iced_layershell::disable_clipboard()`. (The launcher,
-  which *is* interactive, runs in its own process.)
-- **Secrets stored in the kernel keyring.** GitLab tokens go through Secret
-  Service when available, falling back to a file in `XDG_CONFIG_HOME`. The
-  token never ends up in the Nix store even via the home-manager module.
-- **Verified multi-monitor placement.** Bar placement is *observed*, not
-  assumed. Each bar is spawned under its own layer-shell namespace
-  (`obayebar-bar-N`) and then checked against Hyprland's `j/layers`: if a bar
-  landed on a monitor other than the one requested, vanished without a close
-  event, or ended up sharing a screen with another bar, it is closed and
-  respawned until the compositor agrees. Spawns are serialised one at a time so
-  a batch cannot resolve against a stale output-name cache and pile onto one
-  screen. A failed IPC query is treated as "unknown" and changes nothing —
-  never as "no monitors are connected".
-
-The last bullet describes a behaviour you specifically should not have to
-think about — it just works.
-
-> **Upgrading:** every layer surface now carries its own namespace instead of
-> the shared `obayebar`. A Hyprland rule matching the old exact name needs to
-> become a prefix match:
->
-> ```
-> layerrule = blur, ^obayebar
-> ```
->
-> The namespaces are `obayebar-bar-N` (one per bar), `obayebar-panel-<kind>`
-> (audio, network, bluetooth, battery, sysinfo, gitlab) and
-> `obayebar-notifications`, so rules can also target one kind of surface
-> without catching the others.
-
-## Libraries
-
-| Crate                        | Used for                                                  |
-|------------------------------|-----------------------------------------------------------|
-| `iced` 0.14                  | Reactive UI runtime, wgpu renderer, canvas, lazy widgets  |
-| `iced_layershell` 0.19       | wlr-layer-shell integration on top of iced                |
-| `smithay-client-toolkit` 0.20| Raw wlr-layer-shell + wl_shm for the wallpaper renderer   |
-| `fast_image_resize` 6        | SIMD wallpaper scaling — see below                        |
-| `zbus` 5                     | Async dbus for NetworkManager / BlueZ / UPower / SNI / …  |
-| `pipewire` 0.10              | Native PipeWire client for audio                          |
-| `tokio` 1.x                  | Async runtime, signal/timer plumbing                      |
-| `chrono`                     | Time + minute-aligned wakeups                             |
-| `nvml-wrapper`               | NVIDIA GPU usage / temperature                            |
-| `fuzzy-matcher` (Skim)       | Launcher fuzzy ranking                                    |
-| `resvg` + `image`            | Tray / launcher icon decoding                             |
-| `reqwest` (rustls + ring)    | GitLab REST API                                           |
-| `secret-service`             | Storing the GitLab PAT in the kernel keyring              |
-| `serde` + `toml`             | Config file parsing                                       |
-| `ab_glyph` + `fontdb`        | Vector text rendering on the workspace canvas             |
-| `thiserror`                  | Typed errors across the IPC and rendering paths           |
-
-## Build & run
-
-The project pulls in a few things the toolchain on most distros won't have
-matched up out of the box:
-
-- **Nightly Rust** — needed for `cargo-features = ["codegen-backend"]` and
-  the `rustc-codegen-cranelift-preview` component used as the dev codegen
-  backend. The Cranelift backend is what makes incremental dev builds fast;
-  release builds still go through LLVM.
-- **`mold`** — used as the linker. Iced + wgpu + `pipewire-rs` pull in a
-  lot of object files; `mold` cuts link time roughly in half versus `lld`
-  and a lot more versus the default GNU `ld`. Configured via `.cargo`.
-- **System libs** — `wayland`, `libxkbcommon`, `vulkan-loader`, `fontconfig`,
-  `pipewire`, plus `pkg-config` / `clang` / `libclang` at build time.
-- **Material Symbols font** — looked up at runtime via `OBAYEBAR_FONT_DIR`.
-
-Because of all that, **the recommended way to build or hack on the project
-is the Nix dev shell**:
-
-```sh
-# enter a shell with nightly rust, cranelift, clippy, rust-analyzer,
-# mold, all system libs and OBAYEBAR_FONT_DIR pre-set
-nix develop
-
-# inside the shell
-cargo run --bin obayebar
-cargo run --bin obayebar-launcher
-cargo clippy --all-targets
-```
-
-If you'd rather just build the package without setting up a toolchain at
-all:
-
-```sh
-nix build .#default
-nix run .#default
-```
-
-A home-manager module is exported as `homeManagerModules.default`. Enable
-with `programs.obayebar.enable = true;` and optionally
-`programs.obayebar.gitlab = { enable = true; url = "..."; tokenFile = ...; };`.
-
-Building outside Nix is supported but not the happy path: you'll need to
-install nightly Rust (with the `rustc-codegen-cranelift-preview` component),
-`mold`, and the system libraries listed above yourself.
-
-## CLI
+## Command-line reference
 
 ```
 obayebar [OPTIONS]
@@ -380,19 +257,309 @@ obayebar [OPTIONS]
 ```
 
 ```
-obayebar-lock [OPTIONS]
+obayebar-wallpaper [OPTIONS]
 
-  -c, --config <PATH>   Base hyprlock config to extend
-      --no-wallpaper    Lock with the base config unchanged
-      --print           Print the generated config and exit, without locking
-      --check           Validate and exit non-zero on any problem
-      --blur <P>x<S>    Blur passes and size, e.g. 2x5
-  -g, --grace <SECS>    Seconds before a password is required
+  -d, --directory <DIR>   Directory to pick wallpapers from
+  -i, --interval <SPEC>   Rotation interval: 45s, 30m, 2h, 1d, or off
+      --once              Assign once, write the state file, and exit
+      --next              Ask the running daemon to rotate now
+      --reload            Ask it to re-scan the wallpaper directory
+  -h, --help              Print this help
+  -V, --version           Print version
 ```
 
-`obayebar-wallpaper`'s flags are in [Wallpapers](#wallpapers).
+```
+obayebar-lock [OPTIONS]
 
-Persistent settings: `$XDG_CONFIG_HOME/obayebar/config.toml`.
+  -c, --config <PATH>     Base hyprlock config to extend
+      --state <PATH>      Wallpaper state file to read
+      --no-wallpaper      Lock with the base config unchanged
+      --print             Print the generated config and exit, without locking
+      --check             Validate and exit non-zero on any problem
+      --blur <P>x<S>      Blur passes and size, e.g. 2x5
+  -g, --grace <SECS>      Seconds before a password is required
+      --detach            Do not wait for hyprlock to exit
+      --no-scope          Do not wrap hyprlock in its own systemd scope
+  -h, --help              Print this help
+  -V, --version           Print version
+```
+
+`obayebar-launcher` has no flags.
+
+## Wallpapers
+
+`obayebar-wallpaper` puts a different wallpaper on each monitor, and changes
+the wallpapers on a timer. The program replaces two fish scripts (`hyprwallp`
+and `hyprrandlock`) that called `hyprctl`, `jq`, `find` and `shuf`. The
+program does **not** use hyprpaper. Refer to
+[Why not hyprpaper](#why-not-hyprpaper).
+
+### How the program selects a picture
+
+- **The content identifies a file, not the extension.** `image::open` and the
+  related functions use the extension. Thus these functions do not read the
+  two shapes that a real wallpaper directory contains: a `.jpe` file, and a
+  file with the name `…wallpaper.jpg.png`. The program examines the magic
+  bytes of each candidate file instead. Thus a file with an incorrect name
+  operates correctly, and the program rejects a `.txt` file that has the new
+  name `.png`.
+- **The order is a shuffle with a seed and a cursor.** The program keeps the
+  seed and the cursor on disk. Thus *next* has a meaning after a restart. The
+  scripts made a new shuffle at each run, thus the scripts had no *next*, and
+  the same picture could come back immediately.
+- **A monitor does not receive the wallpaper that the monitor shows.** The
+  scripts tried this filter with `find ! -name "$(basename "$CURRENT_WALL")"`.
+  But no code set `CURRENT_WALL`, thus the filter removed no file, and the
+  filter was dead code.
+- **The program uses a wallpaper again when the wallpapers are not
+  sufficient.** If the monitors are more than the wallpapers, the program uses
+  a modulo, as the scripts did.
+- **All the monitors change together**, from one cursor. The start of the
+  program and a new monitor are not changes: a monitor that comes back
+  receives the previous wallpaper of that monitor, and the program assigns a
+  wallpaper only to a fully new monitor.
+
+### The state file
+
+The program writes the current selection to
+`$XDG_DATA_HOME/obayebar/wallpapers.json`. The write is atomic, because the
+lock screen reads the file while the timer can write the file.
+`obayebar-wallpaper` is the only writer.
+
+The key is the **description** of the monitor
+(`Dell Inc. DELL U2518D 3C4YP95TBQ5L`), not the port. Two equal panels differ
+only by the serial number in that string. Also, a DPMS cycle can change which
+port has which monitor. Thus a wallpaper that the program remembered against
+`DP-9` would be lost when the same monitor came back as `DP-10`. The file is
+in the data directory, not in the cache directory. Thus the desktop comes back
+in the previous condition, and does not shuffle at each login.
+
+### The time to change a wallpaper
+
+A release build needs approximately **50 ms** for each monitor: approximately
+25 ms to decode the JPEG, 20 ms to scale the image, and 3 ms to write the
+buffer. Two changes give this result, and measurements found the two changes.
+The program logs the time of each phase at the `debug` level. Thus you can
+examine the times on your own hardware.
+
+**The buffers have the size of the panel, not the size of the surface.** The
+obvious calculation is the logical size of the layer surface multiplied by the
+integer scale of the monitor. That calculation made a 3840×2560 buffer for a
+2256×1504 panel. That buffer has three times more pixels than the monitor can
+show, and the compositor then made the pixels smaller again. `wp_viewporter`
+separates the buffer size from the surface size. Thus the buffer can have the
+real mode of the panel. This change alone removed one half of the time.
+
+**The program scales with `fast_image_resize`, not with the `image` crate.**
+The scale operation used approximately 92% of the remaining time, because the
+`image` crate uses scalar code. The SIMD code is approximately 20 times
+faster, and this change makes a wallpaper change immediate. The filter has
+almost no effect: CatmullRom is only 15% faster than Lanczos3. Thus the
+program keeps Lanczos3 and the better quality.
+
+A **debug build needs approximately 14 s for each wallpaper**. Almost all of
+that time is the unoptimized scale operation. Add `--release` when you examine
+the speed.
+
+### Why not hyprpaper
+
+hyprpaper 0.8.4 loses approximately 4 MB of memory at each `wallpaper` IPC
+request, with no limit. A new daemon that received approximately 130 requests
+increased from 84 MB to 1.55 GB of RSS. The loss is for each request, not for
+each image: the same set of pictures loses memory at the same speed. Version
+0.8.4 does not have the `preload` and `unload` commands that limited the
+memory before. Thus only a restart of hyprpaper releases the memory, and a
+restart removes each wallpaper with no event to detect. A program that sends
+that request on a timer cannot accept this behavior.
+
+A direct draw also removes a full class of defect. `obayebar-wallpaper` speaks
+wlr-layer-shell through `smithay-client-toolkit`, and
+`create_layer_surface` binds a `wl_output` **object**. Thus a wallpaper cannot
+go to the incorrect monitor, and the namespace verification of the bar (refer
+to [Why obayebar is light](#why-obayebar-is-light)) is not necessary here. The
+program draws into a `wl_shm` buffer. Thus the program links neither iced nor
+wgpu, and holds no VRAM.
+
+## Lock screen
+
+`obayebar-lock` locks the session and shows the wallpaper that each monitor
+currently shows, with a blur. The program does not select a new random
+picture, as `hyprrandlock` did. The program reads `wallpapers.json`, makes a
+hyprlock config with one `background` block for each monitor, and starts
+hyprlock with that config.
+
+### The program reads your base config, and does not replace your base config
+
+`[lock].config` points to *your* hyprlock config, and obayebar adds text only
+to a copy of that file. This behavior is intentional: a config in this
+repository would not contain the `auth { fingerprint { … } }` block that a real
+config contains. A template would then disable the fingerprint unlock, and
+would give no message.
+
+The generated config prevents two behaviors of hyprlock:
+
+- **hyprlock adds the widgets together.** A `background` block with no monitor,
+  and a second block for one monitor, give that monitor *two* backgrounds. The
+  scripts depended on the sequence of the blocks. The generated blocks contain
+  an explicit `zindex` above the default of hyprlock instead. Thus the
+  sequence is known.
+- **The block with no monitor stays, and this is intentional.** A monitor that
+  comes back *while the session is locked* can match only a block with no
+  `monitor` key. Without such a block, the surface of that monitor is
+  transparent. If your base config has no such block, `obayebar-lock` gives a
+  warning, and does not change your file.
+
+hyprlock reads the config only *after* the connection to Wayland. Thus no
+method can test a config without a lock of the screen. For this reason,
+`--print` writes the generated config, and `--check` examines the generated
+config.
+
+### Why not a native lock screen
+
+A locker in Rust on `ext-session-lock-v1` is the obvious solution, and this is
+the one item that this repository intentionally does *not* do. The available
+iced binding applies `delegate_noop!` to `ExtSessionLockV1`. Thus the binding
+discards the `locked` and `finished` events of the protocol, and the client
+can never know if the lock is effective. `unlock_and_destroy` then operates in
+all conditions, and the `invalid_unlock` protocol error goes to an
+`.expect()`.
+
+The protocol says that a compositor "must not unlock the session" when the
+client stops. Also, with `misc:allow_session_lock_restore` off (the default),
+Hyprland does not let a second client take control. Thus a locker that stops
+gives a machine that you can recover only from a TTY or through SSH, and you
+lose the session. hyprlock is a worse programming model, and a much better
+failure mode.
+
+## Why obayebar is light
+
+The primary goal of this program is to **not** be caelestia-shell. These
+decisions come from that goal:
+
+- **No QtQuick, no JavaScript, no shell runtime.** obayebar is a Rust binary on
+  [`iced`](https://iced.rs) and
+  [`iced_layershell`](https://github.com/waycrate/exwlshelleventloop), which
+  speak wlr-layer-shell directly. There is no QML interpreter, no V8, and no
+  Qt scene graph.
+- **A wgpu renderer with cached widgets.** The bar draws the workspace
+  indicators on a `canvas::Cache`, and clears the cache only at a true change
+  of the state. The clock, the status and the tray sections are in an
+  `iced::widget::lazy` with a manual cache key. Thus a CPU or RAM value with a
+  change of 0.1 % does not make a new widget tree. The spring animation runs
+  at 60 Hz only *while the animation moves*. When nothing moves, the bar is
+  fully idle: no wake-ups, and no draws.
+- **All the event sources push, and the bar does not poll.**
+  - Hyprland: one permanent `socket2` connection. The bar reads the connection
+    line by line. Only an event that changes the screen (a workspace, a window,
+    or a monitor) makes a refresh. The bar discards the high-frequency events
+    `activewindowv2` and `windowtitle` before the UI thread wakes.
+  - The dbus services (network, bluetooth, notifications, battery,
+    power-profiles, upower, gitlab, tray) all use signal subscriptions
+    through `zbus`.
+  - The audio data comes directly from the native PipeWire protocol
+    (`pipewire-rs`), not from `pactl`, and not from a poll of `pavucontrol`.
+- **The clock wakes at the minute, not at each frame.** The clock uses a special
+  timer subscription (`services::timers::clock_stream`). The timer wakes
+  exactly at the next minute, and at the next expiry of a notification. The
+  timer never uses a constant interval.
+- **The notification popup has an automatic size.** The popup stays on one
+  monitor, and changes size to fit the current notifications. The maximum is
+  2/5 of the logical height of *that* monitor. The popup collapses the
+  remaining notifications into one "*N more notifications*" entry, and does
+  not draw widgets off the screen. To follow the focused monitor, the bar
+  makes the popup again on that monitor, because a layer surface can change
+  size but cannot move.
+- **The launcher has a cache.** `obayebar-launcher` writes the desktop-entry
+  data and the icon paths to `XDG_CACHE_HOME`, and the launch counts to
+  `XDG_DATA_HOME`. Thus the start is almost immediate after the first run. The
+  launcher discards a cache from an older version, and does not convert that
+  cache. Thus the launcher finds the entries again one time after an upgrade.
+- **A terminal application starts in a terminal.** The launcher puts an entry
+  with `Terminal=true` (htop, vim, ranger, …) in `$TERMINAL`. If `$TERMINAL`
+  is not set, the launcher uses the first of foot, kitty, alacritty, wezterm,
+  konsole, gnome-terminal, xfce4-terminal or xterm on the `PATH`. The launcher
+  starts each `Exec` line through `sh -c`. Thus a quoted argument, an
+  `env VAR=value` prefix, and an `sh -c "…"` entry all receive the argv of the
+  desktop-entry specification.
+- **The smithay clipboard worker is off.** No surface of the bar receives the
+  keyboard. Thus `iced_layershell::disable_clipboard()` stops the permanent
+  clipboard thread of the library. The launcher does receive the keyboard, and
+  the launcher is a different process.
+- **The kernel keyring holds the secrets.** A GitLab token goes through Secret
+  Service. If Secret Service is not available, the token goes to a file in
+  `XDG_CONFIG_HOME`. The token never goes into the Nix store, also through the
+  home-manager module.
+- **The bar verifies the position on each monitor.** The bar *examines* the
+  position, and does not assume the position. The bar starts each surface with
+  its own layer-shell namespace (`obayebar-bar-N`), and then compares the
+  surface with the `j/layers` data of Hyprland. The bar closes a surface and
+  starts a new surface in three conditions: the bar is on an incorrect
+  monitor, the bar stops with no close event, or two bars are on one monitor.
+  The bar continues until the compositor agrees. The bar starts the surfaces
+  one at a time. Thus a group of surfaces cannot use an old output-name
+  cache, and cannot collect on one monitor. If an IPC query fails, the bar
+  reads the result as "unknown" and changes nothing. The bar never reads a
+  failed query as "no monitor is connected".
+
+The last item is a behavior that you must not think about. The behavior
+operates.
+
+## Libraries
+
+| Crate                        | Used for                                                  |
+|------------------------------|-----------------------------------------------------------|
+| `iced` 0.14                  | Reactive UI runtime, wgpu renderer, canvas, lazy widgets  |
+| `iced_layershell` 0.19       | wlr-layer-shell integration on top of iced                |
+| `smithay-client-toolkit` 0.20| Raw wlr-layer-shell + wl_shm for the wallpaper renderer   |
+| `fast_image_resize` 6        | SIMD wallpaper scaling                                    |
+| `zbus` 5                     | Async dbus for NetworkManager / BlueZ / UPower / SNI / …  |
+| `pipewire` 0.10              | Native PipeWire client for audio                          |
+| `tokio` 1.x                  | Async runtime, signal and timer plumbing                  |
+| `chrono`                     | Time and minute-aligned wakeups                           |
+| `nvml-wrapper`               | NVIDIA GPU usage and temperature                          |
+| `fuzzy-matcher` (Skim)       | Launcher fuzzy ranking                                    |
+| `resvg` + `image`            | Tray and launcher icon decoding                           |
+| `reqwest` (rustls + ring)    | GitLab REST API                                           |
+| `secret-service`             | Storage of the GitLab PAT in the kernel keyring           |
+| `serde` + `toml`             | Config file parsing                                       |
+| `ab_glyph` + `fontdb`        | Vector text on the workspace canvas                       |
+| `thiserror`                  | Typed errors on the IPC and rendering paths               |
+
+## Build from source
+
+The project needs some components that a usual distribution toolchain does not
+have:
+
+- **Nightly Rust** — necessary for `cargo-features = ["codegen-backend"]` and
+  the `rustc-codegen-cranelift-preview` component, which is the dev codegen
+  backend. The Cranelift backend makes the incremental dev builds fast. A
+  release build continues to use LLVM.
+- **`mold`** — the linker. iced, wgpu and `pipewire-rs` give many object
+  files. `mold` needs approximately one half of the time of `lld`, and much
+  less time than the default GNU `ld`. The `.cargo` directory has the
+  configuration.
+- **System libraries** — `wayland`, `libxkbcommon`, `vulkan-loader`,
+  `fontconfig`, `pipewire`, and also `pkg-config`, `clang` and `libclang` at
+  build time.
+- **The Material Symbols font** — the bar finds the font at run time with
+  `OBAYEBAR_FONT_DIR`.
+
+Thus **the recommended method is the Nix dev shell**:
+
+```sh
+# a shell with nightly rust, cranelift, clippy, rust-analyzer, mold,
+# all the system libraries, and OBAYEBAR_FONT_DIR
+nix develop
+
+# in the shell
+cargo run --bin obayebar
+cargo run --bin obayebar-launcher
+cargo clippy --all-targets
+```
+
+A build without Nix is possible, but is not the recommended method. You must
+install nightly Rust (with the `rustc-codegen-cranelift-preview` component),
+`mold`, and the system libraries in the list above.
 
 ## Crate layout
 
@@ -403,43 +570,45 @@ crates/obayebar-wallpaper   wlr-layer-shell + wl_shm renderer
 crates/obayebar-lock        generates a hyprlock config and runs it
 ```
 
-The split is drawn along one line: whether a binary needs a GUI stack.
-`obayebar-core` pulls 81 crates against the bar's 1198, which is what lets the
-lock screen be a fast, small program and lets the shared logic's tests run
-without compiling wgpu.
+One line divides the crates: a binary that needs a GUI stack, and a binary
+that does not. `obayebar-core` pulls 81 crates, and the bar pulls 1198. Thus
+the lock screen is a small and fast program, and the tests of the shared code
+run without a build of wgpu.
 
-Run cargo from the workspace root; `cargo test` covers every member. Use
-`cargo run -p obayebar-wallpaper` to run one binary in particular.
+Run cargo from the root of the workspace. `cargo test` covers each member. To
+run one program, use `cargo run -p obayebar-wallpaper`.
 
-Two workspace rules worth knowing before adding a crate. `[profile.dev]` and
-`cargo-features` must stay in the root manifest — cargo ignores a profile in a
-member and only warns, silently losing the cranelift backend. And every member
-needs `[lints] workspace = true`: omitting it is **completely silent** and drops
-`unsafe_code = "forbid"` along with the whole deny set.
+Two rules of the workspace are important before you add a crate. First,
+`[profile.dev]` and `cargo-features` must stay in the root manifest: cargo
+ignores a profile in a member, gives only a warning, and the cranelift backend
+is lost. Second, each member needs `[lints] workspace = true`. A member
+without that key gives no message, and loses `unsafe_code = "forbid"` and the
+full deny set.
 
 ## Status
 
-Single-user project. No release schedule, no support, no plugin system.
+This is a single-user project. There is no release schedule, no support, and
+no plugin system.
 
-Feature requests and pull requests are welcome under one rule: anything that
-adds surface area must be **opt-out-able**, so the default experience stays
-the same as it is today.
+Feature requests and pull requests are welcome, with one rule: a feature that
+adds surface area must have a control to disable the feature. Thus the default
+experience stays the same as today.
 
-- If the feature has **no measurable performance impact** when disabled (a
-  branch on a config field, a dbus subscription that only spins up when
-  asked, a UI module hidden by default, etc.), expose it through
-  `$XDG_CONFIG_HOME/obayebar/config.toml` (and ideally the home-manager
-  module too). The GitLab module is the existing reference implementation —
-  see `[gitlab]` in the config and `programs.obayebar.gitlab.*` in the
-  flake.
-- If the feature has **any** performance impact when merely *compiled in*
-  — extra dependency, extra background task, larger binary, longer
-  startup — it must be gated behind a Cargo feature flag and be off by
-  default. "Slightest" is intentional: I'd rather say no to a feature than
-  pay for it on every machine that doesn't use it.
+- **No measurable effect on the performance when the feature is off.**
+  Examples: a branch on a config field, a dbus subscription that starts only on
+  a request, or a UI module that is hidden by default. Put the control in
+  `$XDG_CONFIG_HOME/obayebar/config.toml`, and also in the home-manager module.
+  The GitLab module is the reference example. Refer to `[gitlab]` in the
+  config, and to `programs.obayebar.gitlab.*` in the flake.
+- **Any effect on the performance when the compiler includes the feature.**
+  Examples: an added dependency, an added background task, a larger binary, or
+  a longer start. Put the feature behind a Cargo feature flag, and make the
+  flag off by default. The word "any" is intentional. It is better to refuse a
+  feature than to pay for that feature on each machine that does not use the
+  feature.
 
-If you're not sure which bucket your feature falls into, open the issue
-first and we'll figure it out before you write the patch.
+If you do not know the correct group for your feature, open the issue first.
+We will find the answer before you write the patch.
 
 ## Credits
 
