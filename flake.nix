@@ -67,15 +67,13 @@
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath deps;
           LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
 
-          # The bar and the launcher draw with iced/wgpu and need the icon font
-          # and the vulkan loader. The wallpaper renderer talks wl_shm directly
-          # and the lock screen draws nothing at all, so neither wants a font
-          # dir — but the renderer still links wayland and libxkbcommon.
+          # The bar draws with iced/wgpu and needs the icon font and the vulkan
+          # loader. The wallpaper renderer talks wl_shm directly, the lock
+          # screen draws nothing at all and the launcher shim only writes to a
+          # socket, so none of them wants a font dir — but the renderer still
+          # links wayland and libxkbcommon.
           postInstall = ''
             wrapProgram $out/bin/obayebar \
-              --set OBAYEBAR_FONT_DIR "${pkgs.material-symbols}/share/fonts" \
-              --prefix LD_LIBRARY_PATH : "${pkgs.lib.makeLibraryPath deps}"
-            wrapProgram $out/bin/obayebar-launcher \
               --set OBAYEBAR_FONT_DIR "${pkgs.material-symbols}/share/fonts" \
               --prefix LD_LIBRARY_PATH : "${pkgs.lib.makeLibraryPath deps}"
             wrapProgram $out/bin/obayebar-wallpaper \

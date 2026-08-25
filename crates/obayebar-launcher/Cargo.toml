@@ -1,0 +1,24 @@
+[package]
+name = "obayebar-launcher"
+description = "Shows the obayebar application launcher, via the bar's control socket"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[[bin]]
+name = "obayebar-launcher"
+path = "src/main.rs"
+
+# The launcher surface is drawn by the bar; this binary writes one line to its
+# control socket and exits. Keeping it out of the GUI crate is the whole point:
+# a keybinding should not pay for linking iced and wgpu, which is most of what
+# the old standalone launcher process spent its startup on.
+[dependencies]
+obayebar-core = { workspace = true, default-features = false }
+
+[lints]
+workspace = true

@@ -1,13 +1,12 @@
 //! The `--next` / `--reload` channel: a unix socket in the runtime dir.
 //!
-//! A socket rather than D-Bus because this binary otherwise needs neither an
-//! async runtime nor a bus connection, and "rotate now" is a single line of
-//! text. The socket lives in `$XDG_RUNTIME_DIR`, which is mode 700 and cleared
-//! at logout, so a stale one cannot outlive the session that owns it.
+//! The socket mechanics live in `obayebar_core::control`, shared with the bar's
+//! control channel; what stays here is this daemon's own command vocabulary.
 
-use std::io::{BufRead as _, BufReader, Write as _};
-use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::PathBuf;
+use std::io::{BufRead as _, BufReader};
+use std::os::unix::net::UnixListener;
+
+use obayebar_core::control::{self, WALLPAPER_SOCKET};
 
 /// One command a running daemon accepts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,12 +36,6 @@ impl Command {
     }
 }
 
-/// Where the control socket lives, or `None` without a runtime dir.
-#[must_use]
-pub fn socket_path() -> Option<PathBuf> {
-    obayebar_core::xdg::runtime_dir().map(|d| d.join("wallpaper.sock"))
-}
-
 /// Send `command` to a running daemon.
 ///
 /// # Errors
@@ -50,14 +43,13 @@ pub fn socket_path() -> Option<PathBuf> {
 /// Returns a message naming what went wrong — most usefully, that nothing is
 /// listening, which means the daemon is not running.
 pub fn send(command: Command) -> Result<(), String> {
-    let path = socket_path().ok_or_else(|| "XDG_RUNTIME_DIR is unset".to_string())?;
-    let mut stream = UnixStream::connect(&path).map_err(|e| {
-        format!(
-            "no daemon listening on {} ({e}); is obayebar-wallpaper running?",
+    control::send_line(WALLPAPER_SOCKET, command.as_str()).map_err(|e| match e {
+        control::ControlError::NotListening { path, source } => format!(
+            "no daemon listening on {} ({source}); is obayebar-wallpaper running?",
             path.display()
-        )
-    })?;
-    writeln!(stream, "{}", command.as_str()).map_err(|e| format!("sending the command: {e}"))
+        ),
+        other => other.to_string(),
+    })
 }
 
 /// Bind the control socket, replacing a stale one.
@@ -68,30 +60,7 @@ pub fn send(command: Command) -> Result<(), String> {
 /// bound. Callers should treat that as "no control channel" and carry on
 /// rendering rather than refusing to start.
 pub fn listen() -> Result<UnixListener, String> {
-    // Through the shared helper so the directory ends up mode 700 whichever
-    // binary creates it first — it also holds the generated lock config, which
-    // names every wallpaper path.
-    obayebar_core::xdg::runtime_dir_create()
-        .map_err(|e| format!("preparing the runtime directory: {e}"))?;
-    let path = socket_path().ok_or_else(|| "XDG_RUNTIME_DIR is unset".to_string())?;
-    // A socket file left by a crashed daemon would make bind fail with
-    // EADDRINUSE forever. Probing it first distinguishes "stale" from "a
-    // daemon is already running", which is a real error worth reporting.
-    if path.exists() {
-        if UnixStream::connect(&path).is_ok() {
-            return Err(format!(
-                "another obayebar-wallpaper is already listening on {}",
-                path.display()
-            ));
-        }
-        let _ = std::fs::remove_file(&path);
-    }
-    let listener =
-        UnixListener::bind(&path).map_err(|e| format!("binding {}: {e}", path.display()))?;
-    listener
-        .set_nonblocking(true)
-        .map_err(|e| format!("setting the socket non-blocking: {e}"))?;
-    Ok(listener)
+    control::bind(WALLPAPER_SOCKET).map_err(|e| e.to_string())
 }
 
 /// Drain every pending command without blocking.

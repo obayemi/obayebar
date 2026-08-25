@@ -1,9 +1,11 @@
 mod bar;
 mod config;
+mod control;
 mod notifications;
 mod panel;
 mod services;
 
+use obayebar::launcher::{self, Launcher};
 use obayebar::style;
 
 use std::collections::HashMap;
@@ -11,6 +13,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use bar::workspaces::SpringState;
+use iced::event::Event;
 use iced::widget::canvas;
 use iced::window;
 use iced::{Element, Subscription, Task, Theme};
@@ -180,9 +183,10 @@ fn main() {
         .map(|()| log::set_max_level(max_level))
         .ok();
 
-    // The bar has no surface with keyboard interactivity, so the smithay-
-    // clipboard worker would never see a Ctrl+V anyway. Skip spawning it.
-    iced_layershell::disable_clipboard();
+    // The clipboard worker stays on now that the launcher lives here: its
+    // search field is keyboard-interactive, so Ctrl+V in it is a real
+    // paste. That is what the old standalone launcher process gave, and
+    // `disable_clipboard()` here would quietly take it away.
 
     let icon_fonts = style::load_icon_font();
 
@@ -292,6 +296,13 @@ pub struct App {
     pub tray_items: Arc<Vec<TrayItemInfo>>,
     pub popup_notifications: Vec<NotificationData>,
     pub hovered_notif_id: Option<u32>,
+
+    /// The launcher's state, kept between openings: its entry list is scanned
+    /// once at startup and refreshed by a filesystem watch, so showing the
+    /// surface has no work to do.
+    launcher: Launcher,
+    /// The launcher surface, while one is up.
+    launcher_window: Option<window::Id>,
 }
 
 #[to_layer_message(multi)]
@@ -363,6 +374,17 @@ pub enum Message {
     AudioOpenPavucontrol,
     SetPowerProfile(String),
     WindowClosed(window::Id),
+    /// A line arrived on the control socket, from `obayebar-launcher`.
+    Control(obayebar_core::control::BarCommand),
+    /// A message from the launcher's own widgets.
+    Launcher(launcher::Message),
+    /// A freshly scanned application list, from the startup scan or from the
+    /// filesystem watch that follows it.
+    LauncherIndex(launcher::desktop_entry::Index),
+    /// Keyboard and window events, routed to the launcher when they belong to
+    /// its surface. The search field has focus, so Escape, the arrows and
+    /// Enter would otherwise be swallowed by the text input.
+    LauncherEvent(window::Id, Event),
 }
 
 impl App {
@@ -398,6 +420,8 @@ impl App {
                 tray_items: Arc::new(Vec::new()),
                 popup_notifications: Vec::new(),
                 hovered_notif_id: None,
+                launcher: Launcher::new(),
+                launcher_window: None,
             },
             Task::none(),
         )
@@ -786,8 +810,117 @@ impl App {
             }
             Message::LayersObserved(observed) => self.reconcile_bars(observed.as_ref()),
             Message::WindowClosed(id) => self.handle_window_closed(id),
+            Message::Control(obayebar_core::control::BarCommand::LauncherToggle) => {
+                self.toggle_launcher()
+            }
+            Message::Launcher(message) => {
+                let response = self.launcher.update(message);
+                self.apply_launcher_response(response)
+            }
+            Message::LauncherIndex(index) => self.adopt_launcher_index(index),
+            Message::LauncherEvent(id, event) => {
+                // Events for any other surface are not the launcher's
+                // business, and one of them is `Unfocused` on a bar.
+                if self.launcher_window != Some(id) {
+                    return Task::none();
+                }
+                let response = self.launcher.handle_event(&event);
+                self.apply_launcher_response(response)
+            }
             _ => Task::none(),
         }
+    }
+
+    /// Show the launcher, or take it away if it is already up.
+    fn toggle_launcher(&mut self) -> Task<Message> {
+        if self.launcher_window.is_some() {
+            return self.close_launcher();
+        }
+        // Pinned to an output like every other surface here: the default
+        // resolves through layershellev's "last output" state, which is
+        // advanced by pointer presses and never cleared, so the launcher could
+        // open on a screen the user is not looking at.
+        let Some(monitor) = self.overlay_monitor() else {
+            log::warn!("launcher: no connected monitor to open on");
+            return Task::none();
+        };
+        if self.launcher.is_empty() {
+            // Not fatal — the watch keeps scanning — but an empty launcher
+            // looks like a broken one, so say why.
+            log::warn!("launcher: opening with no entries discovered yet");
+        }
+
+        let id = window::Id::unique();
+        self.launcher_window = Some(id);
+        let reset = self.launcher.reset().map(Message::Launcher);
+        // A panel hovering over the launcher would sit on top of it and keep
+        // its service polling at panel cadence while the user types.
+        let panels = self.close_all_panels();
+
+        Task::batch([
+            panels,
+            Task::done(Message::NewLayerShell {
+                settings: NewLayerShellSettings {
+                    // All four edges so the dimmed backdrop covers the screen
+                    // and a click outside the card lands on our surface.
+                    anchor: Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right,
+                    layer: Layer::Overlay,
+                    exclusive_zone: Some(-1),
+                    size: Some((launcher::LAUNCHER_WIDTH, launcher::LAUNCHER_HEIGHT)),
+                    // The one surface in this process that takes the keyboard:
+                    // it is a search field, and without an exclusive grab the
+                    // compositor keeps sending keys to the focused window.
+                    keyboard_interactivity: KeyboardInteractivity::Exclusive,
+                    output_option: OutputOption::OutputName(monitor),
+                    namespace: Some(launcher::NAMESPACE.to_string()),
+                    ..NewLayerShellSettings::default()
+                },
+                id,
+            }),
+            reset,
+        ])
+    }
+
+    fn close_launcher(&mut self) -> Task<Message> {
+        self.launcher_window
+            .take()
+            .map_or_else(Task::none, close_window)
+    }
+
+    /// Run whatever the launcher asked for, and take its surface down if it
+    /// said it was done.
+    fn apply_launcher_response(&mut self, response: launcher::Response) -> Task<Message> {
+        let task = response.task.map(Message::Launcher);
+        if response.dismiss {
+            return Task::batch([task, self.close_launcher()]);
+        }
+        task
+    }
+
+    /// Adopt a scanned application list and refresh the icons behind it.
+    fn adopt_launcher_index(&mut self, index: launcher::desktop_entry::Index) -> Task<Message> {
+        let icon_paths = index.icon_paths;
+        self.launcher.set_entries(index.entries);
+
+        // Decoding is the expensive half — up to ninety files, half of them
+        // SVGs — so it happens off the UI thread, and the launcher draws with
+        // whatever icons it already has until the new set lands.
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    let live: std::collections::HashSet<&str> =
+                        icon_paths.keys().map(String::as_str).collect();
+                    // Uninstalling an application, or an upgrade that renames
+                    // its entry, would otherwise leave its pixels cached
+                    // forever.
+                    launcher::icons::prune(&live);
+                    launcher::icons::load(&icon_paths)
+                })
+                .await
+                .unwrap_or_default()
+            },
+            |icons| Message::Launcher(launcher::Message::IconsLoaded(icons)),
+        )
     }
 
     /// Apply a full Hyprland state update, then kick off bar verification.
@@ -860,6 +993,7 @@ impl App {
             // focus-follows-mouse churns that on ordinary pointer movement and
             // would yank panels out from under the user mid-interaction.
             tasks.push(self.close_all_panels());
+            tasks.push(self.close_launcher());
             tasks.push(self.invalidate_popup());
         }
 
@@ -1100,6 +1234,13 @@ impl App {
             self.notif_popup_id = None;
             return self.ensure_popup_window();
         }
+        if self.launcher_window == Some(id) {
+            // Dropped rather than reopened: unlike the notification popup,
+            // nothing is waiting to be shown, and a launcher that came back on
+            // its own after the compositor took it away would be a surprise.
+            self.launcher_window = None;
+            return Task::none();
+        }
         if let Some(kind) = self.forget_panel_window(id) {
             if let Some(setter) = kind.signal_setter() {
                 setter(false);
@@ -1127,6 +1268,9 @@ impl App {
     fn view(&self, id: window::Id) -> Element<'_, Message> {
         if Some(id) == self.notif_popup_id {
             return notifications::popup_view(self);
+        }
+        if Some(id) == self.launcher_window {
+            return self.launcher.view().map(Message::Launcher);
         }
         if let Some(kind) = self
             .panels
@@ -1156,6 +1300,11 @@ impl App {
             Subscription::run(services::bluetooth::stream).map(Message::Bluetooth),
             Subscription::run(services::sysinfo::stream).map(Message::SysInfo),
             Subscription::run(services::notifications::stream).map(Message::Notif),
+            Subscription::run(control::stream).map(Message::Control),
+            // Scans once at startup and then only when the application
+            // directories actually change, so the launcher never has a list to
+            // rebuild when it opens.
+            Subscription::run(launcher::watch::index_stream).map(Message::LauncherIndex),
             iced::window::close_events().map(Message::WindowClosed),
         ];
 
@@ -1183,6 +1332,12 @@ impl App {
             subs.push(
                 iced::time::every(std::time::Duration::from_millis(16)).map(|_| Message::AnimTick),
             );
+        }
+
+        // Only while the launcher is up: this is the one raw-event feed in the
+        // bar, and it fires for every surface.
+        if self.launcher_window.is_some() {
+            subs.push(iced::event::listen_with(launcher_event));
         }
 
         Subscription::batch(subs)
@@ -1418,10 +1573,11 @@ impl App {
         style::notif_popup_fit(self.popup_notifications.len(), self.popup_max_height())
     }
 
-    /// The monitor the popup belongs on: the focused one while it is still
-    /// connected, otherwise any connected monitor (lowest name, so the choice
-    /// is stable rather than flipping on `HashMap` order).
-    fn popup_monitor(&self) -> Option<String> {
+    /// The monitor an overlay belongs on — the notification popup, the
+    /// launcher: the focused one while it is still connected, otherwise any
+    /// connected monitor (lowest name, so the choice is stable rather than
+    /// flipping on `HashMap` order).
+    fn overlay_monitor(&self) -> Option<String> {
         if let Some(focused) = self.focused_monitor.as_deref() {
             if self.monitor_geoms.contains_key(focused) {
                 return Some(focused.to_string());
@@ -1436,7 +1592,7 @@ impl App {
         if self.popup_notifications.is_empty() {
             return Task::none();
         }
-        let Some(target) = self.popup_monitor() else {
+        let Some(target) = self.overlay_monitor() else {
             log::warn!("notifications: no connected monitor to place the popup on");
             return Task::none();
         };
@@ -1544,6 +1700,16 @@ fn connection_type_groups(conns: &[services::network::ActiveConnectionInfo]) -> 
         }
     }
     groups.into_iter().map(|(_, c)| c).collect()
+}
+
+/// Keyboard and window events, tagged with the surface they happened on.
+///
+/// A plain `fn` because `listen_with` takes a function pointer, not a closure:
+/// the filtering by window id has to happen in `update`, where the launcher's
+/// current id is known.
+fn launcher_event(event: Event, _status: iced::event::Status, id: window::Id) -> Option<Message> {
+    matches!(event, Event::Keyboard(_) | Event::Window(_))
+        .then(|| Message::LauncherEvent(id, event))
 }
 
 fn theme_fn(_app: &App, _id: window::Id) -> Theme {

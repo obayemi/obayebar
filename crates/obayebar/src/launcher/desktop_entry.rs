@@ -1,393 +1,300 @@
-use std::collections::HashMap;
+//! Desktop-entry discovery: what the launcher shows, and how it starts it.
+//!
+//! Parsing goes through `freedesktop-desktop-entry` and icon lookup through
+//! `freedesktop-icons` rather than the hand-rolled versions this file used to
+//! carry. Both handle parts of the spec the hand-rolled code did not: localized
+//! `Name[fr]`, `OnlyShowIn` / `NotShowIn`, `TryExec`, desktop IDs from nested
+//! directories (`kde/foo.desktop` is `kde-foo`), and icon themes with their
+//! inheritance — the old lookup searched `hicolor` only, so an app whose icon
+//! ships in Adwaita simply had none.
+//!
+//! What is *not* delegated is the `Exec` line. `parse_exec()` splits on
+//! whitespace, which mangles a quoted argument containing spaces; the entries
+//! on this machine include exactly that shape, so [`sanitize_exec`] and
+//! [`launch`] stay and hand the line to a shell, which is what the spec's
+//! quoted-string Exec semantics ask for.
+
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
+use freedesktop_desktop_entry as fde;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+use obayebar_core::xdg::{config_dir, data_dir};
+
+use super::icons::ICON_SIZE;
+
+/// One launchable application.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesktopEntry {
-    /// Unique identifier: the `.desktop` filename (e.g. "firefox.desktop").
-    pub desktop_id: String,
+    /// Desktop ID as defined by the spec: the path below `applications/` with
+    /// separators turned into dashes and the extension dropped, e.g.
+    /// `org.mozilla.firefox` or `kde-systemsettings`.
+    pub id: String,
     pub name: String,
+    /// Sanitized `Exec` line, ready to hand to a shell.
     pub exec: String,
     pub icon: Option<String>,
     pub comment: Option<String>,
     /// `Terminal=true`: the program is a TUI and needs a terminal emulator
     /// wrapped around it, or it exits immediately against a null tty.
-    ///
-    /// Deliberately has no `#[serde(default)]`. A cache written before this
-    /// field existed fails to deserialize, and `load_cache` falls back to
-    /// `default()` — so the entry list is rediscovered once instead of
-    /// silently keeping `terminal: false` for every cached TUI app.
     pub terminal: bool,
-    /// Pre-computed lowercase text for fuzzy matching (name + comment + keywords).
+    /// Pre-computed lowercase text for fuzzy matching (name + comment +
+    /// keywords).
     pub search_text: String,
 }
 
-/// Cached launcher data (disposable, rebuilt from desktop entries on cache miss).
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct LauncherCache {
+/// Everything one discovery pass produced.
+#[derive(Debug, Clone, Default)]
+pub struct Index {
     pub entries: Vec<DesktopEntry>,
-    /// Resolved icon filesystem paths keyed by `desktop_id`.
+    /// Resolved icon filesystem paths keyed by [`DesktopEntry::id`].
     pub icon_paths: HashMap<String, PathBuf>,
 }
 
-/// Discover and parse all visible `.desktop` application entries from XDG directories.
-#[must_use]
-pub fn discover_entries() -> Vec<DesktopEntry> {
-    let dirs = application_dirs();
-    // Deduplicate by filename: later directories override earlier ones per XDG spec.
-    let mut seen: HashMap<String, DesktopEntry> = HashMap::new();
+/// NixOS keeps the system profile's entries here. It is normally also in
+/// `XDG_DATA_DIRS`, but a systemd user unit can be started with a thinner
+/// environment than a login shell, and a bar with no applications in it is a
+/// worse failure than one redundant directory.
+const NIXOS_APPLICATIONS: &str = "/run/current-system/sw/share/applications";
 
-    for dir in dirs {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
+/// Directories to scan, highest priority first.
+///
+/// Priority is what decides which of two entries with the same desktop ID wins:
+/// per the spec the *first* one found, which is why this order matters and why
+/// [`discover`] keeps the first rather than the last.
+#[must_use]
+pub fn application_dirs() -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = fde::default_paths().collect();
+    dirs.push(PathBuf::from(NIXOS_APPLICATIONS));
+
+    let mut seen = HashSet::new();
+    dirs.retain(|dir| seen.insert(dir.clone()));
+    dirs
+}
+
+/// Discover every visible application entry, with its icon resolved.
+#[must_use]
+pub fn discover() -> Index {
+    discover_in(application_dirs())
+}
+
+/// [`discover`] over an explicit directory list, highest priority first.
+fn discover_in(dirs: Vec<PathBuf>) -> Index {
+    let locales = fde::get_languages_from_env();
+    let desktops = current_desktops();
+    let theme = icon_theme();
+
+    let mut entries: Vec<DesktopEntry> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+
+    for path in fde::Iter::new(dirs.into_iter()) {
+        if path.extension().and_then(|e| e.to_str()) != Some("desktop") {
+            continue;
+        }
+        let Ok(parsed) = fde::DesktopEntry::from_path(&path, Some(&locales)) else {
             continue;
         };
-
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("desktop") {
-                continue;
-            }
-
-            let Some(filename) = path.file_name().and_then(|n| n.to_str()).map(String::from) else {
-                continue;
-            };
-
-            if let Some(parsed) = parse_desktop_file(&path, &filename) {
-                seen.insert(filename, parsed);
-            }
+        // First one wins: `Iter` walks the directories in priority order, so a
+        // user's ~/.local/share override must not be replaced by the system
+        // copy that comes after it. The old code inserted into a map keyed by
+        // filename, which kept the *last* — precedence exactly backwards.
+        if !seen.insert(parsed.appid.clone()) {
+            continue;
+        }
+        if let Some(entry) = convert(&parsed, &locales, desktops.as_deref()) {
+            entries.push(entry);
         }
     }
 
-    let mut entries: Vec<DesktopEntry> = seen.into_values().collect();
     entries.sort_by_key(|e| e.name.to_lowercase());
-    entries
-}
 
-/// Resolve icon paths for all entries that have an icon name.
-#[must_use]
-pub fn resolve_all_icon_paths(entries: &[DesktopEntry]) -> HashMap<String, PathBuf> {
-    let mut paths = HashMap::new();
-    for entry in entries {
-        if let Some(ref icon_name) = entry.icon {
-            if let Some(path) = resolve_icon_path(icon_name) {
-                paths.insert(entry.desktop_id.clone(), path);
-            }
+    // One memo per pass, not the crate's global cache: a `NotFound` cached
+    // there would outlive the install that fixes it, and this process is a
+    // daemon that rescans rather than a command that exits.
+    let mut resolved: HashMap<String, Option<PathBuf>> = HashMap::new();
+    let mut icon_paths = HashMap::new();
+    for entry in &entries {
+        let Some(icon) = entry.icon.as_deref() else {
+            continue;
+        };
+        let path = resolved
+            .entry(icon.to_string())
+            .or_insert_with(|| resolve_icon_path(icon, &theme));
+        if let Some(path) = path.clone() {
+            icon_paths.insert(entry.id.clone(), path);
         }
     }
-    paths
-}
 
-// --- Persistence ---
+    log::info!(
+        "launcher: {} entries, {} icons resolved (theme {theme})",
+        entries.len(),
+        icon_paths.len()
+    );
 
-use obayebar_core::xdg::{cache_dir, data_dir};
-
-/// Directory for pre-resized RGBA icon data.
-#[must_use]
-pub fn icon_cache_dir() -> Option<PathBuf> {
-    cache_dir().map(|d| d.join("icons"))
-}
-
-/// Load cached launcher data from disk (disposable cache).
-#[must_use]
-pub fn load_cache() -> LauncherCache {
-    let Some(dir) = cache_dir() else {
-        return LauncherCache::default();
-    };
-    let path = dir.join("launcher.json");
-    let Ok(data) = std::fs::read_to_string(&path) else {
-        return LauncherCache::default();
-    };
-    serde_json::from_str(&data).unwrap_or_default()
-}
-
-/// Save launcher cache to disk.
-pub fn save_cache(cache: &LauncherCache) {
-    let Some(dir) = cache_dir() else {
-        return;
-    };
-    if std::fs::create_dir_all(&dir).is_err() {
-        return;
-    }
-    let Ok(data) = serde_json::to_string(cache) else {
-        return;
-    };
-    let path = dir.join("launcher.json");
-    if let Err(err) = std::fs::write(&path, data) {
-        log::warn!("Failed to write launcher cache: {err}");
+    Index {
+        entries,
+        icon_paths,
     }
 }
 
-/// Load launch frequency counts from XDG data directory (persistent user data).
+/// Turn a parsed entry into ours, or `None` if it should not be listed.
+fn convert(
+    entry: &fde::DesktopEntry,
+    locales: &[String],
+    desktops: Option<&[String]>,
+) -> Option<DesktopEntry> {
+    if entry.type_().is_some_and(|t| t != "Application") {
+        return None;
+    }
+    if entry.no_display() || entry.hidden() {
+        return None;
+    }
+    // `TryExec` is the spec's "is this actually installed" probe. Entries
+    // shipped by a package whose binary lives elsewhere (or was removed) name
+    // one, and listing them means offering a launch that cannot work.
+    if let Some(try_exec) = entry.try_exec() {
+        if find_in_path(try_exec).is_none() {
+            return None;
+        }
+    }
+    if !shown_in(entry, desktops) {
+        return None;
+    }
+
+    let name = entry.name(locales)?.into_owned();
+    let exec = sanitize_exec(entry.exec()?);
+    let comment = entry.comment(locales).map(std::borrow::Cow::into_owned);
+    let keywords = entry.keywords(locales).unwrap_or_default();
+
+    let mut search_text = name.to_lowercase();
+    if let Some(comment) = comment.as_deref() {
+        search_text.push(' ');
+        search_text.push_str(&comment.to_lowercase());
+    }
+    for keyword in &keywords {
+        search_text.push(' ');
+        search_text.push_str(&keyword.to_lowercase());
+    }
+
+    Some(DesktopEntry {
+        id: entry.appid.clone(),
+        name,
+        exec,
+        icon: entry.icon().map(ToString::to_string),
+        comment,
+        terminal: entry.terminal(),
+        search_text,
+    })
+}
+
+/// Apply `OnlyShowIn` / `NotShowIn` against the current desktop.
+///
+/// With no `XDG_CURRENT_DESKTOP` both keys are ignored rather than treated as
+/// "matches nothing". A systemd user unit can be started before the desktop
+/// environment sets that variable, and hiding every `OnlyShowIn` entry in that
+/// case would silently shrink the list for a reason the user cannot see.
+fn shown_in(entry: &fde::DesktopEntry, desktops: Option<&[String]>) -> bool {
+    let Some(desktops) = desktops else {
+        return true;
+    };
+    let matches = |list: Vec<&str>| {
+        list.iter()
+            .any(|name| desktops.iter().any(|d| d.eq_ignore_ascii_case(name)))
+    };
+    if entry.only_show_in().is_some_and(|list| !matches(list)) {
+        return false;
+    }
+    !entry.not_show_in().is_some_and(matches)
+}
+
+/// The desktops named by `XDG_CURRENT_DESKTOP`, lowercased.
+fn current_desktops() -> Option<Vec<String>> {
+    let desktops = fde::current_desktop()?;
+    if desktops.is_empty() {
+        return None;
+    }
+    Some(desktops)
+}
+
+/// The icon theme to look in.
+///
+/// Read from the GTK settings file rather than by shelling out to `gsettings`
+/// (which is what `freedesktop-icons` does when asked): that spawns a process
+/// and talks to dconf, on a path the bar walks at every rescan. Falling back to
+/// `hicolor` is not a loss — lookup ends up there anyway, since the crate
+/// follows theme inheritance and then hicolor and pixmaps.
+fn icon_theme() -> String {
+    const DEFAULT: &str = "hicolor";
+    let Some(config) = config_dir().and_then(|d| d.parent().map(Path::to_path_buf)) else {
+        return DEFAULT.to_string();
+    };
+    for version in ["gtk-4.0", "gtk-3.0"] {
+        let Ok(text) = std::fs::read_to_string(config.join(version).join("settings.ini")) else {
+            continue;
+        };
+        let found = text.lines().find_map(|line| {
+            let (key, value) = line.split_once('=')?;
+            (key.trim() == "gtk-icon-theme-name").then(|| value.trim().to_string())
+        });
+        if let Some(theme) = found.filter(|t| !t.is_empty()) {
+            return theme;
+        }
+    }
+    DEFAULT.to_string()
+}
+
+/// Resolve an icon name to a file, honouring `theme` and its inheritance.
+///
+/// An absolute path is used as-is: it is not a themed icon name, and the
+/// lookup would only search for a file named after the whole path.
+#[must_use]
+pub fn resolve_icon_path(icon: &str, theme: &str) -> Option<PathBuf> {
+    if icon.starts_with('/') {
+        let path = PathBuf::from(icon);
+        return path.is_file().then_some(path);
+    }
+    freedesktop_icons::lookup(icon)
+        .with_size(u16::try_from(ICON_SIZE).unwrap_or(24))
+        .with_theme(theme)
+        .find()
+}
+
+// --- Launch frequency (persistent user data) ---
+
+/// Load launch frequency counts from the XDG data directory.
 #[must_use]
 pub fn load_launch_counts() -> HashMap<String, u32> {
-    // Try XDG_DATA_HOME first
-    if let Some(dir) = data_dir() {
-        let path = dir.join("launch-counts.json");
-        if let Ok(data) = std::fs::read_to_string(&path) {
-            if let Ok(counts) = serde_json::from_str(&data) {
-                return counts;
-            }
-        }
-    }
-
-    // Migrate from old cache locations
-    if let Some(dir) = cache_dir() {
-        // Try old launch-history.json
-        let old_path = dir.join("launch-history.json");
-        if let Ok(data) = std::fs::read_to_string(&old_path) {
-            if let Ok(counts) = serde_json::from_str::<HashMap<String, u32>>(&data) {
-                std::fs::remove_file(&old_path).ok();
-                return counts;
-            }
-        }
-        // Try old launcher.json that had embedded launch_counts
-        let cache_path = dir.join("launcher.json");
-        if let Ok(data) = std::fs::read_to_string(&cache_path) {
-            #[derive(Deserialize)]
-            struct OldCache {
-                #[serde(default)]
-                launch_counts: HashMap<String, u32>,
-            }
-            if let Ok(old) = serde_json::from_str::<OldCache>(&data) {
-                if !old.launch_counts.is_empty() {
-                    return old.launch_counts;
-                }
-            }
-        }
-    }
-
-    HashMap::new()
+    let Some(path) = data_dir().map(|d| d.join("launch-counts.json")) else {
+        return HashMap::new();
+    };
+    let Ok(data) = std::fs::read_to_string(&path) else {
+        return HashMap::new();
+    };
+    serde_json::from_str(&data).unwrap_or_else(|err| {
+        log::warn!("launcher: ignoring unreadable launch counts ({err})");
+        HashMap::new()
+    })
 }
 
-/// Save launch frequency counts to XDG data directory.
+/// Save launch frequency counts to the XDG data directory.
 #[allow(clippy::implicit_hasher)]
 pub fn save_launch_counts(counts: &HashMap<String, u32>) {
     let Some(dir) = data_dir() else {
         return;
     };
-    if std::fs::create_dir_all(&dir).is_err() {
+    if let Err(err) = std::fs::create_dir_all(&dir) {
+        log::warn!("launcher: cannot create {} ({err})", dir.display());
         return;
     }
     let Ok(data) = serde_json::to_string(counts) else {
         return;
     };
-    let path = dir.join("launch-counts.json");
-    if let Err(err) = std::fs::write(&path, data) {
-        log::warn!("Failed to write launch counts: {err}");
+    if let Err(err) = std::fs::write(dir.join("launch-counts.json"), data) {
+        log::warn!("launcher: failed to write launch counts ({err})");
     }
 }
 
-/// Collect application directories from `XDG_DATA_DIRS` and common paths.
-fn application_dirs() -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
-
-    // User-local applications first (highest priority)
-    if let Ok(home) = std::env::var("HOME") {
-        dirs.push(PathBuf::from(format!("{home}/.local/share/applications")));
-    }
-
-    // XDG_DATA_DIRS
-    let xdg_dirs = std::env::var("XDG_DATA_DIRS")
-        .unwrap_or_else(|_| "/usr/local/share:/usr/share".to_string());
-    for dir in xdg_dirs.split(':') {
-        if !dir.is_empty() {
-            dirs.push(PathBuf::from(format!("{dir}/applications")));
-        }
-    }
-
-    // NixOS system path
-    dirs.push(PathBuf::from("/run/current-system/sw/share/applications"));
-
-    dirs
-}
-
-/// Parse a single `.desktop` file. Returns `None` if the entry should be hidden
-/// or is not a valid application entry.
-fn parse_desktop_file(path: &Path, desktop_id: &str) -> Option<DesktopEntry> {
-    let content = std::fs::read_to_string(path).ok()?;
-
-    let mut in_desktop_entry = false;
-    let mut name: Option<String> = None;
-    let mut exec: Option<String> = None;
-    let mut icon: Option<String> = None;
-    let mut comment: Option<String> = None;
-    let mut keywords: Option<String> = None;
-    let mut entry_type: Option<String> = None;
-    let mut no_display = false;
-    let mut hidden = false;
-    let mut terminal = false;
-
-    for line in content.lines() {
-        let line = line.trim();
-
-        if line.starts_with('[') {
-            if in_desktop_entry {
-                // We've left [Desktop Entry], stop parsing
-                break;
-            }
-            in_desktop_entry = line == "[Desktop Entry]";
-            continue;
-        }
-
-        if !in_desktop_entry || line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-
-        let Some((key, value)) = line.split_once('=') else {
-            continue;
-        };
-        let key = key.trim();
-        let value = value.trim();
-
-        match key {
-            "Name" => name = Some(value.to_string()),
-            "Exec" => exec = Some(sanitize_exec(value)),
-            "Icon" => icon = Some(value.to_string()),
-            "Comment" => comment = Some(value.to_string()),
-            "Keywords" => keywords = Some(value.to_string()),
-            "Type" => entry_type = Some(value.to_string()),
-            "NoDisplay" => no_display = value.eq_ignore_ascii_case("true"),
-            "Hidden" => hidden = value.eq_ignore_ascii_case("true"),
-            "Terminal" => terminal = value.eq_ignore_ascii_case("true"),
-            _ => {}
-        }
-    }
-
-    // Filter out non-application and hidden entries
-    if no_display || hidden {
-        return None;
-    }
-    if entry_type.as_deref().is_some_and(|t| t != "Application") {
-        return None;
-    }
-
-    let name = name?;
-    let exec = exec?;
-
-    // Build search text: lowercase name + comment + keywords
-    let mut search_parts = vec![name.to_lowercase()];
-    if let Some(ref c) = comment {
-        search_parts.push(c.to_lowercase());
-    }
-    if let Some(ref k) = keywords {
-        search_parts.push(k.to_lowercase());
-    }
-    let search_text = search_parts.join(" ");
-
-    Some(DesktopEntry {
-        desktop_id: desktop_id.to_string(),
-        name,
-        exec,
-        icon,
-        comment,
-        terminal,
-        search_text,
-    })
-}
-
-/// Resolve an icon name to an actual file path by searching XDG icon directories.
-///
-/// Supports absolute paths, and searches hicolor theme directories and pixmaps
-/// for PNG and SVG files at standard sizes (including `scalable/`).
-#[must_use]
-pub fn resolve_icon_path(icon_name: &str) -> Option<PathBuf> {
-    // Absolute path: use directly if it exists
-    if icon_name.starts_with('/') {
-        let path = PathBuf::from(icon_name);
-        return path.exists().then_some(path);
-    }
-
-    // Prefer raster at larger sizes, then fall back to SVG (scalable)
-    let sized_dirs = [
-        "48x48", "64x64", "32x32", "128x128", "256x256", "24x24", "96x96", "512x512",
-    ];
-    let raster_extensions = ["png"];
-    let svg_extensions = ["svg"];
-
-    let theme_dirs = icon_theme_dirs();
-
-    // Pass 1: raster icons at fixed sizes (fastest to decode)
-    for dir in &theme_dirs {
-        for size in &sized_dirs {
-            for ext in &raster_extensions {
-                let path = dir
-                    .join(size)
-                    .join("apps")
-                    .join(format!("{icon_name}.{ext}"));
-                if path.exists() {
-                    return Some(path);
-                }
-            }
-        }
-    }
-
-    // Pass 2: SVG icons in scalable/ directory
-    for dir in &theme_dirs {
-        for ext in &svg_extensions {
-            let path = dir
-                .join("scalable")
-                .join("apps")
-                .join(format!("{icon_name}.{ext}"));
-            if path.exists() {
-                return Some(path);
-            }
-        }
-    }
-
-    // Pass 3: SVG at fixed sizes (some themes put SVGs in sized dirs)
-    for dir in &theme_dirs {
-        for size in &sized_dirs {
-            for ext in &svg_extensions {
-                let path = dir
-                    .join(size)
-                    .join("apps")
-                    .join(format!("{icon_name}.{ext}"));
-                if path.exists() {
-                    return Some(path);
-                }
-            }
-        }
-    }
-
-    // Check pixmaps directories (both PNG and SVG)
-    let pixmap_dirs = [
-        PathBuf::from("/usr/share/pixmaps"),
-        PathBuf::from("/run/current-system/sw/share/pixmaps"),
-    ];
-    for dir in &pixmap_dirs {
-        for ext in &["png", "svg"] {
-            let path = dir.join(format!("{icon_name}.{ext}"));
-            if path.exists() {
-                return Some(path);
-            }
-        }
-    }
-
-    None
-}
-
-/// Collect icon theme directories (hicolor) from standard XDG locations.
-fn icon_theme_dirs() -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
-
-    if let Ok(home) = std::env::var("HOME") {
-        dirs.push(PathBuf::from(format!("{home}/.local/share/icons/hicolor")));
-        dirs.push(PathBuf::from(format!("{home}/.icons/hicolor")));
-    }
-
-    let xdg_dirs = std::env::var("XDG_DATA_DIRS")
-        .unwrap_or_else(|_| "/usr/local/share:/usr/share".to_string());
-    for dir in xdg_dirs.split(':') {
-        if !dir.is_empty() {
-            dirs.push(PathBuf::from(format!("{dir}/icons/hicolor")));
-        }
-    }
-
-    dirs.push(PathBuf::from("/run/current-system/sw/share/icons/hicolor"));
-
-    dirs
-}
+// --- Launching ---
 
 /// Strip XDG field codes from an Exec value, leaving a shell-runnable string.
 ///
@@ -430,7 +337,8 @@ const TERMINAL_CANDIDATES: [&str; 8] = [
 ];
 
 /// Resolve `name` against `$PATH`. Used to pick a terminal that actually
-/// exists rather than spawning a missing one and reporting success.
+/// exists rather than spawning a missing one and reporting success, and to
+/// honour `TryExec`.
 fn find_in_path(name: &str) -> Option<PathBuf> {
     if name.contains('/') {
         let path = PathBuf::from(name);
@@ -517,9 +425,295 @@ pub fn launch(exec: &str, terminal: bool) -> Result<(), std::io::Error> {
 }
 
 #[cfg(test)]
-#[allow(clippy::panic)]
+#[allow(clippy::panic, clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    /// Parse `contents` as if it were the file at `path`, which is what
+    /// decides the desktop ID.
+    ///
+    /// `locales` is passed to the parser as well as to `convert`: it is a
+    /// *filter*, so a locale left out here has its `Name[xx]` dropped before
+    /// conversion ever sees it.
+    fn parse_for(path: &str, contents: &str, locales: &[String]) -> fde::DesktopEntry {
+        fde::DesktopEntry::from_str(PathBuf::from(path), contents, Some(locales))
+            .unwrap_or_else(|e| panic!("{path} should parse: {e:?}"))
+    }
+
+    fn parse(path: &str, contents: &str) -> fde::DesktopEntry {
+        parse_for(path, contents, &[String::from("en")])
+    }
+
+    fn convert_default(path: &str, contents: &str) -> Option<DesktopEntry> {
+        convert(&parse(path, contents), &["en".to_string()], None)
+    }
+
+    #[test]
+    fn a_plain_application_entry_is_listed() {
+        let entry = convert_default(
+            "/usr/share/applications/test.desktop",
+            "[Desktop Entry]\nType=Application\nName=Test App\nExec=test-app %u\nComment=A test\nKeywords=testing;demo;\n",
+        )
+        .unwrap_or_else(|| panic!("should be listed"));
+
+        assert_eq!(entry.id, "test");
+        assert_eq!(entry.name, "Test App");
+        assert_eq!(entry.exec, "test-app");
+        assert_eq!(entry.comment.as_deref(), Some("A test"));
+        assert!(entry.search_text.contains("test app"));
+        assert!(entry.search_text.contains("testing"));
+        assert!(entry.search_text.contains("demo"));
+    }
+
+    #[test]
+    fn a_nested_directory_becomes_a_dashed_desktop_id() {
+        // The old parser keyed on the bare filename, so `kde/foo.desktop` and
+        // `foo.desktop` collided and one silently replaced the other.
+        let entry = convert_default(
+            "/usr/share/applications/kde/settings.desktop",
+            "[Desktop Entry]\nType=Application\nName=Settings\nExec=settings\n",
+        )
+        .unwrap_or_else(|| panic!("should be listed"));
+        assert_eq!(entry.id, "kde-settings");
+    }
+
+    #[test]
+    fn hidden_and_nodisplay_entries_are_skipped() {
+        assert!(convert_default(
+            "/a/applications/h.desktop",
+            "[Desktop Entry]\nType=Application\nName=H\nExec=h\nNoDisplay=true\n",
+        )
+        .is_none());
+        assert!(convert_default(
+            "/a/applications/h.desktop",
+            "[Desktop Entry]\nType=Application\nName=H\nExec=h\nHidden=true\n",
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn non_application_entries_are_skipped() {
+        assert!(convert_default(
+            "/a/applications/link.desktop",
+            "[Desktop Entry]\nType=Link\nName=A Link\nURL=https://example.com\n",
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn an_entry_whose_tryexec_is_missing_is_skipped() {
+        // The spec's "is it installed" probe: listing it offers a launch that
+        // cannot work.
+        assert!(convert_default(
+            "/a/applications/ghost.desktop",
+            "[Desktop Entry]\nType=Application\nName=Ghost\nExec=ghost\nTryExec=/nonexistent/ghost\n",
+        )
+        .is_none());
+        assert!(convert_default(
+            "/a/applications/real.desktop",
+            "[Desktop Entry]\nType=Application\nName=Real\nExec=real\nTryExec=/bin/sh\n",
+        )
+        .is_some());
+    }
+
+    #[test]
+    fn only_show_in_and_not_show_in_follow_the_current_desktop() {
+        let gnome_only = "[Desktop Entry]\nType=Application\nName=G\nExec=g\nOnlyShowIn=GNOME;\n";
+        let not_hyprland =
+            "[Desktop Entry]\nType=Application\nName=N\nExec=n\nNotShowIn=Hyprland;\n";
+        let hypr = [String::from("hyprland")];
+
+        assert!(convert(
+            &parse("/a/applications/g.desktop", gnome_only),
+            &[],
+            Some(&hypr)
+        )
+        .is_none());
+        assert!(convert(
+            &parse("/a/applications/n.desktop", not_hyprland),
+            &[],
+            Some(&hypr)
+        )
+        .is_none());
+        assert!(convert(
+            &parse("/a/applications/g.desktop", gnome_only),
+            &[],
+            Some(&[String::from("gnome")])
+        )
+        .is_some());
+    }
+
+    #[test]
+    fn without_a_current_desktop_show_in_keys_are_ignored() {
+        // A systemd user unit can start before XDG_CURRENT_DESKTOP is set;
+        // hiding every OnlyShowIn entry then would shrink the list invisibly.
+        assert!(convert_default(
+            "/a/applications/g.desktop",
+            "[Desktop Entry]\nType=Application\nName=G\nExec=g\nOnlyShowIn=GNOME;\n",
+        )
+        .is_some());
+    }
+
+    #[test]
+    fn a_localized_name_is_preferred_over_the_default() {
+        let locales = [String::from("fr_FR")];
+        let entry = convert(
+            &parse_for(
+                "/a/applications/l.desktop",
+                "[Desktop Entry]\nType=Application\nName=Files\nName[fr]=Fichiers\nExec=files\n",
+                &locales,
+            ),
+            &locales,
+            None,
+        )
+        .unwrap_or_else(|| panic!("should be listed"));
+        assert_eq!(entry.name, "Fichiers");
+    }
+
+    #[test]
+    fn the_terminal_flag_is_read() {
+        let tui = convert_default(
+            "/a/applications/htop.desktop",
+            "[Desktop Entry]\nType=Application\nName=htop\nExec=htop\nTerminal=true\n",
+        )
+        .unwrap_or_else(|| panic!("should be listed"));
+        assert!(tui.terminal, "Terminal=true must be recorded");
+
+        // Absent key defaults to false rather than being treated as a TUI.
+        let gui = convert_default(
+            "/a/applications/gui.desktop",
+            "[Desktop Entry]\nType=Application\nName=Gui\nExec=gui\n",
+        )
+        .unwrap_or_else(|| panic!("should be listed"));
+        assert!(!gui.terminal);
+    }
+
+    #[test]
+    fn an_entry_without_an_exec_line_is_not_listed() {
+        // Nothing to launch; showing it offers a row that does nothing.
+        assert!(convert_default(
+            "/a/applications/noexec.desktop",
+            "[Desktop Entry]\nType=Application\nName=No Exec\n",
+        )
+        .is_none());
+    }
+
+    /// Write `name` (a path below the directory) with `contents`.
+    fn write_entry(dir: &Path, name: &str, contents: &str) {
+        let path = dir.join(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(path, contents).unwrap();
+    }
+
+    fn app(name: &str) -> String {
+        format!("[Desktop Entry]\nType=Application\nName={name}\nExec={name}\n")
+    }
+
+    struct ScratchDir(PathBuf);
+
+    impl ScratchDir {
+        fn new(tag: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!("obayebar_discover_{tag}"));
+            std::fs::remove_dir_all(&dir).ok();
+            std::fs::create_dir_all(&dir).unwrap();
+            Self(dir)
+        }
+
+        /// A directory named `applications`, which is what the desktop ID is
+        /// derived relative to.
+        fn applications(&self, tag: &str) -> PathBuf {
+            let dir = self.0.join(tag).join("applications");
+            std::fs::create_dir_all(&dir).unwrap();
+            dir
+        }
+    }
+
+    impl Drop for ScratchDir {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.0).ok();
+        }
+    }
+
+    #[test]
+    fn the_highest_priority_directory_wins_a_duplicate_id() {
+        // The old code kept the *last* match, so the system copy silently
+        // replaced a user's ~/.local/share override.
+        let scratch = ScratchDir::new("precedence");
+        let user = scratch.applications("user");
+        let system = scratch.applications("system");
+        write_entry(&user, "editor.desktop", &app("Mine"));
+        write_entry(&system, "editor.desktop", &app("Theirs"));
+
+        let index = discover_in(vec![user, system]);
+        assert_eq!(index.entries.len(), 1);
+        assert_eq!(index.entries.first().map(|e| e.name.as_str()), Some("Mine"));
+    }
+
+    #[test]
+    fn discovery_walks_subdirectories_and_ignores_other_files() {
+        let scratch = ScratchDir::new("walk");
+        let apps = scratch.applications("system");
+        write_entry(&apps, "top.desktop", &app("Top"));
+        write_entry(&apps, "kde/nested.desktop", &app("Nested"));
+        write_entry(&apps, "notes.txt", "not an entry");
+        write_entry(&apps, "mimeinfo.cache", "[MIME Cache]\n");
+
+        let index = discover_in(vec![apps]);
+        let ids: Vec<&str> = index.entries.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, ["kde-nested", "top"]);
+    }
+
+    #[test]
+    fn discovered_entries_are_sorted_by_name() {
+        let scratch = ScratchDir::new("sorted");
+        let apps = scratch.applications("system");
+        for name in ["Zebra", "apple", "Mango"] {
+            write_entry(&apps, &format!("{name}.desktop"), &app(name));
+        }
+
+        let index = discover_in(vec![apps]);
+        let names: Vec<&str> = index.entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, ["apple", "Mango", "Zebra"]);
+    }
+
+    #[test]
+    fn an_entry_with_an_absolute_icon_path_resolves_to_that_file() {
+        let scratch = ScratchDir::new("icon");
+        let apps = scratch.applications("system");
+        let icon = scratch.0.join("logo.png");
+        std::fs::write(&icon, b"not really a png").unwrap();
+        write_entry(
+            &apps,
+            "art.desktop",
+            &format!(
+                "[Desktop Entry]\nType=Application\nName=Art\nExec=art\nIcon={}\n",
+                icon.display()
+            ),
+        );
+
+        let index = discover_in(vec![apps]);
+        assert_eq!(index.icon_paths.get("art"), Some(&icon));
+    }
+
+    #[test]
+    fn application_dirs_have_no_duplicates() {
+        // NIXOS_APPLICATIONS is usually also in XDG_DATA_DIRS, and scanning a
+        // directory twice would make every entry in it lose to itself.
+        let dirs = application_dirs();
+        let unique: HashSet<&PathBuf> = dirs.iter().collect();
+        assert_eq!(dirs.len(), unique.len(), "{dirs:?}");
+    }
+
+    #[test]
+    fn an_absolute_icon_path_is_used_as_is() {
+        assert_eq!(
+            resolve_icon_path("/bin/sh", "hicolor"),
+            Some(PathBuf::from("/bin/sh"))
+        );
+        assert_eq!(resolve_icon_path("/nonexistent/icon.png", "hicolor"), None);
+    }
 
     #[test]
     fn sanitize_exec_strips_field_codes() {
@@ -531,67 +725,6 @@ mod tests {
     #[test]
     fn sanitize_exec_preserves_normal_args() {
         assert_eq!(sanitize_exec("myapp --flag value"), "myapp --flag value");
-    }
-
-    #[test]
-    fn parse_desktop_file_valid() {
-        let dir = std::env::temp_dir().join("obayebar_test_desktop");
-        std::fs::create_dir_all(&dir).ok();
-        let path = dir.join("test.desktop");
-        std::fs::write(
-            &path,
-            "[Desktop Entry]\nType=Application\nName=Test App\nExec=test-app %u\nComment=A test\nKeywords=testing;demo;\n",
-        )
-        .ok();
-
-        let entry =
-            parse_desktop_file(&path, "test.desktop").unwrap_or_else(|| panic!("should parse"));
-        assert_eq!(entry.desktop_id, "test.desktop");
-        assert_eq!(entry.name, "Test App");
-        assert_eq!(entry.exec, "test-app");
-        assert_eq!(entry.comment.as_deref(), Some("A test"));
-        assert!(entry.search_text.contains("test app"));
-        assert!(entry.search_text.contains("testing;demo;"));
-
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn parse_desktop_file_hidden() {
-        let dir = std::env::temp_dir().join("obayebar_test_hidden");
-        std::fs::create_dir_all(&dir).ok();
-        let path = dir.join("hidden.desktop");
-        std::fs::write(
-            &path,
-            "[Desktop Entry]\nType=Application\nName=Hidden\nExec=hidden\nNoDisplay=true\n",
-        )
-        .ok();
-
-        assert!(parse_desktop_file(&path, "hidden.desktop").is_none());
-
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn parse_desktop_file_non_application() {
-        let dir = std::env::temp_dir().join("obayebar_test_link");
-        std::fs::create_dir_all(&dir).ok();
-        let path = dir.join("link.desktop");
-        std::fs::write(
-            &path,
-            "[Desktop Entry]\nType=Link\nName=A Link\nURL=https://example.com\n",
-        )
-        .ok();
-
-        assert!(parse_desktop_file(&path, "link.desktop").is_none());
-
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn launch_invalid_command() {
-        assert!(launch("", false).is_err());
-        assert!(launch("   ", false).is_err());
     }
 
     #[test]
@@ -621,50 +754,13 @@ mod tests {
 
     #[test]
     fn sanitize_exec_keeps_quoting_for_the_shell() {
-        // launch() runs this through sh, so the quotes must survive here.
+        // launch() runs this through sh, so the quotes must survive here. This
+        // is also why the crate's `parse_exec` is not used: it splits on
+        // whitespace and would break this line into five arguments.
         assert_eq!(
             sanitize_exec(r#"/bin/sh -c "exec /opt/app/bin/app --profile=default" %u"#),
             r#"/bin/sh -c "exec /opt/app/bin/app --profile=default""#
         );
-    }
-
-    #[test]
-    fn parse_desktop_file_reads_the_terminal_flag() {
-        let dir = std::env::temp_dir().join("obayebar_test_terminal");
-        std::fs::create_dir_all(&dir).ok();
-
-        let tui = dir.join("htop.desktop");
-        std::fs::write(
-            &tui,
-            "[Desktop Entry]\nType=Application\nName=htop\nExec=htop\nTerminal=true\n",
-        )
-        .ok();
-        let entry =
-            parse_desktop_file(&tui, "htop.desktop").unwrap_or_else(|| panic!("should parse"));
-        assert!(entry.terminal, "Terminal=true must be recorded");
-
-        let gui = dir.join("gui.desktop");
-        std::fs::write(
-            &gui,
-            "[Desktop Entry]\nType=Application\nName=Gui\nExec=gui\nTerminal=false\n",
-        )
-        .ok();
-        let entry =
-            parse_desktop_file(&gui, "gui.desktop").unwrap_or_else(|| panic!("should parse"));
-        assert!(!entry.terminal);
-
-        // Absent key defaults to false rather than being treated as a TUI.
-        let bare = dir.join("bare.desktop");
-        std::fs::write(
-            &bare,
-            "[Desktop Entry]\nType=Application\nName=Bare\nExec=bare\n",
-        )
-        .ok();
-        let entry =
-            parse_desktop_file(&bare, "bare.desktop").unwrap_or_else(|| panic!("should parse"));
-        assert!(!entry.terminal);
-
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -697,40 +793,8 @@ mod tests {
     }
 
     #[test]
-    fn old_cache_without_terminal_field_is_discarded() {
-        // The field has no serde default on purpose: a stale cache must be
-        // rebuilt rather than silently marking every TUI entry as a GUI.
-        let legacy = r#"{"entries":[{"desktop_id":"a.desktop","name":"A","exec":"a","icon":null,"comment":null,"search_text":"a"}],"icon_paths":{}}"#;
-        assert!(serde_json::from_str::<LauncherCache>(legacy).is_err());
-    }
-
-    #[test]
-    fn cache_round_trip() {
-        let cache = LauncherCache {
-            entries: vec![DesktopEntry {
-                desktop_id: "test.desktop".into(),
-                name: "Test".into(),
-                exec: "test".into(),
-                icon: None,
-                comment: None,
-                terminal: false,
-                search_text: "test".into(),
-            }],
-            icon_paths: HashMap::from([("test.desktop".into(), PathBuf::from("/icon.png"))]),
-        };
-        let json = serde_json::to_string(&cache).unwrap_or_default();
-        let loaded: LauncherCache = serde_json::from_str(&json).unwrap_or_default();
-        assert_eq!(loaded.entries.len(), 1);
-        assert_eq!(loaded.icon_paths.len(), 1);
-    }
-
-    #[test]
-    fn launch_counts_round_trip() {
-        let counts: HashMap<String, u32> =
-            HashMap::from([("firefox.desktop".into(), 42), ("code.desktop".into(), 7)]);
-        let json = serde_json::to_string(&counts).unwrap_or_default();
-        let loaded: HashMap<String, u32> = serde_json::from_str(&json).unwrap_or_default();
-        assert_eq!(loaded.get("firefox.desktop").copied(), Some(42));
-        assert_eq!(loaded.get("code.desktop").copied(), Some(7));
+    fn launch_invalid_command() {
+        assert!(launch("", false).is_err());
+        assert!(launch("   ", false).is_err());
     }
 }

@@ -17,15 +17,16 @@ The cargo workspace makes four programs. The bar is the primary program.
 
 | Program              | Function                                                               |
 |----------------------|------------------------------------------------------------------------|
-| `obayebar`           | Shows one vertical bar on each monitor, with popups and panels.        |
-| `obayebar-launcher`  | Shows an application launcher.                                         |
+| `obayebar`           | Shows one vertical bar on each monitor, with popups, panels and the application launcher. |
+| `obayebar-launcher`  | Asks the running bar to show the launcher.                             |
 | `obayebar-wallpaper` | Puts a different wallpaper on each monitor, and changes the wallpapers.|
 | `obayebar-lock`      | Locks the session, and shows the wallpaper that each monitor shows.    |
 
-Only the bar and the launcher link iced. The wallpaper program speaks
-wlr-layer-shell directly, and the lock program draws no pixels. Thus the
-wallpaper program and the lock program build from a shared crate that contains
-no GUI stack. Refer to [Crate layout](#crate-layout).
+Only the bar links iced. The launcher program writes one line to the control
+socket of the bar, the wallpaper program speaks wlr-layer-shell directly, and
+the lock program draws no pixels. Thus the three small programs build from a
+shared crate that contains no GUI stack. Refer to
+[Crate layout](#crate-layout).
 
 ---
 
@@ -54,7 +55,7 @@ refer to [Build from source](#build-from-source).
 ```sh
 obayebar             # the bar
 obayebar-wallpaper   # the wallpaper daemon
-obayebar-launcher    # the launcher
+obayebar-launcher    # shows the launcher of the running bar
 obayebar-lock        # locks the session now
 ```
 
@@ -65,8 +66,10 @@ Obey these rules:
 - Start only one instance of `obayebar-wallpaper`. The program stays in memory
   and changes the wallpapers on the interval. To assign the wallpapers one
   time and exit, give the `--once` flag.
-- Start `obayebar-launcher` for each use. The launcher exits when you start an
-  application, or when you push `Esc`.
+- Start `obayebar-launcher` for each use. The program asks the running bar to
+  show the launcher, and exits immediately. A second use hides the launcher.
+  The launcher also closes when you start an application, and when you push
+  `Esc`. The bar must run: without a bar there is no launcher.
 - `obayebar-lock` starts hyprlock and waits. The program exits when you unlock
   the session.
 - Stop `mako`, `dunst`, and all other notification daemons. Only one program
@@ -97,10 +100,10 @@ If home-manager starts the bar and the wallpaper daemon, remove the two
 
 **Each surface has its own layer-shell namespace.** The namespaces are
 `obayebar-bar-N` (one for each bar), `obayebar-panel-<kind>` (audio, network,
-bluetooth, battery, sysinfo, gitlab) and `obayebar-notifications`. Thus a rule
-must match a prefix, as in the example above. A rule that matches the exact
-name `obayebar` matches no surface. A rule can also match one kind of surface,
-and not the other kinds.
+bluetooth, battery, sysinfo, gitlab), `obayebar-notifications` and
+`obayebar-launcher`. Thus a rule must match a prefix, as in the example above.
+A rule that matches the exact name `obayebar` matches no surface. A rule can
+also match one kind of surface, and not the other kinds.
 
 ### 4. Configure obayebar
 
@@ -292,7 +295,8 @@ obayebar-lock [OPTIONS]
   -V, --version           Print version
 ```
 
-`obayebar-launcher` has no flags.
+`obayebar-launcher` takes `--help` and `--version`, and nothing else. Each
+other use shows or hides the launcher of the running bar.
 
 ## Wallpapers
 
@@ -477,11 +481,29 @@ decisions come from that goal:
   not draw widgets off the screen. To follow the focused monitor, the bar
   makes the popup again on that monitor, because a layer surface can change
   size but cannot move.
-- **The launcher has a cache.** `obayebar-launcher` writes the desktop-entry
-  data and the icon paths to `XDG_CACHE_HOME`, and the launch counts to
-  `XDG_DATA_HOME`. Thus the start is almost immediate after the first run. The
-  launcher discards a cache from an older version, and does not convert that
-  cache. Thus the launcher finds the entries again one time after an upgrade.
+- **The launcher is a surface of the bar, and not a program.** A use of the old
+  launcher started a program of 30 MB, made a wgpu device, and read every
+  `.desktop` file again, all before the first pixel. The bar holds the entries
+  and the icons already. Thus a use costs one layer surface and one frame,
+  approximately 5 ms. `obayebar-launcher` writes `launcher-toggle` to
+  `$XDG_RUNTIME_DIR/obayebar/bar.sock` and exits in under 1 ms.
+- **The application list follows the file system.** The bar reads the
+  application directories one time at the start, and then only when inotify
+  reports a change. A group of changes waits 400 ms. Thus an installation and a
+  removal both appear within one second, and nothing else makes a read. A
+  `nixos-rebuild` does not change the entries: the rebuild replaces a *symlink*
+  on the path to the entries, and inotify follows a symlink at the time of the
+  watch. Thus the bar also watches the directory of each symlink on that path.
+- **The bar reads a desktop entry to the specification.**
+  `freedesktop-desktop-entry` reads the files, and `freedesktop-icons` finds
+  the icons. Thus the bar honors a translated name, `OnlyShowIn`, `NotShowIn`,
+  `TryExec`, a desktop ID from a subdirectory, and the inheritance of an icon
+  theme. The `Exec` line stays here: `parse_exec` of that library divides on
+  each space, and destroys a quoted argument that contains a space.
+- **The launcher writes the icons one time.** The bar writes each icon to
+  `XDG_CACHE_HOME` as raw RGBA of 24×24, with the name of the source file. A
+  read of that file needs no decode. The launch counts go to `XDG_DATA_HOME`.
+  The bar removes the icons of an application that you remove.
 - **A terminal application starts in a terminal.** The launcher puts an entry
   with `Terminal=true` (htop, vim, ranger, …) in `$TERMINAL`. If `$TERMINAL`
   is not set, the launcher uses the first of foot, kitty, alacritty, wezterm,
@@ -489,10 +511,11 @@ decisions come from that goal:
   starts each `Exec` line through `sh -c`. Thus a quoted argument, an
   `env VAR=value` prefix, and an `sh -c "…"` entry all receive the argv of the
   desktop-entry specification.
-- **The smithay clipboard worker is off.** No surface of the bar receives the
-  keyboard. Thus `iced_layershell::disable_clipboard()` stops the permanent
-  clipboard thread of the library. The launcher does receive the keyboard, and
-  the launcher is a different process.
+- **One surface receives the keyboard.** The launcher takes an exclusive
+  keyboard grab, and every other surface takes none. The bar reads `Esc`, the
+  arrows and `Enter` from the raw event stream, because the search field has
+  the focus and takes those keys. That grab also keeps the smithay clipboard
+  worker on: `Ctrl+V` in the search field is a true paste.
 - **The kernel keyring holds the secrets.** A GitLab token goes through Secret
   Service. If Secret Service is not available, the token goes to a file in
   `XDG_CONFIG_HOME`. The token never goes into the Nix store, also through the
@@ -527,6 +550,9 @@ operates.
 | `nvml-wrapper`               | NVIDIA GPU usage and temperature                          |
 | `fuzzy-matcher` (Skim)       | Launcher fuzzy ranking                                    |
 | `resvg` + `image`            | Tray and launcher icon decoding                           |
+| `freedesktop-desktop-entry`  | Reading of a `.desktop` file to the specification         |
+| `freedesktop-icons`          | Icon lookup, with the inheritance of a theme              |
+| `inotify`                    | Watch of the application directories                      |
 | `reqwest` (rustls + ring)    | GitLab REST API                                           |
 | `secret-service`             | Storage of the GitLab PAT in the kernel keyring           |
 | `serde` + `toml`             | Config file parsing                                       |
@@ -561,7 +587,6 @@ nix develop
 
 # in the shell
 cargo run --bin obayebar
-cargo run --bin obayebar-launcher
 cargo clippy --all-targets
 ```
 
@@ -572,8 +597,9 @@ install nightly Rust (with the `rustc-codegen-cranelift-preview` component),
 ## Crate layout
 
 ```
-crates/obayebar-core        no iced — monitor detection, wallpaper selection, config schema
-crates/obayebar             the bar and the launcher (iced + wgpu)
+crates/obayebar-core        no iced — monitor detection, wallpaper selection, config, control sockets
+crates/obayebar             the bar, and the launcher that the bar draws (iced + wgpu)
+crates/obayebar-launcher    one line to the socket of the bar, for a key binding
 crates/obayebar-wallpaper   wlr-layer-shell + wl_shm renderer
 crates/obayebar-lock        generates a hyprlock config and runs it
 ```

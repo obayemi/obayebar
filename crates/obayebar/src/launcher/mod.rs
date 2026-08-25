@@ -1,29 +1,54 @@
+//! The application launcher, drawn by the bar.
+//!
+//! This used to be a separate process: every keypress paid for a fork, a 30 MB
+//! dynamic link, wgpu device creation and a fresh desktop-entry scan before it
+//! could show a list. Living inside the bar daemon means the entry list is
+//! already parsed, the icons are already decoded, and showing the surface costs
+//! one frame. `obayebar-launcher` is now a shim that pokes the bar's control
+//! socket.
+
 pub mod desktop_entry;
+pub mod icons;
+pub mod watch;
 
 use std::cmp::Reverse;
-use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::collections::HashMap;
 
 use crate::style;
 use desktop_entry::DesktopEntry;
 use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
-use iced::event::{self, Event};
+use iced::event::Event;
 use iced::keyboard::{key::Named, Key};
 use iced::widget::{
     button, column, container, image, mouse_area, row, scrollable, text, text_input, Column, Id,
     Space,
 };
-use iced::{Alignment, Border, Color, Element, Length, Subscription, Task, Theme};
-use iced_layershell::to_layer_message;
+use iced::{Alignment, Border, Color, Element, Length, Task};
+use icons::ICON_SIZE;
 
-const LAUNCHER_WIDTH: u32 = 600;
-const LAUNCHER_HEIGHT: u32 = 500;
+pub const LAUNCHER_WIDTH: u32 = 600;
+pub const LAUNCHER_HEIGHT: u32 = 500;
+
+/// Layer-shell namespace for the launcher surface, so `j/layers` can tell it
+/// from a bar or a panel and a Hyprland `layerrule` can target it alone.
+pub const NAMESPACE: &str = "obayebar-launcher";
+
 const MAX_VISIBLE_ENTRIES: usize = 50;
-const ICON_SIZE: u32 = 24;
 
 /// Approximate height of one entry row (icon/text + vertical padding + spacing).
 const ENTRY_ROW_HEIGHT: f32 = 36.0;
+
+/// Approximate visible height of the scrollable entry list area.
+#[allow(clippy::cast_precision_loss)]
+const SCROLL_VIEWPORT_HEIGHT: f32 = LAUNCHER_HEIGHT as f32
+    - style::PADDING_LARGE * 2.0
+    - style::FONT_SIZE_LARGE
+    - 20.0
+    - style::SPACING_NORMAL;
+
+/// Number of entries to keep visible as margin when scrolling at boundaries.
+const SCROLL_MARGIN_ENTRIES: usize = 2;
 
 const fn search_input_id() -> Id {
     Id::new("launcher-search")
@@ -37,16 +62,47 @@ fn focus_search() -> Task<Message> {
     iced::widget::operation::focus(search_input_id())
 }
 
-/// Approximate visible height of the scrollable entry list area.
-#[allow(clippy::cast_precision_loss)]
-const SCROLL_VIEWPORT_HEIGHT: f32 = LAUNCHER_HEIGHT as f32
-    - style::PADDING_LARGE * 2.0
-    - style::FONT_SIZE_LARGE
-    - 20.0
-    - style::SPACING_NORMAL;
+/// What the launcher wants after handling a message: some follow-up work, and
+/// whether the surface should go away.
+///
+/// The surface is owned by the bar, so "close" cannot be a `process::exit` any
+/// more — it has to be said out loud and acted on by the owner.
+#[derive(Debug)]
+pub struct Response {
+    pub task: Task<Message>,
+    pub dismiss: bool,
+}
 
-/// Number of entries to keep visible as margin when scrolling at boundaries.
-const SCROLL_MARGIN_ENTRIES: usize = 2;
+impl Response {
+    fn stay(task: Task<Message>) -> Self {
+        Self {
+            task,
+            dismiss: false,
+        }
+    }
+
+    fn none() -> Self {
+        Self::stay(Task::none())
+    }
+
+    fn dismiss() -> Self {
+        Self {
+            task: Task::none(),
+            dismiss: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Message {
+    SearchChanged(String),
+    /// Launch the entry at this index into `entries`.
+    Launch(usize),
+    /// Close without launching anything.
+    Dismiss,
+    IconsLoaded(HashMap<String, image::Handle>),
+    ScrollChanged(scrollable::Viewport),
+}
 
 pub struct Launcher {
     query: String,
@@ -56,16 +112,19 @@ pub struct Launcher {
     /// Index into `filtered` for the currently selected entry.
     selected: usize,
     matcher: SkimMatcherV2,
-    /// Pre-loaded icon handles keyed by `desktop_id`.
+    /// Decoded icons keyed by desktop ID.
     icons: HashMap<String, image::Handle>,
-    /// Desktop IDs for which icon loading has already been requested.
-    icons_requested: HashSet<String>,
-    /// Resolved icon paths keyed by `desktop_id`, used for cache persistence.
-    icon_paths: HashMap<String, PathBuf>,
-    /// Launch frequency counts keyed by `desktop_id`.
+    /// Launch frequency counts keyed by desktop ID.
     launch_counts: HashMap<String, u32>,
     /// Current vertical scroll offset (tracked for boundary-aware scrolling).
     scroll_offset: f32,
+    /// Whether this surface has held keyboard focus since it was opened.
+    ///
+    /// Dismissing on `Unfocused` is what closes the launcher when something
+    /// else takes the screen — but a surface that has never been focused can
+    /// report `Unfocused` while it is still being mapped, and acting on that
+    /// would close the launcher the instant it opened.
+    focused: bool,
 }
 
 impl std::fmt::Debug for Launcher {
@@ -81,191 +140,145 @@ impl std::fmt::Debug for Launcher {
     }
 }
 
-#[to_layer_message]
-#[derive(Debug, Clone)]
-pub enum Message {
-    SearchChanged(String),
-    Launch(usize),
-    Close,
-    IcedEvent(Event),
-    IconsLoaded(HashMap<String, image::Handle>),
-    EntriesDiscovered(Vec<DesktopEntry>, HashMap<String, PathBuf>),
-    ScrollChanged(scrollable::Viewport),
+impl Default for Launcher {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Launcher {
-    pub fn new(
-        entries: Vec<DesktopEntry>,
-        icon_paths: HashMap<String, PathBuf>,
-        launch_counts: HashMap<String, u32>,
-        skip_background_discover: bool,
-    ) -> (Self, Task<Message>) {
+    #[must_use]
+    pub fn new() -> Self {
         let mut launcher = Self {
             query: String::new(),
-            entries,
+            entries: Vec::new(),
             filtered: Vec::new(),
             selected: 0,
             matcher: SkimMatcherV2::default(),
             icons: HashMap::new(),
-            icons_requested: HashSet::new(),
-            icon_paths,
-            launch_counts,
+            launch_counts: desktop_entry::load_launch_counts(),
             scroll_offset: 0.0,
+            focused: false,
         };
         launcher.update_filter();
-
-        let load_visible = launcher.load_visible_icons();
-
-        let mut tasks = vec![focus_search(), load_visible];
-
-        // Re-discover entries in background to catch newly installed/removed apps
-        // (skip if we just did a fresh synchronous discovery)
-        if !skip_background_discover {
-            tasks.push(Task::perform(
-                async {
-                    tokio::task::spawn_blocking(|| {
-                        let entries = desktop_entry::discover_entries();
-                        let icon_paths = desktop_entry::resolve_all_icon_paths(&entries);
-                        (entries, icon_paths)
-                    })
-                    .await
-                    .unwrap_or_default()
-                },
-                |(entries, paths)| Message::EntriesDiscovered(entries, paths),
-            ));
-        }
-
-        (launcher, Task::batch(tasks))
+        launcher
     }
 
+    /// Adopt a freshly scanned entry list.
+    ///
+    /// The selected *application* is preserved rather than the selected index.
+    /// A rescan can land while the user is typing or arrowing through results,
+    /// and resetting to the top then means Enter launches something they were
+    /// not pointing at.
+    pub fn set_entries(&mut self, entries: Vec<DesktopEntry>) {
+        let selected_id = self.selected_entry().map(|entry| entry.id.clone());
+        self.entries = entries;
+        self.update_filter();
+        self.selected = selected_id
+            .and_then(|id| {
+                self.filtered
+                    .iter()
+                    .position(|&idx| self.entries.get(idx).is_some_and(|e| e.id == id))
+            })
+            .unwrap_or(0);
+        // Icons for entries that are gone are just wasted memory.
+        self.icons
+            .retain(|id, _| self.entries.iter().any(|entry| &entry.id == id));
+    }
+
+    pub fn set_icons(&mut self, icons: HashMap<String, image::Handle>) {
+        self.icons = icons;
+    }
+
+    /// Whether any entry has been discovered yet.
     #[must_use]
-    pub fn namespace() -> String {
-        "obayebar-launcher".into()
+    pub const fn is_empty(&self) -> bool {
+        self.entries.is_empty()
     }
 
-    pub fn update(&mut self, message: Message) -> Task<Message> {
+    /// Clear the query and selection, as when the surface is (re)opened.
+    pub fn reset(&mut self) -> Task<Message> {
+        self.query.clear();
+        self.selected = 0;
+        self.scroll_offset = 0.0;
+        self.focused = false;
+        self.update_filter();
+        focus_search()
+    }
+
+    pub fn update(&mut self, message: Message) -> Response {
         match message {
             Message::SearchChanged(query) => {
                 self.query = query;
                 self.update_filter();
                 self.selected = 0;
                 self.scroll_offset = 0.0;
-                let icons = self.load_visible_icons();
-                let scroll = self.scroll_to_selected();
-                Task::batch([focus_search(), icons, scroll])
+                Response::stay(Task::batch([focus_search(), self.scroll_to_selected()]))
             }
             Message::Launch(index) => {
                 self.launch_entry(index);
-                Task::none()
+                Response::dismiss()
             }
-            Message::Close => {
-                std::process::exit(0);
-            }
-            Message::IcedEvent(event) => self.handle_event(event),
-            Message::IconsLoaded(new_icons) => {
-                self.icons.extend(new_icons);
-                Task::none()
+            Message::Dismiss => Response::dismiss(),
+            Message::IconsLoaded(icons) => {
+                self.set_icons(icons);
+                Response::none()
             }
             Message::ScrollChanged(viewport) => {
                 self.scroll_offset = viewport.absolute_offset().y;
-                Task::none()
+                Response::none()
             }
-            Message::EntriesDiscovered(entries, icon_paths) => {
-                self.entries = entries;
-                self.icon_paths = icon_paths;
-                self.update_filter();
-                self.selected = 0;
-
-                // Save updated cache
-                desktop_entry::save_cache(&desktop_entry::LauncherCache {
-                    entries: self.entries.clone(),
-                    icon_paths: self.icon_paths.clone(),
-                });
-
-                // Remove icons for entries that no longer exist
-                let valid: HashSet<&str> =
-                    self.entries.iter().map(|e| e.desktop_id.as_str()).collect();
-                self.icons.retain(|id, _| valid.contains(id.as_str()));
-                self.icons_requested
-                    .retain(|id| valid.contains(id.as_str()));
-
-                // Load icons for visible entries that need them
-                self.load_visible_icons()
-            }
-            _ => Task::none(),
         }
     }
 
-    /// Load icons only for currently visible entries that haven't been loaded or requested yet.
-    fn load_visible_icons(&mut self) -> Task<Message> {
-        let needed: HashMap<String, PathBuf> = self
-            .filtered
-            .iter()
-            .take(MAX_VISIBLE_ENTRIES)
-            .filter_map(|&idx| self.entries.get(idx))
-            .filter(|e| {
-                !self.icons.contains_key(&e.desktop_id)
-                    && !self.icons_requested.contains(&e.desktop_id)
-            })
-            .filter_map(|e| {
-                self.icon_paths
-                    .get(&e.desktop_id)
-                    .map(|p| (e.desktop_id.clone(), p.clone()))
-            })
-            .collect();
-
-        if needed.is_empty() {
-            return Task::none();
-        }
-
-        // Mark as requested to avoid duplicate loads
-        for id in needed.keys() {
-            self.icons_requested.insert(id.clone());
-        }
-
-        Task::perform(
-            async move {
-                tokio::task::spawn_blocking(move || load_icons_from_paths(&needed))
-                    .await
-                    .unwrap_or_default()
+    /// Handle a raw window event routed to the launcher surface.
+    ///
+    /// Keyboard events are taken here rather than through widget bindings
+    /// because the search field has focus and would otherwise swallow Escape,
+    /// the arrows and Enter.
+    pub fn handle_event(&mut self, event: &Event) -> Response {
+        match event {
+            Event::Window(iced::window::Event::Focused) => self.focused = true,
+            // Losing keyboard focus means something else took over the screen;
+            // an invisible launcher still holding an exclusive keyboard grab is
+            // the worst possible state to leave behind.
+            Event::Window(iced::window::Event::Unfocused) if self.focused => {
+                return Response::dismiss()
+            }
+            Event::Keyboard(iced::keyboard::Event::KeyPressed { key, .. }) => match key {
+                Key::Named(Named::Escape) => return Response::dismiss(),
+                Key::Named(Named::ArrowDown) if !self.filtered.is_empty() => {
+                    let max = self
+                        .filtered
+                        .len()
+                        .min(MAX_VISIBLE_ENTRIES)
+                        .saturating_sub(1);
+                    self.selected = self.selected.saturating_add(1).min(max);
+                    return Response::stay(Task::batch([
+                        focus_search(),
+                        self.scroll_to_selected(),
+                    ]));
+                }
+                Key::Named(Named::ArrowUp) => {
+                    self.selected = self.selected.saturating_sub(1);
+                    return Response::stay(Task::batch([
+                        focus_search(),
+                        self.scroll_to_selected(),
+                    ]));
+                }
+                Key::Named(Named::Enter) => {
+                    let Some(&entry_idx) = self.filtered.get(self.selected) else {
+                        return Response::none();
+                    };
+                    self.launch_entry(entry_idx);
+                    return Response::dismiss();
+                }
+                _ => {}
             },
-            Message::IconsLoaded,
-        )
-    }
-
-    /// Scroll the entry list only when the selected entry is near or past a viewport edge.
-    #[allow(clippy::cast_precision_loss)]
-    fn scroll_to_selected(&self) -> Task<Message> {
-        let item_y = (self.selected as f32) * ENTRY_ROW_HEIGHT;
-        let margin = (SCROLL_MARGIN_ENTRIES as f32) * ENTRY_ROW_HEIGHT;
-        let viewport_top = self.scroll_offset;
-        let viewport_bottom = self.scroll_offset + SCROLL_VIEWPORT_HEIGHT;
-
-        // Scroll down: selected item is below viewport (minus margin)
-        if item_y + ENTRY_ROW_HEIGHT > viewport_bottom - margin {
-            let new_offset = item_y + ENTRY_ROW_HEIGHT + margin - SCROLL_VIEWPORT_HEIGHT;
-            return iced_runtime::widget::operation::scroll_to(
-                scrollable_id(),
-                iced_runtime::widget::operation::AbsoluteOffset {
-                    x: None,
-                    y: Some(new_offset.max(0.0)),
-                },
-            );
+            _ => {}
         }
-
-        // Scroll up: selected item is above viewport (plus margin)
-        if item_y < viewport_top + margin {
-            let new_offset = item_y - margin;
-            return iced_runtime::widget::operation::scroll_to(
-                scrollable_id(),
-                iced_runtime::widget::operation::AbsoluteOffset {
-                    x: None,
-                    y: Some(new_offset.max(0.0)),
-                },
-            );
-        }
-
-        Task::none()
+        // Always keep focus on the search bar.
+        Response::stay(focus_search())
     }
 
     pub fn view(&self) -> Element<'_, Message> {
@@ -340,17 +353,8 @@ impl Launcher {
                     ..container::Style::default()
                 }),
         )
-        .on_press(Message::Close)
+        .on_press(Message::Dismiss)
         .into()
-    }
-
-    pub fn subscription(&self) -> Subscription<Message> {
-        // Use listen_with to receive keyboard events even when captured by the
-        // focused text_input (Escape, arrows, Enter would otherwise be swallowed).
-        event::listen_with(|event, _status, _id| match event {
-            Event::Keyboard(_) | Event::Window(_) => Some(Message::IcedEvent(event)),
-            _ => None,
-        })
     }
 
     fn entry_button(&self, entry_idx: usize, is_selected: bool) -> Element<'_, Message> {
@@ -378,8 +382,7 @@ impl Launcher {
             .spacing(style::SPACING_SMALL)
             .align_y(Alignment::Center);
 
-        // Add icon if available (keyed by desktop_id)
-        if let Some(handle) = self.icons.get(&entry.desktop_id) {
+        if let Some(handle) = self.icons.get(&entry.id) {
             entry_row = entry_row.push(
                 image(handle.clone())
                     .width(Length::Fixed(f32::from(
@@ -414,34 +417,48 @@ impl Launcher {
             .into()
     }
 
+    /// Scroll the entry list only when the selected entry is near or past a
+    /// viewport edge.
+    #[allow(clippy::cast_precision_loss)]
+    fn scroll_to_selected(&self) -> Task<Message> {
+        let item_y = (self.selected as f32) * ENTRY_ROW_HEIGHT;
+        let margin = (SCROLL_MARGIN_ENTRIES as f32) * ENTRY_ROW_HEIGHT;
+        let viewport_top = self.scroll_offset;
+        let viewport_bottom = self.scroll_offset + SCROLL_VIEWPORT_HEIGHT;
+
+        // Scroll down: selected item is below viewport (minus margin)
+        if item_y + ENTRY_ROW_HEIGHT > viewport_bottom - margin {
+            let new_offset = item_y + ENTRY_ROW_HEIGHT + margin - SCROLL_VIEWPORT_HEIGHT;
+            return scroll_to(new_offset.max(0.0));
+        }
+
+        // Scroll up: selected item is above viewport (plus margin)
+        if item_y < viewport_top + margin {
+            return scroll_to((item_y - margin).max(0.0));
+        }
+
+        Task::none()
+    }
+
+    /// The entry the selection currently points at.
+    fn selected_entry(&self) -> Option<&DesktopEntry> {
+        self.filtered
+            .get(self.selected)
+            .and_then(|&idx| self.entries.get(idx))
+    }
+
     fn update_filter(&mut self) {
         if self.query.is_empty() {
-            // Sort by launch frequency (descending), then name (ascending)
+            // Sort by launch frequency (descending), then name (ascending).
             let mut indices: Vec<usize> = (0..self.entries.len()).collect();
-            indices.sort_by(|&a, &b| {
-                let count_a = self
-                    .entries
-                    .get(a)
-                    .and_then(|e| self.launch_counts.get(&e.desktop_id))
+            indices.sort_by_key(|&idx| {
+                let entry = self.entries.get(idx);
+                let count = entry
+                    .and_then(|e| self.launch_counts.get(&e.id))
                     .copied()
                     .unwrap_or(0);
-                let count_b = self
-                    .entries
-                    .get(b)
-                    .and_then(|e| self.launch_counts.get(&e.desktop_id))
-                    .copied()
-                    .unwrap_or(0);
-                count_b.cmp(&count_a).then_with(|| {
-                    let name_a = self
-                        .entries
-                        .get(a)
-                        .map_or_else(String::new, |e| e.name.to_lowercase());
-                    let name_b = self
-                        .entries
-                        .get(b)
-                        .map_or_else(String::new, |e| e.name.to_lowercase());
-                    name_a.cmp(&name_b)
-                })
+                let name = entry.map_or_else(String::new, |e| e.name.to_lowercase());
+                (Reverse(count), name)
             });
             self.filtered = indices;
             return;
@@ -455,10 +472,11 @@ impl Launcher {
                 self.matcher
                     .fuzzy_match(&entry.search_text, &self.query)
                     .map(|score| {
-                        // Boost frequently launched apps (capped to avoid dominating match quality)
+                        // Boost frequently launched apps, capped so frequency
+                        // cannot bury a much better textual match.
                         let freq_bonus = i64::from(
                             self.launch_counts
-                                .get(&entry.desktop_id)
+                                .get(&entry.id)
                                 .copied()
                                 .unwrap_or(0)
                                 .min(20),
@@ -473,169 +491,233 @@ impl Launcher {
         self.filtered = scored.into_iter().map(|(idx, _)| idx).collect();
     }
 
-    fn handle_event(&mut self, event: Event) -> Task<Message> {
-        match event {
-            Event::Window(iced::window::Event::Unfocused) => {
-                std::process::exit(0);
-            }
-            Event::Keyboard(iced::keyboard::Event::KeyPressed { key, .. }) => match key {
-                Key::Named(Named::Escape) => {
-                    std::process::exit(0);
-                }
-                Key::Named(Named::ArrowDown) if !self.filtered.is_empty() => {
-                    let max = self
-                        .filtered
-                        .len()
-                        .min(MAX_VISIBLE_ENTRIES)
-                        .saturating_sub(1);
-                    self.selected = (self.selected.saturating_add(1)).min(max);
-                    return Task::batch([focus_search(), self.scroll_to_selected()]);
-                }
-                Key::Named(Named::ArrowUp) => {
-                    self.selected = self.selected.saturating_sub(1);
-                    return Task::batch([focus_search(), self.scroll_to_selected()]);
-                }
-                Key::Named(Named::Enter) => {
-                    if let Some(&entry_idx) = self.filtered.get(self.selected) {
-                        self.launch_entry(entry_idx);
-                    }
-                }
-                _ => {}
-            },
-            _ => {}
-        }
-        // Always keep focus on the search bar
-        focus_search()
-    }
-
     fn launch_entry(&mut self, entry_idx: usize) {
         let Some(entry) = self.entries.get(entry_idx) else {
             return;
         };
-        let desktop_id = entry.desktop_id.clone();
+        let id = entry.id.clone();
         let exec = entry.exec.clone();
         let terminal = entry.terminal;
         let name = entry.name.clone();
 
-        // Track launch frequency
-        let count = self.launch_counts.entry(desktop_id).or_insert(0);
+        let count = self.launch_counts.entry(id).or_insert(0);
         *count = count.saturating_add(1);
         desktop_entry::save_launch_counts(&self.launch_counts);
 
         if let Err(err) = desktop_entry::launch(&exec, terminal) {
-            log::error!("Failed to launch {name}: {err}");
+            log::error!("launcher: failed to launch {name} ({err})");
         }
-        std::process::exit(0);
     }
 }
 
-/// Load icons from binary RGBA cache, falling back to decode + resize from source files.
-/// Supports PNG, JPEG, GIF, BMP (via `image` crate) and SVG (via `resvg`).
-/// Decoded icons are saved to the binary cache for future launches.
-/// Cache is invalidated when the source path changes (e.g. after NixOS rebuild).
-fn load_icons_from_paths(icon_paths: &HashMap<String, PathBuf>) -> HashMap<String, image::Handle> {
-    let rgba_cache_dir = desktop_entry::icon_cache_dir();
-    let expected_len = (ICON_SIZE as usize)
-        .saturating_mul(ICON_SIZE as usize)
-        .saturating_mul(4);
-    let mut icons = HashMap::new();
+fn scroll_to(offset: f32) -> Task<Message> {
+    iced_runtime::widget::operation::scroll_to(
+        scrollable_id(),
+        iced_runtime::widget::operation::AbsoluteOffset {
+            x: None,
+            y: Some(offset),
+        },
+    )
+}
 
-    for (desktop_id, source_path) in icon_paths {
-        // Try pre-resized RGBA cache first (no decode/resize needed).
-        // A companion .path file stores the source path used to generate the cache;
-        // if it doesn't match the current source, the cache is stale.
-        if let Some(ref dir) = rgba_cache_dir {
-            let cached = dir.join(format!("{desktop_id}.rgba"));
-            let path_file = dir.join(format!("{desktop_id}.path"));
-            let path_matches = std::fs::read_to_string(&path_file)
-                .is_ok_and(|p| p == source_path.to_string_lossy());
-            if path_matches {
-                if let Ok(data) = std::fs::read(&cached) {
-                    if data.len() == expected_len {
-                        icons.insert(
-                            desktop_id.clone(),
-                            image::Handle::from_rgba(ICON_SIZE, ICON_SIZE, data),
-                        );
-                        continue;
-                    }
-                }
-            }
+#[cfg(test)]
+#[allow(clippy::panic, clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    fn entry(id: &str, name: &str) -> DesktopEntry {
+        DesktopEntry {
+            id: id.to_string(),
+            name: name.to_string(),
+            exec: id.to_string(),
+            icon: None,
+            comment: None,
+            terminal: false,
+            search_text: name.to_lowercase(),
         }
+    }
 
-        // Decode from source file
-        let Some(raw) = decode_icon(source_path) else {
-            continue;
+    fn launcher(entries: Vec<DesktopEntry>, counts: &[(&str, u32)]) -> Launcher {
+        let mut launcher = Launcher {
+            query: String::new(),
+            entries: Vec::new(),
+            filtered: Vec::new(),
+            selected: 0,
+            matcher: SkimMatcherV2::default(),
+            icons: HashMap::new(),
+            launch_counts: counts
+                .iter()
+                .map(|(id, n)| ((*id).to_string(), *n))
+                .collect(),
+            scroll_offset: 0.0,
+            focused: false,
         };
+        launcher.set_entries(entries);
+        launcher
+    }
 
-        // Save to binary cache for next launch
-        if let Some(ref dir) = rgba_cache_dir {
-            std::fs::create_dir_all(dir).ok();
-            std::fs::write(dir.join(format!("{desktop_id}.rgba")), &raw).ok();
-            std::fs::write(
-                dir.join(format!("{desktop_id}.path")),
-                source_path.to_string_lossy().as_bytes(),
-            )
-            .ok();
-        }
+    fn visible_names(launcher: &Launcher) -> Vec<&str> {
+        launcher
+            .filtered
+            .iter()
+            .filter_map(|&idx| launcher.entries.get(idx))
+            .map(|e| e.name.as_str())
+            .collect()
+    }
 
-        icons.insert(
-            desktop_id.clone(),
-            image::Handle::from_rgba(ICON_SIZE, ICON_SIZE, raw),
+    #[test]
+    fn an_empty_query_ranks_by_launch_frequency_then_name() {
+        let launcher = launcher(
+            vec![
+                entry("alpha", "Alpha"),
+                entry("beta", "Beta"),
+                entry("gamma", "Gamma"),
+            ],
+            &[("gamma", 5), ("beta", 5)],
+        );
+        // Equal counts fall back to the name, so the order is stable rather
+        // than whatever the map happened to yield.
+        assert_eq!(visible_names(&launcher), ["Beta", "Gamma", "Alpha"]);
+    }
+
+    #[test]
+    fn a_query_filters_to_matches_only() {
+        let mut launcher = launcher(
+            vec![entry("firefox", "Firefox"), entry("gimp", "GIMP")],
+            &[],
+        );
+        launcher.update(Message::SearchChanged("fire".into()));
+        assert_eq!(visible_names(&launcher), ["Firefox"]);
+    }
+
+    #[test]
+    fn frequency_breaks_a_tie_between_equally_good_matches() {
+        let mut launcher = launcher(
+            vec![entry("code", "Code"), entry("code-oss", "Code")],
+            &[("code-oss", 10)],
+        );
+        launcher.update(Message::SearchChanged("code".into()));
+        assert_eq!(
+            launcher
+                .selected_entry()
+                .map(|e| e.id.as_str())
+                .unwrap_or_default(),
+            "code-oss"
         );
     }
-    log::info!("Loaded {} app icons", icons.len());
-    icons
-}
 
-/// Decode an icon file to `ICON_SIZE`×`ICON_SIZE` RGBA bytes. Supports raster and SVG.
-fn decode_icon(path: &std::path::Path) -> Option<Vec<u8>> {
-    let data = std::fs::read(path).ok()?;
-    let is_svg = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("svg"));
+    #[test]
+    fn a_rescan_keeps_the_selected_application() {
+        // The old code reset the selection to the top whenever a background
+        // rescan landed, so Enter could launch an entry the user was not on.
+        let mut launcher = launcher(
+            vec![entry("a", "Alpha"), entry("b", "Beta"), entry("c", "Gamma")],
+            &[],
+        );
+        launcher.handle_event(&key_pressed(Named::ArrowDown));
+        assert_eq!(launcher.selected_entry().map(|e| e.id.as_str()), Some("b"));
 
-    if is_svg {
-        decode_svg(&data)
-    } else {
-        decode_raster(&data, path)
+        // Something new installs, sorting ahead of the selection.
+        launcher.set_entries(vec![
+            entry("new", "Aardvark"),
+            entry("a", "Alpha"),
+            entry("b", "Beta"),
+            entry("c", "Gamma"),
+        ]);
+        assert_eq!(launcher.selected_entry().map(|e| e.id.as_str()), Some("b"));
     }
-}
 
-/// Rasterize an SVG to `ICON_SIZE`×`ICON_SIZE` RGBA bytes.
-fn decode_svg(data: &[u8]) -> Option<Vec<u8>> {
-    let tree = resvg::usvg::Tree::from_data(data, &resvg::usvg::Options::default()).ok()?;
-    let mut pixmap = resvg::tiny_skia::Pixmap::new(ICON_SIZE, ICON_SIZE)?;
-    let size = tree.size();
-    let sx = f32::from(u16::try_from(ICON_SIZE).unwrap_or(24)) / size.width();
-    let sy = f32::from(u16::try_from(ICON_SIZE).unwrap_or(24)) / size.height();
-    let scale = sx.min(sy);
-    let transform = resvg::tiny_skia::Transform::from_scale(scale, scale);
-    resvg::render(&tree, transform, &mut pixmap.as_mut());
-    Some(pixmap.take())
-}
-
-/// Decode a raster image (PNG, JPEG, etc.) and resize to `ICON_SIZE`×`ICON_SIZE` RGBA bytes.
-fn decode_raster(data: &[u8], path: &std::path::Path) -> Option<Vec<u8>> {
-    let Ok(img) = ::image::load_from_memory(data) else {
-        log::warn!("Failed to decode icon: {}", path.display());
-        return None;
-    };
-    let resized = img.resize_exact(
-        ICON_SIZE,
-        ICON_SIZE,
-        ::image::imageops::FilterType::Triangle,
-    );
-    Some(resized.to_rgba8().into_raw())
-}
-
-pub fn theme(_launcher: &Launcher, theme: &Theme) -> iced::theme::Style {
-    iced::theme::Style {
-        background_color: Color::TRANSPARENT,
-        text_color: theme.palette().text,
+    #[test]
+    fn a_rescan_that_removes_the_selection_falls_back_to_the_top() {
+        let mut launcher = launcher(vec![entry("a", "Alpha"), entry("b", "Beta")], &[]);
+        launcher.handle_event(&key_pressed(Named::ArrowDown));
+        launcher.set_entries(vec![entry("a", "Alpha")]);
+        assert_eq!(launcher.selected_entry().map(|e| e.id.as_str()), Some("a"));
     }
-}
 
-pub fn theme_fn(_launcher: &Launcher) -> Theme {
-    style::m3_theme("obayebar-launcher-dark")
+    #[test]
+    fn arrow_keys_stay_within_the_list() {
+        let mut launcher = launcher(vec![entry("a", "Alpha"), entry("b", "Beta")], &[]);
+        launcher.handle_event(&key_pressed(Named::ArrowUp));
+        assert_eq!(launcher.selected, 0, "up at the top must not underflow");
+
+        for _ in 0..5 {
+            launcher.handle_event(&key_pressed(Named::ArrowDown));
+        }
+        assert_eq!(launcher.selected, 1, "down at the bottom must not overrun");
+    }
+
+    #[test]
+    fn escape_dismisses_and_enter_launches_nothing_when_there_are_no_matches() {
+        let mut launcher = launcher(vec![entry("a", "Alpha")], &[]);
+        assert!(launcher.handle_event(&key_pressed(Named::Escape)).dismiss);
+
+        launcher.update(Message::SearchChanged("zzzz".into()));
+        // No match, so Enter has nothing to launch and must leave the surface
+        // up rather than closing on a no-op.
+        assert!(!launcher.handle_event(&key_pressed(Named::Enter)).dismiss);
+    }
+
+    #[test]
+    fn reopening_clears_the_previous_query() {
+        let mut launcher = launcher(vec![entry("a", "Alpha"), entry("b", "Beta")], &[]);
+        launcher.update(Message::SearchChanged("bet".into()));
+        assert_eq!(visible_names(&launcher), ["Beta"]);
+
+        let _ = launcher.reset();
+        assert_eq!(visible_names(&launcher), ["Alpha", "Beta"]);
+        assert_eq!(launcher.selected, 0);
+    }
+
+    #[test]
+    fn icons_for_entries_that_disappeared_are_dropped() {
+        let mut launcher = launcher(vec![entry("a", "Alpha"), entry("b", "Beta")], &[]);
+        launcher.set_icons(
+            [("a", 1_u8), ("b", 2)]
+                .into_iter()
+                .map(|(id, _)| {
+                    (
+                        id.to_string(),
+                        image::Handle::from_rgba(1, 1, vec![0, 0, 0, 0]),
+                    )
+                })
+                .collect(),
+        );
+        launcher.set_entries(vec![entry("a", "Alpha")]);
+        assert_eq!(launcher.icons.len(), 1);
+        assert!(launcher.icons.contains_key("a"));
+    }
+
+    #[test]
+    fn an_unfocus_before_the_surface_was_ever_focused_is_ignored() {
+        // A surface still being mapped can report Unfocused; acting on it
+        // would close the launcher the instant the keybinding opened it.
+        let mut launcher = launcher(vec![entry("a", "Alpha")], &[]);
+        assert!(
+            !launcher
+                .handle_event(&Event::Window(iced::window::Event::Unfocused))
+                .dismiss
+        );
+
+        launcher.handle_event(&Event::Window(iced::window::Event::Focused));
+        assert!(
+            launcher
+                .handle_event(&Event::Window(iced::window::Event::Unfocused))
+                .dismiss
+        );
+    }
+
+    fn key_pressed(named: Named) -> Event {
+        Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: Key::Named(named),
+            modified_key: Key::Named(named),
+            physical_key: iced::keyboard::key::Physical::Unidentified(
+                iced::keyboard::key::NativeCode::Unidentified,
+            ),
+            location: iced::keyboard::Location::Standard,
+            modifiers: iced::keyboard::Modifiers::empty(),
+            text: None,
+            repeat: false,
+        })
+    }
 }
