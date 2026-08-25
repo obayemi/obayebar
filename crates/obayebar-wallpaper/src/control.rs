@@ -68,11 +68,12 @@ pub fn send(command: Command) -> Result<(), String> {
 /// bound. Callers should treat that as "no control channel" and carry on
 /// rendering rather than refusing to start.
 pub fn listen() -> Result<UnixListener, String> {
+    // Through the shared helper so the directory ends up mode 700 whichever
+    // binary creates it first — it also holds the generated lock config, which
+    // names every wallpaper path.
+    obayebar_core::xdg::runtime_dir_create()
+        .map_err(|e| format!("preparing the runtime directory: {e}"))?;
     let path = socket_path().ok_or_else(|| "XDG_RUNTIME_DIR is unset".to_string())?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("creating {}: {e}", parent.display()))?;
-    }
     // A socket file left by a crashed daemon would make bind fail with
     // EADDRINUSE forever. Probing it first distinguishes "stale" from "a
     // daemon is already running", which is a real error worth reporting.

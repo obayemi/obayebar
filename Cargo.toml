@@ -6,6 +6,7 @@ members = [
     "crates/obayebar-core",
     "crates/obayebar",
     "crates/obayebar-wallpaper",
+    "crates/obayebar-lock",
 ]
 # No `default-members`: it would narrow bare `cargo build`/`cargo test` to the
 # listed crates, which is the opposite of what this repo wants — every member

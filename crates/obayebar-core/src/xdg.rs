@@ -70,6 +70,33 @@ pub fn expand_tilde(path: &Path) -> PathBuf {
     }
 }
 
+/// `runtime_dir()`, created if needed with mode 700.
+///
+/// Everything obayebar puts here is private to the session — a control socket,
+/// and a generated lock-screen config naming every wallpaper path. Plain
+/// `create_dir_all` would apply the umask and typically land on 755, so the
+/// mode is set explicitly. Whichever binary gets there first decides, hence one
+/// helper rather than a copy in each.
+///
+/// # Errors
+///
+/// Returns an [`std::io::Error`] when the directory cannot be created, or
+/// `NotFound` when `XDG_RUNTIME_DIR` is unset.
+pub fn runtime_dir_create() -> std::io::Result<PathBuf> {
+    use std::os::unix::fs::DirBuilderExt as _;
+
+    let dir = runtime_dir().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::NotFound, "XDG_RUNTIME_DIR is unset")
+    })?;
+    if !dir.exists() {
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&dir)?;
+    }
+    Ok(dir)
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {

@@ -3013,6 +3013,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "obayebar-lock"
+version = "0.1.0"
+dependencies = [
+ "env_logger",
+ "log",
+ "obayebar-core",
+]
+
+[[package]]
 name = "obayebar-wallpaper"
 version = "0.1.0"
 dependencies = [

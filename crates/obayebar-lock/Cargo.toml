@@ -1,0 +1,25 @@
+[package]
+name = "obayebar-lock"
+description = "Locks the session with hyprlock, showing the current wallpaper per monitor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[[bin]]
+name = "obayebar-lock"
+path = "src/main.rs"
+
+# A one-shot: enumerate monitors, read a JSON file, render text, run hyprlock.
+# No async runtime, no GUI, no dbus — it stands between the user and a locked
+# screen, so it should build small and start instantly.
+[dependencies]
+obayebar-core.workspace = true
+log.workspace = true
+env_logger.workspace = true
+
+[lints]
+workspace = true
