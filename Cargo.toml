@@ -100,3 +100,8 @@ multiple_crate_versions = "allow"
 # only warns, so a copy in a member would silently lose cranelift.
 [profile.dev]
 codegen-backend = "cranelift"
+
+# crc32fast 1.5 runtime-detects AVX-512 VPCLMULQDQ, which cranelift cannot
+# compile: it emits a trap that aborts the process on CPUs that have it.
+[profile.dev.package.crc32fast]
+codegen-backend = "llvm"
