@@ -22,14 +22,19 @@ pub struct Assignment {
 }
 
 /// Why a pass produced nothing.
+///
+/// Note there is no "nothing changed" variant. `decide` always reports what
+/// every monitor *should* show, even when that matches what it already shows —
+/// a fresh process has surfaces with nothing drawn on them, so a startup pass
+/// that skipped the assignment because the state file already agreed would
+/// leave the screen blank. Whether anything needs redrawing is the renderer's
+/// judgement, and whether the state file needs rewriting is the caller's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Idle {
     /// No usable monitors — mirrors and disabled outputs do not count.
     NoMonitors,
     /// The directory held no image any compiled-in decoder understands.
     NoWallpapers,
-    /// Nothing to do: every monitor already has the picture it should have.
-    AlreadySettled,
 }
 
 /// Why this pass is running, which is what decides how much it may change.
@@ -134,14 +139,6 @@ pub fn decide(
         return Err(Idle::NoWallpapers);
     }
 
-    let settled = trigger != Trigger::Rotate
-        && needs.is_empty()
-        && previous.cursor == cursor
-        && previous.monitors == chosen;
-    if settled {
-        return Err(Idle::AlreadySettled);
-    }
-
     Ok(Assignment {
         by_port,
         state: state::State {
@@ -156,6 +153,8 @@ pub fn decide(
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
 
     fn monitor(name: &str, description: &str) -> MonitorInfo {
@@ -241,9 +240,23 @@ mod tests {
             &previous,
             Trigger::Restore,
             7,
+        )
+        .unwrap();
+        // Each monitor keeps exactly what it had — but it is still reported,
+        // because a freshly started process has drawn nothing yet and needs to
+        // be told what to put on screen.
+        assert_eq!(
+            out.by_port.get("DP-1").map(PathBuf::as_path),
+            Some(Path::new("x"))
         );
-        // Nothing to do — that is the point of a restore.
-        assert_eq!(out, Err(Idle::AlreadySettled));
+        assert_eq!(
+            out.by_port.get("DP-2").map(PathBuf::as_path),
+            Some(Path::new("y"))
+        );
+        assert_eq!(
+            out.state.cursor, previous.cursor,
+            "a restore consumes nothing"
+        );
     }
 
     #[test]
@@ -257,8 +270,18 @@ mod tests {
             &previous,
             Trigger::Restore,
             7,
+        )
+        .unwrap();
+        // DP-2 now carries panel A, and gets back A's wallpaper.
+        assert_eq!(
+            out.by_port.get("DP-2").map(PathBuf::as_path),
+            Some(Path::new("x"))
         );
-        assert_eq!(out, Err(Idle::AlreadySettled));
+        assert_eq!(
+            out.by_port.get("DP-1").map(PathBuf::as_path),
+            Some(Path::new("y"))
+        );
+        assert_eq!(out.state.cursor, previous.cursor, "nothing was consumed");
     }
 
     #[test]

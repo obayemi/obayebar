@@ -9,20 +9,20 @@ mod decode;
 mod render;
 mod rotation;
 
+use std::cell::RefCell;
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::rc::Rc;
+use std::time::Duration;
+
+use smithay_client_toolkit::reexports::calloop::generic::Generic;
+use smithay_client_toolkit::reexports::calloop::timer::{TimeoutAction, Timer};
+use smithay_client_toolkit::reexports::calloop::{EventLoop, Interest, Mode, PostAction};
+use smithay_client_toolkit::reexports::calloop_wayland_source::WaylandSource;
 
 use obayebar_core::config::Config;
 use obayebar_core::wallpaper::{self, plan, state};
 
 use rotation::Trigger;
-
-/// How often the event loop wakes to check the timer and the control socket
-/// when there is nothing else to do.
-///
-/// The wayland connection is drained on every pass, so this only bounds how
-/// late a rotation or a `--next` can be, not how responsive the surfaces are.
-const TICK: Duration = Duration::from_millis(250);
 
 fn main() {
     env_logger::init();
@@ -105,19 +105,21 @@ fn load_state(path: Option<&PathBuf>) -> state::State {
 
 /// Run one selection pass and hand the result to the renderer.
 ///
-/// Returns whether anything changed, so the caller knows if the state file is
-/// worth rewriting.
+/// The assignment is always pushed, even when it matches what the state file
+/// already said: on a fresh process the surfaces have nothing drawn on them.
+/// The renderer skips a redraw when the picture and size are unchanged, so
+/// repeating an assignment is cheap. Only the state *file* is conditional.
 fn apply(
     renderer: &mut render::Renderer,
     settings: &Settings,
     current: &mut state::State,
     trigger: Trigger,
-) -> bool {
+) {
     let monitors = match obayebar_core::hypr::monitors_blocking() {
         Ok(monitors) => monitors,
         Err(e) => {
             log::warn!("wallpaper: cannot read the monitor list ({e})");
-            return false;
+            return;
         }
     };
     let available = wallpaper::discover(&settings.directory);
@@ -129,17 +131,14 @@ fn apply(
                 renderer.assign(port, path.clone());
             }
             renderer.refresh();
-            *current = assignment.state;
-            if let Some(path) = settings.state_path.as_ref() {
-                state::save(path, current);
+            if assignment.state != *current {
+                *current = assignment.state;
+                if let Some(path) = settings.state_path.as_ref() {
+                    state::save(path, current);
+                }
             }
-            true
         }
-        Err(rotation::Idle::AlreadySettled) => false,
-        Err(reason) => {
-            log::warn!("wallpaper: nothing to do ({reason:?})");
-            false
-        }
+        Err(reason) => log::warn!("wallpaper: nothing to do ({reason:?})"),
     }
 }
 
@@ -147,7 +146,8 @@ fn run(args: &cli::Args) -> Result<(), String> {
     let settings = resolve(args)?;
     let mut current = load_state(settings.state_path.as_ref());
 
-    let (mut renderer, mut queue) = render::Renderer::new().map_err(|e| e.to_string())?;
+    let (mut renderer, connection, mut queue) =
+        render::Renderer::new().map_err(|e| e.to_string())?;
 
     // One round trip so the compositor tells us about its outputs before the
     // first selection pass — otherwise there is nothing to assign to.
@@ -181,49 +181,99 @@ fn run(args: &cli::Args) -> Result<(), String> {
         None => log::info!("wallpaper: rotation disabled"),
     }
 
-    let mut known = renderer.output_names();
-    let mut deadline = settings.interval.map(|every| Instant::now() + every);
+    let known = renderer.output_names();
 
-    while !renderer.exit {
-        queue
-            .blocking_dispatch(&mut renderer)
-            .map_err(|e| format!("wayland dispatch: {e}"))?;
+    // calloop rather than a loop around `blocking_dispatch`. The compositor
+    // sends nothing at all to a process showing a static picture, so a blocking
+    // dispatch parks indefinitely — and the control socket and the rotation
+    // timer never get a turn. Here all three wait on one poll.
+    // `WaylandSource` ties the loop's data type to the queue's, so the loop
+    // carries the `Renderer` and everything else rides along in a shared cell.
+    // The loop is single-threaded, so this is only about reaching the same
+    // values from three callbacks.
+    let mut event_loop: EventLoop<render::Renderer> =
+        EventLoop::try_new().map_err(|e| format!("creating the event loop: {e}"))?;
+    let handle = event_loop.handle();
 
-        // The output set changing is the hotplug signal. Comparing names is
-        // enough: the renderer creates and destroys surfaces itself, and this
-        // only decides whether a *selection* pass is warranted.
-        let names = renderer.output_names();
-        if names != known {
-            log::info!("wallpaper: outputs changed ({} now)", names.len());
-            known = names;
-            apply(&mut renderer, &settings, &mut current, Trigger::Hotplug);
-        }
+    WaylandSource::new(connection, queue)
+        .insert(handle.clone())
+        .map_err(|e| format!("watching the wayland connection: {e}"))?;
 
-        if let Some(listener) = listener.as_ref() {
-            for command in control::poll(listener) {
-                match command {
-                    control::Command::Next => {
-                        apply(&mut renderer, &settings, &mut current, Trigger::Rotate);
-                        deadline = settings.interval.map(|every| Instant::now() + every);
+    let context = Rc::new(RefCell::new(Context {
+        settings,
+        current,
+        known,
+    }));
+
+    if let Some(listener) = listener {
+        let context = Rc::clone(&context);
+        handle
+            .insert_source(
+                Generic::new(listener, Interest::READ, Mode::Level),
+                move |_, listener, renderer: &mut render::Renderer| {
+                    for command in control::poll(listener) {
+                        let trigger = match command {
+                            control::Command::Next => Trigger::Rotate,
+                            control::Command::Reload => Trigger::Restore,
+                        };
+                        context.borrow_mut().pass(renderer, trigger);
                     }
-                    control::Command::Reload => {
-                        apply(&mut renderer, &settings, &mut current, Trigger::Restore);
-                    }
-                }
-            }
-        }
-
-        if let (Some(at), Some(every)) = (deadline, settings.interval) {
-            if Instant::now() >= at {
-                apply(&mut renderer, &settings, &mut current, Trigger::Rotate);
-                deadline = Some(Instant::now() + every);
-            }
-        }
-
-        // `blocking_dispatch` returns as soon as the compositor says anything,
-        // so on a quiet system this is what bounds timer latency.
-        std::thread::sleep(TICK);
+                    Ok(PostAction::Continue)
+                },
+            )
+            .map_err(|e| format!("watching the control socket: {e}"))?;
     }
 
-    Ok(())
+    if let Some(every) = context.borrow().settings.interval {
+        let context = Rc::clone(&context);
+        handle
+            .insert_source(
+                Timer::from_duration(every),
+                move |_, (), renderer: &mut render::Renderer| {
+                    context.borrow_mut().pass(renderer, Trigger::Rotate);
+                    TimeoutAction::ToDuration(every)
+                },
+            )
+            .map_err(|e| format!("arming the rotation timer: {e}"))?;
+    }
+
+    // No timeout: every source that matters — the wayland connection, the
+    // control socket, the rotation timer — is registered, so the loop can sleep
+    // until one of them speaks. Hotplug is a flag the output handlers set, so
+    // it rides in on the wayland event that caused it rather than needing a
+    // poll.
+    let hotplug = Rc::clone(&context);
+    event_loop
+        .run(None, &mut renderer, move |renderer| {
+            if renderer.take_outputs_changed() {
+                hotplug.borrow_mut().check_outputs(renderer);
+            }
+        })
+        .map_err(|e| format!("running the event loop: {e}"))
+}
+
+/// The non-wayland half of the loop's state.
+struct Context {
+    settings: Settings,
+    current: state::State,
+    /// Output names as of the last check, for spotting hotplug.
+    known: Vec<String>,
+}
+
+impl Context {
+    fn pass(&mut self, renderer: &mut render::Renderer, trigger: Trigger) {
+        apply(renderer, &self.settings, &mut self.current, trigger);
+    }
+
+    /// The output set changing is the hotplug signal. Comparing names is
+    /// enough: the renderer creates and destroys the surfaces itself, and this
+    /// only decides whether a *selection* pass is warranted.
+    fn check_outputs(&mut self, renderer: &mut render::Renderer) {
+        let names = renderer.output_names();
+        if names != self.known {
+            log::info!("wallpaper: outputs changed ({} now)", names.len());
+            self.known = names;
+            self.pass(renderer, Trigger::Hotplug);
+        }
+    }
 }

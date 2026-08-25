@@ -78,6 +78,11 @@ pub struct Renderer {
     outputs: HashMap<u32, Output>,
     /// Set when the compositor closes a surface under us, so `run` can stop.
     pub exit: bool,
+    /// Set whenever an output appears, goes away, or first reports its name.
+    ///
+    /// Lets the run loop notice hotplug when it is woken by the wayland event
+    /// that caused it, instead of polling `output_names()` on a timer.
+    outputs_changed: bool,
 }
 
 impl std::fmt::Debug for Renderer {
@@ -110,6 +115,7 @@ impl Renderer {
     pub fn new() -> Result<
         (
             Self,
+            Connection,
             smithay_client_toolkit::reexports::client::EventQueue<Self>,
         ),
         SetupError,
@@ -134,9 +140,18 @@ impl Renderer {
                 pool: None,
                 outputs: HashMap::new(),
                 exit: false,
+                outputs_changed: false,
             },
+            conn,
             event_queue,
         ))
+    }
+
+    /// Whether the output set has changed since this was last asked.
+    pub const fn take_outputs_changed(&mut self) -> bool {
+        let changed = self.outputs_changed;
+        self.outputs_changed = false;
+        changed
     }
 
     /// Port names of every output we currently hold a surface for.
@@ -414,6 +429,7 @@ impl OutputHandler for Renderer {
             entry.name = info.name;
             entry.scale = info.scale_factor.max(1);
         }
+        self.outputs_changed = true;
     }
 
     fn update_output(
@@ -426,8 +442,15 @@ impl OutputHandler for Renderer {
         // why the surface is bound to the output *object* and never to a name.
         if let Some(info) = self.output_state.info(&output) {
             if let Some(entry) = self.outputs.get_mut(&info.id) {
+                // The name can arrive after the surface exists, and an
+                // assignment addressed to a nameless output was dropped, so
+                // this counts as a change worth re-running selection for.
+                let named = entry.name.is_none() && info.name.is_some();
                 entry.name = info.name;
                 entry.scale = info.scale_factor.max(1);
+                if named {
+                    self.outputs_changed = true;
+                }
             }
         }
     }
@@ -444,6 +467,7 @@ impl OutputHandler for Renderer {
                     "wallpaper: output {} went away",
                     info.name.as_deref().unwrap_or("unnamed")
                 );
+                self.outputs_changed = true;
             }
         }
     }
