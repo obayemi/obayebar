@@ -7,7 +7,7 @@
 
 use std::path::{Path, PathBuf};
 
-use image::imageops::FilterType;
+use fast_image_resize as fr;
 
 /// Bytes per pixel in the `Argb8888` format we hand the compositor.
 const BYTES_PER_PIXEL: usize = 4;
@@ -93,23 +93,50 @@ pub fn prepare(path: &Path, width: u32, height: u32) -> Result<Wallpaper, Decode
     })?;
     let decoded_at = started.elapsed();
 
-    let filled = decoded.resize_to_fill(width, height, FilterType::Lanczos3);
+    let source = decoded.into_rgba8();
+    let (source_w, source_h) = source.dimensions();
+    if source_w == 0 || source_h == 0 {
+        return Err(DecodeError::Empty { path: display });
+    }
+
+    // `fast_image_resize` rather than the `image` crate's own resize. Scaling
+    // is around 93% of the time it takes to put a wallpaper up, and `image`
+    // does it with scalar code; this one is SIMD.
+    let src =
+        fr::images::Image::from_vec_u8(source_w, source_h, source.into_raw(), fr::PixelType::U8x4)
+            .map_err(|_| DecodeError::Empty {
+                path: display.clone(),
+            })?;
+    let mut dst = fr::images::Image::new(width, height, fr::PixelType::U8x4);
+
+    fr::Resizer::new()
+        .resize(
+            &src,
+            &mut dst,
+            // `fit_into_destination` is the "cover" behaviour a wallpaper
+            // wants: keep the aspect ratio, fill the output, crop the overflow
+            // from the centre. `use_alpha(false)` skips the premultiply and
+            // unpremultiply passes, which are pure cost here — the output is
+            // forced opaque below regardless.
+            &fr::ResizeOptions::new()
+                .resize_alg(fr::ResizeAlg::Convolution(fr::FilterType::Lanczos3))
+                .fit_into_destination(Some((0.5, 0.5)))
+                .use_alpha(false),
+        )
+        .map_err(|_| DecodeError::TooLarge { width, height })?;
     let resized_at = started.elapsed();
-    let rgba = filled.into_rgba8();
 
-    let pixels = (width as usize)
-        .checked_mul(height as usize)
-        .and_then(|n| n.checked_mul(BYTES_PER_PIXEL))
-        .ok_or(DecodeError::TooLarge { width, height })?;
-
-    // wl_shm's Argb8888 is little-endian, so the bytes run B, G, R, A. The
-    // alpha is forced opaque: a wallpaper with a transparent region would
-    // otherwise show the compositor's own background through it, and every
-    // caller here treats the surface as opaque anyway.
-    let mut bgra = Vec::with_capacity(pixels);
-    for px in rgba.pixels() {
-        let [r, g, b, _] = px.0;
-        bgra.extend_from_slice(&[b, g, r, 0xFF]);
+    // wl_shm's Argb8888 is little-endian, so the bytes run B, G, R, A — the
+    // resize produced R, G, B, A, so red and blue swap. Alpha is forced opaque
+    // because a wallpaper with a transparent region would otherwise show the
+    // compositor's own background through it. Done in place: at panel
+    // resolution this buffer is megabytes, and a second one is pure waste.
+    let mut bgra = dst.into_vec();
+    for px in bgra.chunks_exact_mut(BYTES_PER_PIXEL) {
+        px.swap(0, 2);
+        if let Some(alpha) = px.last_mut() {
+            *alpha = 0xFF;
+        }
     }
 
     if bgra.is_empty() {

@@ -19,6 +19,7 @@ path = "src/main.rs"
 obayebar-core = { workspace = true, features = ["images"] }
 smithay-client-toolkit.workspace = true
 image.workspace = true
+fast_image_resize.workspace = true
 log.workspace = true
 env_logger.workspace = true
 thiserror.workspace = true

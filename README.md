@@ -121,6 +121,29 @@ DPMS cycles reshuffle which port is which — a wallpaper remembered against
 dir rather than the cache dir, so the desktop comes back looking as it was left
 instead of reshuffling on every login.
 
+### What it costs to change a wallpaper
+
+About **50 ms** per monitor in a release build: roughly 25 ms to decode the
+JPEG, 20 ms to scale it, 3 ms to pack it into the buffer. Two things got it
+there, and both were found by measuring rather than guessing — the phase
+breakdown is logged at `debug` if you want to check it on your own hardware.
+
+**Buffers are sized to the panel, not to the surface.** Sizing them the obvious
+way — the layer surface's logical size times the output's integer scale — meant
+rendering 3840×2560 for a 2256×1504 panel, three times the pixels the display
+can show, with the compositor scaling them back down again. `wp_viewporter`
+decouples buffer size from surface size so the buffer can be the panel's real
+mode. That alone halved it.
+
+**Scaling uses `fast_image_resize`, not the `image` crate.** Scaling was ~92% of
+the remaining time and `image` does it with scalar code; the SIMD version is
+around 20× faster, which is what takes a wallpaper change from *noticeable* to
+*instant*. Filter choice turned out to be nearly irrelevant by comparison —
+CatmullRom bought 15% over Lanczos3 — so it keeps Lanczos3 and the quality.
+
+A **debug build is ~14 s per wallpaper**, almost all of it unoptimised scaling.
+If you are judging responsiveness from `cargo run`, add `--release`.
+
 ### Why not hyprpaper
 
 hyprpaper 0.8.4 leaks roughly 4 MB per `wallpaper` IPC request, unbounded: a
@@ -285,6 +308,7 @@ think about — it just works.
 | `iced` 0.14                  | Reactive UI runtime, wgpu renderer, canvas, lazy widgets  |
 | `iced_layershell` 0.19       | wlr-layer-shell integration on top of iced                |
 | `smithay-client-toolkit` 0.20| Raw wlr-layer-shell + wl_shm for the wallpaper renderer   |
+| `fast_image_resize` 6        | SIMD wallpaper scaling — see below                        |
 | `zbus` 5                     | Async dbus for NetworkManager / BlueZ / UPower / SNI / …  |
 | `pipewire` 0.10              | Native PipeWire client for audio                          |
 | `tokio` 1.x                  | Async runtime, signal/timer plumbing                      |

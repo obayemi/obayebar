@@ -67,6 +67,10 @@ toml = { version = "1.1", default-features = false, features = ["parse", "serde"
 # by construction. It also keeps iced, wgpu and their ~100MB of VRAM out of a
 # process that draws a static picture.
 smithay-client-toolkit = "0.20"
+# The resize is ~93% of the time it takes to put a wallpaper up, and the image
+# crate does it without SIMD. This is a targeted dependency for the measured
+# bottleneck, not a general-purpose imaging library.
+fast_image_resize = { version = "6", default-features = false, features = ["std"] }
 wayland-client = "0.31"
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 
