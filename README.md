@@ -540,13 +540,23 @@ decisions come from that goal:
   position, and does not assume the position. The bar starts each surface with
   its own layer-shell namespace (`obayebar-bar-N`), and then compares the
   surface with the `j/layers` data of Hyprland. The bar closes a surface and
-  starts a new surface in three conditions: the bar is on an incorrect
-  monitor, the bar stops with no close event, or two bars are on one monitor.
-  The bar continues until the compositor agrees. The bar starts the surfaces
-  one at a time. Thus a group of surfaces cannot use an old output-name
-  cache, and cannot collect on one monitor. If an IPC query fails, the bar
-  reads the result as "unknown" and changes nothing. The bar never reads a
-  failed query as "no monitor is connected".
+  starts a new surface in four conditions: the bar is on an incorrect
+  monitor, the bar stops with no close event, two bars are on one monitor, or
+  the surface does not appear within two seconds. The bar continues until the
+  compositor agrees. The bar starts the surfaces one at a time. Thus a group
+  of surfaces cannot use an old output-name cache, and cannot collect on one
+  monitor. If an IPC query fails, the bar reads the result as "unknown" and
+  changes nothing. The bar never reads a failed query as "no monitor is
+  connected".
+- **A close is a request, and the bar verifies the request.** The bar keeps
+  the window of a surface it closes until `j/layers` reports the surface is
+  gone, and asks again if the surface stays. A surface the bar merely forgets
+  is a surface no code can reach: a slow surface that maps after the bar gives
+  up on it belongs to nobody, holds an exclusive zone, and pushes the real bar
+  aside. That is the shape of the extra bars a dock plug and unplug produced.
+  The two-second window is wall-clock, not a count of passes, and one pass
+  runs at a time — a hotplug sends a burst of events, and a burst of passes
+  used to spend the whole window in a fraction of a second.
 
 The last item is a behavior that you must not think about. The behavior
 operates.
