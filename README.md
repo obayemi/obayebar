@@ -298,6 +298,22 @@ obayebar-lock [OPTIONS]
 `obayebar-launcher` takes `--help` and `--version`, and nothing else. Each
 other use shows or hides the launcher of the running bar.
 
+### Logging
+
+Both daemons log at `info` by default: startup and shutdown, monitor and
+service changes, and every command received over a bus or socket. `RUST_LOG`
+overrides that in either direction, and takes the usual per-target filters.
+
+```
+RUST_LOG=debug obayebar                       # more
+RUST_LOG=error obayebar-wallpaper             # less
+RUST_LOG=obayebar::services=debug obayebar    # one module
+```
+
+`obayebar-lock` and `obayebar-launcher` are one-shot commands that report
+their own failures on stderr, so they stay at `error` unless `RUST_LOG`
+says otherwise.
+
 ## Wallpapers
 
 `obayebar-wallpaper` puts a different wallpaper on each monitor, and changes

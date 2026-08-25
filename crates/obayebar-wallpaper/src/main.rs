@@ -25,7 +25,8 @@ use obayebar_core::wallpaper::{self, plan, state};
 use rotation::Trigger;
 
 fn main() {
-    env_logger::init();
+    // Default to info, matching the bar; RUST_LOG still overrides.
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     let args = match cli::parse(std::env::args().skip(1)) {
         Ok(args) => args,

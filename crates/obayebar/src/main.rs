@@ -177,7 +177,10 @@ fn main() {
     };
     config::install(&config::Config::load(), &cli);
 
-    let logger = env_logger::Builder::from_default_env().build();
+    // Default to info so the command and service logs are actually visible;
+    // RUST_LOG still overrides, both up to debug and back down to error.
+    let logger =
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).build();
     let max_level = logger.filter();
     log::set_boxed_logger(Box::new(FatalErrorLogger { inner: logger }))
         .map(|()| log::set_max_level(max_level))
