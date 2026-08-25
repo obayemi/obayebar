@@ -2,3 +2,7 @@
 /result
 /.direnv
 /.worktree
+
+# rustc internal-compiler-error dumps land in the working directory and jj
+# auto-tracks them, which is how one ended up as a stray commit.
+/rustc-ice-*.txt
