@@ -156,6 +156,8 @@ pub enum IpcError {
         #[source]
         source: serde_json::Error,
     },
+    #[error("hyprland refused {command}: {reply}")]
+    Refused { command: String, reply: String },
 }
 
 /// The per-instance socket directory, or `None` when we are not running under
@@ -171,14 +173,14 @@ pub fn socket_dir() -> Option<PathBuf> {
     Some(PathBuf::from(xdg).join("hypr").join(sig))
 }
 
-/// Send `command` over the control socket and deserialize the reply.
+/// Send `command` over the control socket and return the reply verbatim.
 ///
 /// # Errors
 ///
 /// Returns [`IpcError`] naming the step that failed: no socket directory,
-/// connect, write, read, non-UTF-8 reply, or a reply that did not match `T`.
+/// connect, write, read, or a non-UTF-8 reply.
 #[cfg(feature = "async")]
-pub async fn query_json<T: serde::de::DeserializeOwned>(command: &str) -> Result<T, IpcError> {
+pub async fn request(command: &str) -> Result<String, IpcError> {
     let dir = socket_dir().ok_or(IpcError::NoSocketDir)?;
     let sock_path = dir.join(".socket.sock");
     let mut stream = UnixStream::connect(&sock_path)
@@ -206,13 +208,52 @@ pub async fn query_json<T: serde::de::DeserializeOwned>(command: &str) -> Result
             command: command.to_string(),
             source,
         })?;
-    let text = String::from_utf8(buf).map_err(|_| IpcError::NotUtf8 {
+    String::from_utf8(buf).map_err(|_| IpcError::NotUtf8 {
         command: command.to_string(),
-    })?;
+    })
+}
+
+/// Send `command` over the control socket and deserialize the reply.
+///
+/// # Errors
+///
+/// Returns [`IpcError`] naming the step that failed: no socket directory,
+/// connect, write, read, non-UTF-8 reply, or a reply that did not match `T`.
+#[cfg(feature = "async")]
+pub async fn query_json<T: serde::de::DeserializeOwned>(command: &str) -> Result<T, IpcError> {
+    let text = request(command).await?;
     serde_json::from_str(&text).map_err(|source| IpcError::Parse {
         command: command.to_string(),
         source,
     })
+}
+
+/// Run a dispatcher, where `dispatcher` is the Lua call itself — e.g.
+/// `hl.dsp.focus({workspace = 3})`.
+///
+/// Hyprland 0.56 moved dispatchers to Lua: everything after `dispatch ` is now
+/// evaluated as `return hl.dispatch(...)`, so the line the bar used to send,
+/// `dispatch workspace 3`, is parsed as Lua and rejected with a syntax error.
+/// Clicking a workspace did nothing, and nothing said why, because the reply
+/// was never read.
+///
+/// # Errors
+///
+/// Everything [`request`] can fail with, plus [`IpcError::Refused`] when the
+/// compositor answers anything other than `ok` — an unknown dispatcher, a
+/// selector that matched no window, or Lua that does not parse.
+#[cfg(feature = "async")]
+pub async fn dispatch(dispatcher: &str) -> Result<(), IpcError> {
+    let command = format!("dispatch {dispatcher}");
+    let reply = request(&command).await?;
+    if reply.trim() == "ok" {
+        Ok(())
+    } else {
+        Err(IpcError::Refused {
+            command,
+            reply: reply.trim().to_string(),
+        })
+    }
 }
 
 /// The blocking twin of [`query_json`], for one-shot processes.

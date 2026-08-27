@@ -10,7 +10,7 @@ use futures_util::Stream;
 use obayebar_core::hypr::{parse_lenient, query_or_log, socket_dir, MonitorGeom};
 use serde::Deserialize;
 use std::collections::HashMap;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::UnixStream;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Deserialize)]
@@ -106,48 +106,74 @@ async fn fetch_full_state() -> Option<HyprState> {
     })
 }
 
+/// Send a dispatcher and log whatever the compositor says back.
+///
+/// Detached, because every caller is a click handler that must not block the
+/// UI on the socket. What it no longer does is throw the reply away: a
+/// dispatcher Hyprland rejects is the whole reason workspace clicks went quiet.
+fn dispatch(dispatcher: String) {
+    tokio::spawn(async move {
+        if let Err(e) = obayebar_core::hypr::dispatch(&dispatcher).await {
+            log::warn!("hyprland: {e}");
+        }
+    });
+}
+
+/// Escape the ECMAScript regex metacharacters in `literal`.
+///
+/// Window selectors are regexes, so an unescaped class like
+/// `org.mozilla.firefox` matches more than the one window meant, and a name
+/// carrying a bracket or a paren does not compile at all.
+fn escape_regex(literal: &str) -> String {
+    let mut escaped = String::with_capacity(literal.len());
+    for ch in literal.chars() {
+        if r"\^$.|?*+()[]{}".contains(ch) {
+            escaped.push('\\');
+        }
+        escaped.push(ch);
+    }
+    escaped
+}
+
+/// The dispatcher that focuses workspace `id`.
+fn focus_workspace(id: i32) -> String {
+    format!("hl.dsp.focus({{workspace = {id}}})")
+}
+
+/// The dispatcher that focuses a window whose class matches `pattern`.
+///
+/// The selector goes in a Lua long string so `pattern` keeps a single layer of
+/// escaping — a quoted Lua string would need every backslash of the regex
+/// doubled. Hyprland matches a class selector against the whole class, so a
+/// pattern meant to match part of one has to spell that out.
+fn focus_window_class_matching(pattern: &str) -> String {
+    format!("hl.dsp.focus({{window = [==[class:{pattern}]==]}})")
+}
+
 pub fn switch_workspace(id: i32) {
-    tokio::spawn(async move {
-        let Some(dir) = socket_dir() else {
-            return;
-        };
-        let sock_path = dir.join(".socket.sock");
-        if let Ok(mut stream) = UnixStream::connect(&sock_path).await {
-            let cmd = format!("dispatch workspace {id}");
-            let _ = stream.write_all(cmd.as_bytes()).await;
-        }
-    });
+    dispatch(focus_workspace(id));
 }
 
+/// Focus a window whose class contains `app_name`, case insensitively.
+///
+/// Notifications name their sender loosely — `Firefox` for `firefox`, `Spotify`
+/// for `spotify` — so this matches anywhere in the class rather than demanding
+/// the whole of it.
 pub fn focus_window(app_name: &str) {
-    let app_name = app_name.to_lowercase();
-    tokio::spawn(async move {
-        let Some(dir) = socket_dir() else {
-            return;
-        };
-        let sock_path = dir.join(".socket.sock");
-        if let Ok(mut stream) = UnixStream::connect(&sock_path).await {
-            let cmd = format!("dispatch focuswindow {app_name}");
-            let _ = stream.write_all(cmd.as_bytes()).await;
-        }
-    });
+    dispatch(focus_window_class_matching(&format!(
+        "(?i).*{}.*",
+        escape_regex(app_name)
+    )));
 }
 
-/// Focus the most recent window whose initial class matches `class` (case
-/// insensitive). Hyprland's `focuswindow` switches to the window's workspace,
-/// which is what we want after launching a browser.
+/// Focus the most recent window whose class is exactly `class` (case
+/// insensitive). Focusing a window switches to its workspace, which is what we
+/// want after launching a browser.
 pub fn focus_window_class(class: &str) {
-    let class = class.to_string();
-    tokio::spawn(async move {
-        let Some(dir) = socket_dir() else {
-            return;
-        };
-        let sock_path = dir.join(".socket.sock");
-        if let Ok(mut stream) = UnixStream::connect(&sock_path).await {
-            let cmd = format!("dispatch focuswindow class:^(?i){class}$");
-            let _ = stream.write_all(cmd.as_bytes()).await;
-        }
-    });
+    dispatch(focus_window_class_matching(&format!(
+        "^(?i){}$",
+        escape_regex(class)
+    )));
 }
 
 enum State {
@@ -315,7 +341,29 @@ pub fn classify_event(event_name: &str) -> EventAction {
 
 #[cfg(test)]
 mod tests {
-    use super::{classify_event, EventAction};
+    use super::{
+        classify_event, escape_regex, focus_window_class_matching, focus_workspace, EventAction,
+    };
+
+    #[test]
+    fn a_workspace_is_focused_through_the_lua_dispatcher() {
+        // Hyprland 0.56 evaluates the tail of `dispatch` as Lua, so the old
+        // `workspace 3` line came back as a syntax error and the click was lost.
+        assert_eq!(focus_workspace(3), "hl.dsp.focus({workspace = 3})");
+    }
+
+    #[test]
+    fn a_class_selector_is_anchored_and_escaped() {
+        assert_eq!(
+            focus_window_class_matching(&format!("^(?i){}$", escape_regex("org.mozilla.firefox"))),
+            r"hl.dsp.focus({window = [==[class:^(?i)org\.mozilla\.firefox$]==]})"
+        );
+    }
+
+    #[test]
+    fn regex_metacharacters_in_a_name_stay_literal() {
+        assert_eq!(escape_regex("Foo (beta) [1]+"), r"Foo \(beta\) \[1\]\+");
+    }
 
     #[test]
     fn active_window_is_parsed_from_the_payload() {

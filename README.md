@@ -32,6 +32,10 @@ shared crate that contains no GUI stack. Refer to
 
 ## Quickstart
 
+Hyprland 0.56 or newer is required. 0.56 moved the dispatchers to Lua, and the
+bar sends that form (`hl.dsp.focus`), so on an older compositor a click on a
+workspace is refused and the bar logs the refusal.
+
 ### 1. Install the programs
 
 The flake gives all four programs. Start the bar immediately:
@@ -244,7 +248,7 @@ An overlay is also available. The overlay adds `obayebar` to `pkgs`.
 
 | Module          | Source                                   | Notes                                                                    |
 |-----------------|------------------------------------------|--------------------------------------------------------------------------|
-| Workspaces      | Hyprland IPC (`j/workspaces`, socket2)   | One set for each monitor. A small spring moves the indicator.            |
+| Workspaces      | Hyprland IPC (`j/workspaces`, socket2)   | One set per monitor. A click focuses one. A spring moves the indicator.  |
 | Active window   | Hyprland IPC (`activewindow` event)      | Shows the class and the title. The bar draws the text vertically.       |
 | System tray     | StatusNotifierItem (dbus)                | A click activates the item. The bar keeps the icons in a cache.         |
 | GitLab todos    | GitLab REST API + Secret Service keyring | Off by default. Use `--gitlab`, the config file, or the Nix option.     |
