@@ -13,8 +13,10 @@ categories.workspace = true
 name = "obayebar-wallpaper"
 path = "src/main.rs"
 
-# No tokio and no dbus: monitors come from the blocking Hyprland query and the
-# control channel is a unix socket, so this stays a small synchronous program.
+# No tokio and no dbus: monitors come from the blocking Hyprland query, the
+# Hyprland event socket is polled by calloop alongside the wayland connection,
+# and the control channel is a unix socket. This stays a small synchronous
+# program.
 [dependencies]
 obayebar-core = { workspace = true, features = ["images"] }
 smithay-client-toolkit.workspace = true

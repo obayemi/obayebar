@@ -185,14 +185,20 @@ impl Renderer {
 
     /// Point `monitor` at `path`. The picture is decoded and drawn on the next
     /// dispatch, once the output's size is known.
-    pub fn assign(&mut self, monitor: &str, path: std::path::PathBuf) {
+    ///
+    /// `false` when no surface carries that port yet, which is a normal state
+    /// mid-hotplug: Hyprland can name a monitor before the compositor has
+    /// handed us its `wl_output`. The caller schedules another pass rather
+    /// than leaving that screen bare.
+    pub fn assign(&mut self, monitor: &str, path: std::path::PathBuf) -> bool {
         for output in self.outputs.values_mut() {
             if output.name.as_deref() == Some(monitor) {
                 output.wanted = Some(path);
-                return;
+                return true;
             }
         }
-        log::debug!("wallpaper: no surface for {monitor} yet, assignment dropped");
+        log::debug!("wallpaper: no surface for {monitor} yet");
+        false
     }
 
     /// Draw every surface whose wanted picture differs from what is on it.

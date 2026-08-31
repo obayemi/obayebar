@@ -300,8 +300,8 @@ pub enum EventAction {
 ///
 /// The refresh set is everything that can change the workspace list, which
 /// monitor a workspace lives on, the focused monitor, or the set of connected
-/// monitors. `monitoradded` is listed alongside `monitoraddedv2`: Hyprland
-/// emits both, and relying on only one couples us to that staying true.
+/// monitors. The monitor half comes from `obayebar_core::hypr::is_monitor_event`,
+/// which the wallpaper renderer watches too — one list, so the two cannot drift.
 #[must_use]
 pub fn classify_event(event_name: &str) -> EventAction {
     match event_name {
@@ -322,17 +322,11 @@ pub fn classify_event(event_name: &str) -> EventAction {
         | "closewindow"
         | "movewindow"
         | "movewindowv2"
-        | "monitoradded"
-        | "monitoraddedv2"
-        | "monitorremoved"
-        | "monitorremovedv2"
-        // A layout change can enable/disable or move an output without an
-        // add/remove pair.
-        | "monitorlayoutchanged"
-        // A reload can redefine monitors and workspace rules wholesale.
-        | "configreloaded"
         | "changefloatingmode"
         | "urgent" => EventAction::Refresh,
+        // Everything that changes the monitor set, including the config reload
+        // that can redefine monitors and workspace rules wholesale.
+        _ if obayebar_core::hypr::is_monitor_event(event_name) => EventAction::Refresh,
         // Title changes, submap changes, activewindowv2 (a duplicate of
         // activewindow), and everything else we do not render.
         _ => EventAction::Ignore,

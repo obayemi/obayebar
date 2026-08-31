@@ -351,6 +351,31 @@ program does **not** use hyprpaper. Refer to
   receives the previous wallpaper of that monitor, and the program assigns a
   wallpaper only to a fully new monitor.
 
+### A new monitor receives a wallpaper immediately
+
+The program watches **two** signals, because a new monitor arrives as two
+separate events:
+
+- **wayland** reports the new output, and gives the surface to draw on.
+- **The event socket of Hyprland** (`socket2`) reports the change of the
+  monitor set. The bar watches that socket for the same reason, and the list of
+  the events that count is one list in `obayebar-core`
+  (`hypr::is_monitor_event`), not a copy in each program.
+
+The two events have no order. A selection pass between the two finds a monitor
+with no surface, or a surface that `hyprctl monitors` does not list yet, and
+that screen receives nothing. The program watched only the wayland half before.
+Thus a monitor that Hyprland announced after the output kept an empty screen
+until the next rotation. Each signal now makes a pass, and the signal that
+arrives last finds the two halves.
+
+**A pass that does not reach each monitor makes another pass.** The delay
+starts at 250 ms and doubles to a maximum of 4 s, and the program stops after
+10 s with no progress. The limit is the clock, not a count of passes: a dock
+sends a burst of events, and a count of passes is finished in a fraction of a
+second, before a compositor that rebuilds the outputs has anything to show.
+The bar limits the verification of a bar the same way, for the same reason.
+
 ### The state file
 
 The program writes the current selection to
@@ -627,7 +652,7 @@ install nightly Rust (with the `rustc-codegen-cranelift-preview` component),
 ## Crate layout
 
 ```
-crates/obayebar-core        no iced — monitor detection, wallpaper selection, config, control sockets
+crates/obayebar-core        no iced — monitor detection, hyprland events, wallpaper selection, config, control sockets
 crates/obayebar             the bar, and the launcher that the bar draws (iced + wgpu)
 crates/obayebar-launcher    one line to the socket of the bar, for a key binding
 crates/obayebar-wallpaper   wlr-layer-shell + wl_shm renderer

@@ -3,9 +3,9 @@
 //!
 //! Split out of the bar so the wallpaper renderer and the lock screen can ask
 //! the same questions without linking a GUI stack. What stays bar-side is
-//! everything about workspaces, windows and the event stream; what lives here
-//! is what any obayebar process might need — which monitors exist, and what is
-//! actually mapped on them.
+//! everything about workspaces and windows; what lives here is what any
+//! obayebar process might need — which monitors exist, what is actually mapped
+//! on them, and which events say the monitor set changed.
 //!
 //! Both an async and a blocking monitor query are provided. That is not
 //! duplication for its own sake: the bar already runs a tokio reactor and wants
@@ -377,6 +377,168 @@ pub fn monitors_blocking() -> Result<Vec<MonitorInfo>, IpcError> {
     Ok(reject_empty(parse_lenient(values)).unwrap_or_default())
 }
 
+/// Whether a Hyprland event name reports a change to the set of monitors.
+///
+/// One list, shared: the bar reconciles its surfaces on these and the
+/// wallpaper renderer runs a selection pass on them, and two copies would
+/// drift the moment Hyprland renames one. `monitoradded` sits beside
+/// `monitoraddedv2` because the compositor emits both and relying on one
+/// couples us to that staying true.
+#[must_use]
+pub fn is_monitor_event(event_name: &str) -> bool {
+    matches!(
+        event_name,
+        "monitoradded"
+            | "monitoraddedv2"
+            | "monitorremoved"
+            | "monitorremovedv2"
+            // A layout change can enable, disable or move an output with no
+            // add/remove pair.
+            | "monitorlayoutchanged"
+            // A reload can redefine the monitors wholesale.
+            | "configreloaded"
+    )
+}
+
+/// What one read of the event socket produced.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct EventBatch {
+    /// Event names, in arrival order, with their payload stripped.
+    pub names: Vec<String>,
+    /// The compositor closed the socket, or it failed: this reader is done and
+    /// the caller has to connect again.
+    pub closed: bool,
+}
+
+impl EventBatch {
+    /// Whether anything in this batch changed the monitor set.
+    #[must_use]
+    pub fn has_monitor_event(&self) -> bool {
+        self.names.iter().any(|name| is_monitor_event(name))
+    }
+}
+
+/// A non-blocking reader over Hyprland's event socket, for processes with no
+/// async runtime.
+///
+/// The bar reads the same socket through tokio. This exists so the wallpaper
+/// renderer — a synchronous calloop program — can watch the same events
+/// without linking a runtime: the file descriptor goes into the event loop
+/// alongside the wayland connection, and [`read_available`](Self::read_available)
+/// drains whatever arrived.
+#[derive(Debug)]
+pub struct EventSocket {
+    stream: std::os::unix::net::UnixStream,
+    /// Bytes read that did not end on a line boundary, kept for the next read.
+    ///
+    /// A `RefCell` because calloop hands a source back to its callback behind
+    /// a wrapper that derefs immutably only — it is what stops a callback
+    /// closing the file descriptor out from under the loop — so the buffer
+    /// cannot be reached through a `&mut self`.
+    pending: std::cell::RefCell<Vec<u8>>,
+}
+
+impl EventSocket {
+    /// Connect to the event socket of the running instance.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IpcError`] when we are not running under Hyprland or the
+    /// socket refuses the connection.
+    pub fn connect() -> Result<Self, IpcError> {
+        let dir = socket_dir().ok_or(IpcError::NoSocketDir)?;
+        let path = dir.join(".socket2.sock");
+        let stream =
+            std::os::unix::net::UnixStream::connect(&path).map_err(|source| IpcError::Connect {
+                path: path.display().to_string(),
+                source,
+            })?;
+        // Non-blocking is what lets an event loop poll this alongside its other
+        // sources; a blocking read here would park the whole process.
+        stream
+            .set_nonblocking(true)
+            .map_err(|source| IpcError::Connect {
+                path: path.display().to_string(),
+                source,
+            })?;
+        Ok(Self {
+            stream,
+            pending: std::cell::RefCell::new(Vec::new()),
+        })
+    }
+
+    /// Drain everything the socket has buffered, without blocking.
+    pub fn read_available(&self) -> EventBatch {
+        use std::io::Read as _;
+
+        let mut batch = EventBatch::default();
+        let mut chunk = [0u8; 4096];
+        loop {
+            // `&UnixStream` implements `Read`, so the socket itself needs no
+            // mutable access either.
+            match (&self.stream).read(&mut chunk) {
+                Ok(0) => {
+                    batch.closed = true;
+                    break;
+                }
+                Ok(read) => {
+                    let fresh = chunk.get(..read).unwrap_or(&[]);
+                    batch
+                        .names
+                        .append(&mut take_event_names(&mut self.pending.borrow_mut(), fresh));
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                // A signal cut the read short; the loop goes round again.
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(e) => {
+                    log::warn!("hyprland: reading the event socket ({e})");
+                    batch.closed = true;
+                    break;
+                }
+            }
+        }
+        batch
+    }
+}
+
+impl std::os::fd::AsFd for EventSocket {
+    fn as_fd(&self) -> std::os::fd::BorrowedFd<'_> {
+        std::os::fd::AsFd::as_fd(&self.stream)
+    }
+}
+
+#[cfg(test)]
+impl EventSocket {
+    /// Wrap an already-connected stream, so the drain loop can be exercised
+    /// over a socket pair instead of a compositor.
+    fn wrapping(stream: std::os::unix::net::UnixStream) -> std::io::Result<Self> {
+        stream.set_nonblocking(true)?;
+        Ok(Self {
+            stream,
+            pending: std::cell::RefCell::new(Vec::new()),
+        })
+    }
+}
+
+/// Take the event names off every whole line in `pending` + `fresh`, leaving
+/// any partial tail behind.
+///
+/// A read returns whatever bytes happen to be in the kernel buffer, which cuts
+/// lines in half often enough to matter: dropping the tail would lose an event
+/// entirely, and a hotplug burst is exactly when the socket is busiest.
+fn take_event_names(pending: &mut Vec<u8>, fresh: &[u8]) -> Vec<String> {
+    pending.extend_from_slice(fresh);
+    let mut names = Vec::new();
+    while let Some(end) = pending.iter().position(|byte| *byte == b'\n') {
+        let line: Vec<u8> = pending.drain(..=end).collect();
+        let text = String::from_utf8_lossy(&line);
+        if let Some((name, _payload)) = text.trim_end().split_once(">>") {
+            names.push(name.to_string());
+        }
+    }
+    names
+}
+
 /// One entry in Hyprland's `j/layers` output.
 #[cfg(feature = "async")]
 #[derive(Debug, Clone, Deserialize)]
@@ -526,5 +688,103 @@ mod tests {
             reject_empty(vec![MonitorInfo::default()]).map(|v| v.len()),
             Some(1)
         );
+    }
+
+    #[test]
+    fn every_topology_event_is_a_monitor_event() {
+        // A miss here strands a freshly plugged screen: the bar never spawns a
+        // bar on it and the wallpaper never picks it a picture.
+        for name in [
+            "monitoradded",
+            "monitoraddedv2",
+            "monitorremoved",
+            "monitorremovedv2",
+            "monitorlayoutchanged",
+            "configreloaded",
+        ] {
+            assert!(is_monitor_event(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn window_noise_is_not_a_monitor_event() {
+        for name in ["windowtitle", "activewindow", "workspace", "focusedmon", ""] {
+            assert!(!is_monitor_event(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn whole_lines_yield_their_event_names() {
+        let mut pending = Vec::new();
+        let names = take_event_names(&mut pending, b"monitoradded>>DP-3\nworkspace>>2\n");
+        assert_eq!(names, vec!["monitoradded", "workspace"]);
+        assert_eq!(pending, Vec::<u8>::new());
+    }
+
+    #[test]
+    fn a_line_split_across_reads_is_not_lost() {
+        // The kernel hands over whatever is buffered, and a hotplug burst is
+        // exactly when a line gets cut in half.
+        let mut pending = Vec::new();
+        assert_eq!(
+            take_event_names(&mut pending, b"monitorad"),
+            Vec::<String>::new()
+        );
+        let names = take_event_names(&mut pending, b"dedv2>>1,DP-3,desc\n");
+        assert_eq!(names, vec!["monitoraddedv2"]);
+        assert!(EventBatch {
+            names,
+            closed: false
+        }
+        .has_monitor_event());
+    }
+
+    #[test]
+    fn a_line_without_a_payload_separator_is_dropped() {
+        let mut pending = Vec::new();
+        assert_eq!(
+            take_event_names(&mut pending, b"garbage\n"),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn a_quiet_socket_returns_without_blocking() {
+        // The whole event loop sits behind this call. A read that waited for
+        // data would park the process with a wallpaper half assigned.
+        let (ours, _theirs) = std::os::unix::net::UnixStream::pair().unwrap();
+        let socket = EventSocket::wrapping(ours).unwrap();
+        assert_eq!(socket.read_available(), EventBatch::default());
+    }
+
+    #[test]
+    fn events_are_drained_across_several_reads() {
+        use std::io::Write as _;
+
+        let (ours, mut theirs) = std::os::unix::net::UnixStream::pair().unwrap();
+        let socket = EventSocket::wrapping(ours).unwrap();
+
+        theirs
+            .write_all(b"monitoradded>>DP-3\nwindowtitle>>x")
+            .unwrap();
+        let first = socket.read_available();
+        assert_eq!(first.names, vec!["monitoradded"]);
+        assert!(first.has_monitor_event());
+        assert!(!first.closed);
+
+        theirs.write_all(b"\nmonitorremoved>>DP-3\n").unwrap();
+        let second = socket.read_available();
+        assert_eq!(second.names, vec!["windowtitle", "monitorremoved"]);
+        assert!(second.has_monitor_event());
+    }
+
+    #[test]
+    fn a_compositor_that_goes_away_is_reported_as_closed() {
+        // The caller drops the source and reconnects on this; missing it would
+        // spin the event loop on a dead descriptor.
+        let (ours, theirs) = std::os::unix::net::UnixStream::pair().unwrap();
+        let socket = EventSocket::wrapping(ours).unwrap();
+        drop(theirs);
+        assert!(socket.read_available().closed);
     }
 }
