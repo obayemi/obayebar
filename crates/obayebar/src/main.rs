@@ -839,9 +839,18 @@ impl App {
                 Task::none()
             }
             Message::AudioOpenPavucontrol => {
-                tokio::spawn(async {
-                    let _ = tokio::process::Command::new("pavucontrol").spawn();
-                });
+                // A mixer the user opened from the bar has no business dying
+                // when the bar restarts, so it goes out through the spawner
+                // like everything else the bar starts for the user.
+                if let Err(err) = obayebar_core::spawn::Program::new("pavucontrol")
+                    .tag("pavucontrol")
+                    .singleton()
+                    .spawn()
+                {
+                    // `AlreadyRunning` lands here too: a second click while
+                    // the mixer is up is a no-op, not a failure.
+                    log::info!("audio: pavucontrol not started ({err})");
+                }
                 Task::none()
             }
             Message::LayersObserved(observed) => self.reconcile_bars(observed.as_ref()),

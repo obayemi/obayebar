@@ -500,11 +500,11 @@ impl Launcher {
         let terminal = entry.terminal;
         let name = entry.name.clone();
 
-        let count = self.launch_counts.entry(id).or_insert(0);
+        let count = self.launch_counts.entry(id.clone()).or_insert(0);
         *count = count.saturating_add(1);
         desktop_entry::save_launch_counts(&self.launch_counts);
 
-        if let Err(err) = desktop_entry::launch(&exec, terminal) {
+        if let Err(err) = desktop_entry::launch(&id, &exec, terminal) {
             log::error!("launcher: failed to launch {name} ({err})");
         }
     }

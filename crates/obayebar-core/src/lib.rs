@@ -9,5 +9,6 @@
 pub mod config;
 pub mod control;
 pub mod hypr;
+pub mod spawn;
 pub mod wallpaper;
 pub mod xdg;

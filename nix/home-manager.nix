@@ -73,6 +73,22 @@ in {
         default = config.wayland.systemd.target;
         description = "The systemd target that will automatically start obayebar.";
       };
+
+      managedOom = mkOption {
+        type = types.bool;
+        default = false;
+        description = ''
+          Let systemd-oomd kill programs launched from the bar when the
+          session runs out of memory. They all live in the
+          app-obayebar.slice cgroup, so oomd can shed the whole slice
+          while leaving the session's own services alone.
+
+          Off by default: closing someone's browser without warning is
+          a surprise, and it does nothing at all unless systemd-oomd is
+          running. Turn it on to make that slice the first thing a
+          session under memory pressure gives up.
+        '';
+      };
     };
 
     gitlab = {
@@ -174,6 +190,26 @@ in {
 
     xdg.configFile."obayebar/config.toml" = lib.mkIf hasConfig {
       source = tomlFormat.generate "obayebar-config.toml" settings;
+    };
+
+    # Every program the bar starts for the user — an application from the
+    # launcher, a browser for a GitLab todo, the lock screen — is put in a
+    # transient unit under this slice rather than in the bar's own cgroup, so
+    # that restarting the bar does not close them. Declaring the slice is what
+    # gives that namespace a description and a memory policy; systemd would
+    # otherwise create it implicitly with neither.
+    systemd.user.slices.app-obayebar = lib.mkIf cfg.systemd.enable {
+      Unit = {
+        Description = "Programs launched by obayebar";
+      };
+
+      Slice = {
+        MemoryAccounting = true;
+      }
+      // lib.optionalAttrs cfg.systemd.managedOom {
+        ManagedOOMMemoryPressure = "kill";
+        ManagedOOMSwap = "kill";
+      };
     };
 
     systemd.user.services.obayebar = lib.mkIf cfg.systemd.enable {

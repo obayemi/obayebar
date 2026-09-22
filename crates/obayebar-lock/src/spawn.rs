@@ -1,23 +1,32 @@
 //! Starting hyprlock, and surviving a bar restart while it runs.
 //!
-//! The subtle part is the cgroup. `systemctl --user show obayebar.service`
-//! reports `KillMode=control-group`, so anything the bar spawns as a plain
-//! child lives in the bar's cgroup and is killed when that unit restarts. For a
-//! lock screen that is not an inconvenience — `systemctl --user restart
-//! obayebar` would **unlock the machine**. Wrapping hyprlock in its own
-//! transient scope puts it in a different cgroup, where a bar restart cannot
-//! reach it.
+//! The isolation itself belongs to [`obayebar_core::spawn`], which every
+//! obayebar-launched program goes through. What is specific here is *which*
+//! knobs the lock screen needs and why:
+//!
+//! - a **scope**, not a service, because the point of running hyprlock is to
+//!   find out when the screen was unlocked, and only a scope leaves the
+//!   program as this process's child to wait on;
+//! - a **singleton**, so a keybind pressed twice does not stack two lockers;
+//! - **protected**, so systemd-oomd sheds the rest of the session before it
+//!   sheds the thing standing between a stranger and the desktop.
+//!
+//! `--no-scope` opts out of all of it. It is a debugging flag, and the guards
+//! below are what stop it from quietly producing a lock screen that
+//! `systemctl --user restart` can kill.
 
 use std::path::Path;
 use std::process::Command;
+
+use obayebar_core::spawn::{self, Mode, Program};
 
 /// Env var naming the hyprlock binary, set by the Nix wrapper so the package
 /// does not depend on the ambient PATH.
 const HYPRLOCK_ENV: &str = "OBAYEBAR_HYPRLOCK";
 
-/// Scope unit name. Fixed rather than generated, so a second invocation fails
+/// Unit tag. Fixed rather than generated, so a second invocation is refused
 /// instead of stacking two lock screens.
-const SCOPE_UNIT: &str = "obayebar-lock";
+const TAG: &str = "lock";
 
 /// What happened to hyprlock.
 #[derive(Debug, PartialEq, Eq)]
@@ -58,61 +67,39 @@ fn inside_a_unit() -> bool {
     std::env::var_os("INVOCATION_ID").is_some()
 }
 
-/// Whether a lock scope is already running.
-fn scope_is_active() -> bool {
-    Command::new("systemctl")
-        .args([
-            "--user",
-            "is-active",
-            "--quiet",
-            &format!("{SCOPE_UNIT}.scope"),
-        ])
-        .status()
-        .is_ok_and(|s| s.success())
-}
-
-/// Clear a failed scope left by a previous run, which would otherwise make the
-/// next `systemd-run --unit=` fail with "unit is already loaded".
-fn reset_failed_scope() {
-    let _ = Command::new("systemctl")
-        .args(["--user", "reset-failed", &format!("{SCOPE_UNIT}.scope")])
-        .status();
+/// Why `--no-scope` cannot be honoured here, if it cannot.
+///
+/// Split out from [`lock`] so the rule is testable without a compositor: the
+/// whole point is that it fires *before* anything is started.
+fn refuse_unscoped(options: Options, inside_a_unit: bool) -> Option<String> {
+    if options.scope || !inside_a_unit {
+        return None;
+    }
+    Some(if options.detach {
+        "--detach --no-scope inside a systemd unit would leave the lock killable".to_string()
+    } else {
+        "--no-scope inside a systemd unit would let a unit restart kill the lock screen".to_string()
+    })
 }
 
 /// Run hyprlock against `config`.
 pub fn lock(config: &Path, options: Options) -> Outcome {
-    if options.scope && scope_is_active() {
-        return Outcome::AlreadyLocked;
-    }
-    if !options.scope && inside_a_unit() {
-        return Outcome::NotStarted(
-            "--no-scope inside a systemd unit would let a unit restart kill the lock screen"
-                .to_string(),
-        );
-    }
-    if options.detach && inside_a_unit() && !options.scope {
-        return Outcome::NotStarted(
-            "--detach without a scope inside a systemd unit would leave the lock killable"
-                .to_string(),
-        );
+    if let Some(why) = refuse_unscoped(options, inside_a_unit()) {
+        return Outcome::NotStarted(why);
     }
 
     let hyprlock = binary();
     let mut command = if options.scope {
-        reset_failed_scope();
-        let mut c = Command::new("systemd-run");
-        c.args([
-            "--user",
-            "--scope",
-            &format!("--unit={SCOPE_UNIT}"),
-            // Tear the scope down as soon as it exits, so the next lock does
-            // not trip over a lingering unit.
-            "--collect",
-            "--quiet",
-            "--",
-            &hyprlock,
-        ]);
-        c
+        let program = Program::new(&hyprlock)
+            .tag(TAG)
+            .mode(Mode::Scope)
+            .singleton()
+            .protected();
+        match program.command() {
+            Ok((command, _)) => command,
+            Err(spawn::Error::AlreadyRunning { .. }) => return Outcome::AlreadyLocked,
+            Err(e) => return Outcome::NotStarted(e.to_string()),
+        }
     } else {
         Command::new(&hyprlock)
     };
@@ -162,6 +149,14 @@ pub fn report(outcome: &Outcome) -> (i32, Option<String>) {
 mod tests {
     use super::*;
 
+    const fn options(scope: bool, detach: bool) -> Options {
+        Options {
+            scope,
+            detach,
+            grace: None,
+        }
+    }
+
     #[test]
     fn success_and_detach_exit_zero_and_say_nothing() {
         assert_eq!(report(&Outcome::Unlocked), (0, None));
@@ -209,5 +204,25 @@ mod tests {
             std::env::var(HYPRLOCK_ENV).unwrap_or_else(|_| "hyprlock".to_string()),
             binary()
         );
+    }
+
+    #[test]
+    fn unscoped_inside_a_unit_is_refused_either_way() {
+        // Both spellings produce a lock screen that `systemctl --user restart`
+        // would kill, which unlocks the machine.
+        assert!(refuse_unscoped(options(false, false), true).is_some());
+        assert!(refuse_unscoped(options(false, true), true).is_some());
+    }
+
+    #[test]
+    fn unscoped_outside_a_unit_is_allowed() {
+        assert_eq!(refuse_unscoped(options(false, false), false), None);
+        assert_eq!(refuse_unscoped(options(false, true), false), None);
+    }
+
+    #[test]
+    fn a_scoped_lock_is_never_refused_for_its_cgroup() {
+        assert_eq!(refuse_unscoped(options(true, false), true), None);
+        assert_eq!(refuse_unscoped(options(true, true), true), None);
     }
 }

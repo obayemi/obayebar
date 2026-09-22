@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 
 use freedesktop_desktop_entry as fde;
 
+use obayebar_core::spawn::{find_in_path, Program};
 use obayebar_core::xdg::{config_dir, data_dir};
 
 use super::icons::ICON_SIZE;
@@ -334,21 +335,6 @@ const TERMINAL_CANDIDATES: [&str; 8] = [
     "xterm",
 ];
 
-/// Resolve `name` against `$PATH`. Used to pick a terminal that actually
-/// exists rather than spawning a missing one and reporting success, and to
-/// honour `TryExec`.
-fn find_in_path(name: &str) -> Option<PathBuf> {
-    if name.contains('/') {
-        let path = PathBuf::from(name);
-        return path.is_file().then_some(path);
-    }
-    std::env::var_os("PATH").and_then(|paths| {
-        std::env::split_paths(&paths)
-            .map(|dir| dir.join(name))
-            .find(|candidate| candidate.is_file())
-    })
-}
-
 /// Build the argv that makes `terminal` run `command`.
 ///
 /// Most emulators take the xterm-compatible `-e`; a few want the command as
@@ -369,56 +355,64 @@ fn terminal_argv(terminal: &str, command: &str) -> Vec<String> {
     prefix.into_iter().chain(inner).collect()
 }
 
-/// Launch an application from its (already sanitized) Exec string.
+/// Why an entry did not start.
+#[derive(Debug, thiserror::Error)]
+pub enum LaunchError {
+    #[error("empty Exec")]
+    Empty,
+    #[error("no terminal emulator found; set $TERMINAL")]
+    NoTerminal,
+    #[error(transparent)]
+    Spawn(#[from] obayebar_core::spawn::Error),
+}
+
+/// The argv that starts `exec`, terminal wrapper included.
 ///
-/// The command runs through `sh -c` rather than being split on whitespace a
+/// The command goes through `sh -c` rather than being split on whitespace a
 /// second time: an Exec line is a quoted string with shell-like word rules, so
 /// `sh -c "exec /opt/app --flag"` wrappers, `env VAR=value app` prefixes and
 /// quoted arguments all need a shell to come out with the right argv.
 ///
-/// When `terminal` is set the command is wrapped in a terminal emulator —
-/// without one it inherits the null stdio below, finds no tty, and exits
-/// immediately while `spawn` still reports success.
+/// A `Terminal=true` entry is a TUI: without an emulator around it, it finds
+/// the null stdin the spawner gives it, decides there is no tty and exits
+/// immediately — while the launch still looks like it succeeded.
+fn launch_argv(exec: &str, terminal: bool) -> Result<Vec<String>, LaunchError> {
+    if exec.trim().is_empty() {
+        return Err(LaunchError::Empty);
+    }
+    if !terminal {
+        return Ok(vec!["sh".to_string(), "-c".to_string(), exec.to_string()]);
+    }
+    let emulator = std::env::var("TERMINAL")
+        .ok()
+        .and_then(|t| find_in_path(&t))
+        .or_else(|| TERMINAL_CANDIDATES.iter().find_map(|t| find_in_path(t)))
+        .ok_or(LaunchError::NoTerminal)?;
+    Ok(terminal_argv(&emulator.to_string_lossy(), exec))
+}
+
+/// Launch an application from its (already sanitized) Exec string.
+///
+/// `id` is the desktop ID, and names the transient unit the application ends
+/// up in: `systemctl --user status obayebar-org-mozilla-firefox-*` then says
+/// which launcher entry a stray process came from.
+///
+/// The application deliberately does **not** become a child of the bar. See
+/// [`obayebar_core::spawn`] — a plain child shares the bar's cgroup, and
+/// `systemctl --user restart obayebar` would close every window the launcher
+/// had ever opened.
 ///
 /// # Errors
 ///
 /// Returns an error if the command is empty, if `terminal` is set and no
-/// emulator can be found, or if the process cannot be spawned.
-pub fn launch(exec: &str, terminal: bool) -> Result<(), std::io::Error> {
-    if exec.trim().is_empty() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "empty Exec",
-        ));
-    }
-
-    let argv = if terminal {
-        let emulator = std::env::var("TERMINAL")
-            .ok()
-            .and_then(|t| find_in_path(&t))
-            .or_else(|| TERMINAL_CANDIDATES.iter().find_map(|t| find_in_path(t)))
-            .ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    "no terminal emulator found; set $TERMINAL",
-                )
-            })?;
-        terminal_argv(&emulator.to_string_lossy(), exec)
-    } else {
-        vec!["sh".to_string(), "-c".to_string(), exec.to_string()]
-    };
-
-    let (program, rest) = argv
-        .split_first()
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "empty argv"))?;
-
-    std::process::Command::new(program)
-        .args(rest)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+/// emulator can be found, or if the program cannot be started.
+pub fn launch(id: &str, exec: &str, terminal: bool) -> Result<(), LaunchError> {
+    let started = Program::from_argv(launch_argv(exec, terminal)?)
+        .tag(id)
         .spawn()?;
-
+    if let Some(unit) = started.unit {
+        log::debug!("launcher: {id} started as {unit}");
+    }
     Ok(())
 }
 
@@ -791,8 +785,18 @@ mod tests {
     }
 
     #[test]
-    fn launch_invalid_command() {
-        assert!(launch("", false).is_err());
-        assert!(launch("   ", false).is_err());
+    fn an_empty_exec_never_reaches_the_spawner() {
+        assert!(matches!(launch_argv("", false), Err(LaunchError::Empty)));
+        assert!(matches!(launch_argv("   ", false), Err(LaunchError::Empty)));
+    }
+
+    #[test]
+    fn a_non_terminal_entry_keeps_its_exec_line_whole() {
+        // One `sh -c` argument, not three words: the Exec line's own quoting
+        // is what decides the argv, and re-splitting here would undo it.
+        assert_eq!(
+            launch_argv(r#"env VAR=1 app --title "two words""#, false).unwrap(),
+            vec!["sh", "-c", r#"env VAR=1 app --title "two words""#]
+        );
     }
 }

@@ -281,8 +281,14 @@ enum FetchError {
 /// the bar's workspace stay active. Best-effort, fire-and-forget.
 pub fn open_in_browser(url: String) {
     tokio::spawn(async move {
-        if let Err(e) = tokio::process::Command::new("xdg-open").arg(&url).spawn() {
-            log::warn!("gitlab: xdg-open failed: {e}");
+        // Through the spawner, so the browser this opens survives a bar
+        // restart instead of going down with the bar's cgroup.
+        if let Err(e) = obayebar_core::spawn::Program::new("xdg-open")
+            .arg(&url)
+            .tag("browser")
+            .spawn()
+        {
+            log::warn!("gitlab: opening {url} failed: {e}");
             return;
         }
         // Resolve the browser's window class up front; this is independent
@@ -378,8 +384,12 @@ pub fn open_token_file() {
         if !path.exists() {
             let _ = tokio::fs::write(&path, b"").await;
         }
-        if let Err(e) = tokio::process::Command::new("xdg-open").arg(&path).spawn() {
-            log::warn!("gitlab: xdg-open token file failed: {e}");
+        if let Err(e) = obayebar_core::spawn::Program::new("xdg-open")
+            .arg(&path)
+            .tag("editor")
+            .spawn()
+        {
+            log::warn!("gitlab: opening the token file failed: {e}");
         }
     });
 }

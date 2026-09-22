@@ -205,6 +205,10 @@ the XDG directories. The `~` form works only in a hand-written
   the module writes no file.
 - The module adds the `obayebar` systemd user service. The service starts with
   `programs.obayebar.systemd.target`, and starts again after a failure.
+- The module adds the `app-obayebar.slice` slice. Each program that the bar
+  starts for you goes there, and not into the cgroup of the bar. Thus a
+  restart of the bar leaves them open. `systemd.managedOom` lets systemd-oomd
+  stop that slice when the session runs out of memory.
 - If `wallpaper.enable` is true, the module adds a second service,
   `obayebar-wallpaper`. The service is independent of the bar: a failure of
   the bar does not remove the wallpapers, and a restart of the bar does not
@@ -227,6 +231,7 @@ the XDG directories. The `~` form works only in a hand-written
 | `programs.obayebar.package`        | package | the package of this flake      | The package to install.                                      |
 | `systemd.enable`                   | bool    | `true`                         | Add the systemd user services.                               |
 | `systemd.target`                   | str     | `config.wayland.systemd.target`| The target that starts the services.                         |
+| `systemd.managedOom`               | bool    | `false`                        | Let systemd-oomd stop launched programs under memory pressure.|
 | `gitlab.enable`                    | bool    | `false`                        | Show the GitLab todos panel.                                 |
 | `gitlab.url`                       | str     | `null`                         | The GitLab instance. `null` gives `https://gitlab.com`.      |
 | `gitlab.tokenFile`                 | path    | `null`                         | A file that contains the personal access token.              |
@@ -556,6 +561,36 @@ decisions come from that goal:
   starts each `Exec` line through `sh -c`. Thus a quoted argument, an
   `env VAR=value` prefix, and an `sh -c "…"` entry all receive the argv of the
   desktop-entry specification.
+- **A program that the bar starts outlives the bar.** `systemctl --user show
+  obayebar.service` gives `KillMode=control-group`. Thus a plain child of the
+  bar shares the cgroup of the bar and dies with it: `systemctl --user restart
+  obayebar` would close each window that the launcher opened, and would
+  *unlock* the machine. Each program that the bar starts for you — an
+  application from the launcher, a browser for a GitLab todo, the mixer, the
+  lock screen — therefore goes through one spawner, and lands in its own
+  transient systemd unit under `app-obayebar.slice`. A restart of the bar does
+  not reach that cgroup. A transient service does not inherit the environment
+  of the bar, so the spawner passes `WAYLAND_DISPLAY`,
+  `HYPRLAND_INSTANCE_SIGNATURE`, `PATH` and the other session variables with
+  `--setenv`.
+- **The slice is one handle on all of them.** `systemctl --user list-units
+  'obayebar-*'` names each launched program, and the name carries the desktop
+  ID, thus `obayebar-org-mozilla-firefox-1234-0.service`. `systemctl --user
+  kill app-obayebar.slice` stops the lot. systemd-oomd reads a slice as a
+  whole, so `programs.obayebar.systemd.managedOom` makes that slice the first
+  thing a session out of memory gives up. The lock screen carries
+  `ManagedOOMPreference=avoid`, because a session that shrinks must not unlock
+  itself.
+- **The lock screen takes a scope, and each other program takes a service.** A
+  service belongs to the user manager, which is what the launcher wants: the
+  bar hands the program over and forgets it. `obayebar-lock` has to report
+  *when* the screen was unlocked, and only a scope leaves the program as a
+  child to wait for. The scope also takes a fixed unit name, so a key binding
+  pressed twice gives one lock screen and exit code 3, and not two.
+- **A machine with no systemd still detaches.** There is no cgroup to leave,
+  but there is still a process group and a controlling terminal. The spawner
+  uses `setsid -f`, and `sh -c '"$0" "$@" &'` where that is missing. Both give
+  the program to init and return at once, so the bar keeps no zombie.
 - **One surface receives the keyboard.** The launcher takes an exclusive
   keyboard grab, and every other surface takes none. The bar reads `Esc`, the
   arrows and `Enter` from the raw event stream, because the search field has
@@ -652,7 +687,7 @@ install nightly Rust (with the `rustc-codegen-cranelift-preview` component),
 ## Crate layout
 
 ```
-crates/obayebar-core        no iced — monitor detection, hyprland events, wallpaper selection, config, control sockets
+crates/obayebar-core        no iced — monitor detection, hyprland events, wallpaper selection, config, control sockets, the process spawner
 crates/obayebar             the bar, and the launcher that the bar draws (iced + wgpu)
 crates/obayebar-launcher    one line to the socket of the bar, for a key binding
 crates/obayebar-wallpaper   wlr-layer-shell + wl_shm renderer
