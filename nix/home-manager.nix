@@ -48,6 +48,32 @@ let
 
   hasConfig = settings != { };
 
+  lockCmd = "${cfg.package}/bin/obayebar-lock";
+
+  # The session's own hyprctl, not one pinned into this closure: a hyprctl
+  # built from a different Hyprland speaks a different IPC version to the
+  # running compositor. Falls back to the PATH when Hyprland is configured
+  # outside home-manager.
+  hyprland = config.wayland.windowManager.hyprland or { };
+  hyprctl =
+    if hyprland.enable or false then
+      "${hyprland.finalPackage or hyprland.package}/bin/hyprctl"
+    else
+      "hyprctl";
+
+  # Two independent listeners rather than one that locks and blanks: they
+  # fire at different times, and either one alone is a valid setup.
+  idleListeners =
+    lib.optional (cfg.lock.enable && cfg.idle.lockTimeout != null) {
+      timeout = cfg.idle.lockTimeout;
+      on-timeout = lockCmd;
+    }
+    ++ lib.optional (cfg.idle.screenOffTimeout != null) {
+      timeout = cfg.idle.screenOffTimeout;
+      on-timeout = "${hyprctl} dispatch dpms off";
+      on-resume = "${hyprctl} dispatch dpms on";
+    };
+
   execStart =
     if cfg.gitlab.tokenFile == null then
       "${cfg.package}/bin/obayebar"
@@ -201,15 +227,30 @@ in {
         example = 5;
         description = "Blur size on the generated backgrounds (default 3).";
       };
+    };
 
-      idle = {
-        enable = mkEnableOption "hypridle, locking the session after a timeout";
+    idle = {
+      enable = mkEnableOption "hypridle, acting on inactivity";
 
-        timeout = mkOption {
-          type = types.int;
-          default = 300;
-          description = "Seconds of inactivity before the screen locks.";
-        };
+      lockTimeout = mkOption {
+        type = types.nullOr types.int;
+        default = 300;
+        description = ''
+          Seconds of inactivity before the session locks. Needs
+          lock.enable, which is what supplies the locker. Null never locks
+          on a timeout — the session still locks before sleep.
+        '';
+      };
+
+      screenOffTimeout = mkOption {
+        type = types.nullOr types.int;
+        default = 600;
+        description = ''
+          Seconds of inactivity before the monitors turn off. Null leaves
+          them on. Independent of lock.enable: a screen that blanks
+          without locking is a legitimate configuration, and a screen that
+          locks then blanks is the default one.
+        '';
       };
     };
   };
@@ -291,23 +332,20 @@ in {
       };
 
     # hypridle is what actually notices you have stopped typing; obayebar-lock
-    # is only the thing it runs. Wiring both here keeps the timeout and the
-    # locker from drifting apart in two different config files.
-    services.hypridle = lib.mkIf (cfg.lock.enable && cfg.lock.idle.enable) {
+    # is only one of the things it runs. Wiring them here keeps the timeouts
+    # and the locker from drifting apart in two different config files.
+    services.hypridle = lib.mkIf cfg.idle.enable {
       enable = true;
       settings = {
-        general = {
-          lock_cmd = "${cfg.package}/bin/obayebar-lock";
+        # No locker configured, no lock commands: hypridle would otherwise
+        # run a binary the rest of the module never set up.
+        general = lib.optionalAttrs cfg.lock.enable {
+          lock_cmd = lockCmd;
           # Lock before the machine suspends, so the screen is never briefly
           # unlocked on resume.
-          before_sleep_cmd = "${cfg.package}/bin/obayebar-lock --detach";
+          before_sleep_cmd = "${lockCmd} --detach";
         };
-        listener = [
-          {
-            inherit (cfg.lock.idle) timeout;
-            on-timeout = "${cfg.package}/bin/obayebar-lock";
-          }
-        ];
+        listener = idleListeners;
       };
     };
   };

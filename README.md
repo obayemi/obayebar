@@ -190,10 +190,12 @@ programs, writes the configuration file, and starts the systemd user units.
       config = "${config.xdg.configHome}/hypr/hyprlock.conf";
       blurPasses = 2;
       blurSize = 5;
-      idle = {
-        enable = true;
-        timeout = 300;
-      };
+    };
+
+    idle = {
+      enable = true;
+      lockTimeout = 300;
+      screenOffTimeout = 600;
     };
   };
 }
@@ -228,9 +230,13 @@ the XDG directories. The `~` form works only in a hand-written
 - `systemctl --user reload obayebar-wallpaper` runs `obayebar-wallpaper
   --reload`. The daemon then reads the directory again, and does not change
   the picture on the screen.
-- If `lock.enable` and `lock.idle.enable` are true, the module configures
-  hypridle. hypridle then runs `obayebar-lock` after the timeout, and runs
-  `obayebar-lock --detach` before the machine goes to sleep.
+- If `idle.enable` is true, the module configures hypridle. hypridle then
+  turns the monitors off after `idle.screenOffTimeout`, and turns them back
+  on at the first key or move. If `lock.enable` is true too, hypridle also
+  runs `obayebar-lock` after `idle.lockTimeout`, and `obayebar-lock --detach`
+  before the machine goes to sleep. Either timeout takes `null` to drop that
+  behaviour: `screenOffTimeout = null` never blanks, `lockTimeout = null`
+  never locks on a timeout, and the lock before sleep stays either way.
 - The module reads `gitlab.tokenFile` at start, and puts the contents in
   `OBAYEBAR_GITLAB_TOKEN`. The module reads the path at run time. Thus the
   token does not go into the Nix store.
@@ -255,8 +261,9 @@ the XDG directories. The `~` form works only in a hand-written
 | `lock.config`                      | path    | `null`                         | Your hyprlock config. `null` gives `~/.config/hypr/hyprlock.conf`. |
 | `lock.blurPasses`                  | int     | `null`                         | `null` gives 1.                                              |
 | `lock.blurSize`                    | int     | `null`                         | `null` gives 3.                                              |
-| `lock.idle.enable`                 | bool    | `false`                        | Configure hypridle to lock the session.                      |
-| `lock.idle.timeout`                | int     | `300`                          | Seconds of inactivity before the lock.                       |
+| `idle.enable`                      | bool    | `false`                        | Configure hypridle to act on inactivity.                     |
+| `idle.lockTimeout`                 | int     | `300`                          | Seconds before the lock. `null` never locks on a timeout.    |
+| `idle.screenOffTimeout`            | int     | `600`                          | Seconds before the monitors turn off. `null` leaves them on. |
 
 An overlay is also available. The overlay adds `obayebar` to `pkgs`.
 
