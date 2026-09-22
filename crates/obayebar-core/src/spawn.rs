@@ -5,7 +5,8 @@
 //! `systemctl --user restart obayebar` would close every window the launcher
 //! had opened, and — for the lock screen — would *unlock the machine*. Every
 //! program started for the user therefore goes into its own transient systemd
-//! unit under [`SLICE`], a cgroup a bar restart cannot reach.
+//! unit under a slice of its own — [`DEFAULT_SLICE`], or whatever `[spawn]
+//! slice` names — which is a cgroup a bar restart cannot reach.
 //!
 //! The slice is the other half of the bargain. It is one handle on everything
 //! the bar ever launched: `systemctl --user kill app-obayebar.slice` stops the
@@ -24,14 +25,75 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::OnceLock;
 
-/// The slice every program obayebar launches is placed in.
+/// The slice every program obayebar launches is placed in, unless
+/// [`use_slice`] says otherwise.
 ///
 /// `app-` is the prefix systemd reserves for user applications, which is what
 /// the stock `~/.config/systemd/user/app-.slice.d` drop-ins and oomd policies
 /// key off; putting the bar's children anywhere else would take them out of
 /// scope of a configuration the user already has.
-pub const SLICE: &str = "app-obayebar.slice";
+pub const DEFAULT_SLICE: &str = "app-obayebar.slice";
+
+/// The slice named by `[spawn] slice` in the config file, once a binary has
+/// installed it.
+static CONFIGURED_SLICE: OnceLock<String> = OnceLock::new();
+
+/// Apply the `[spawn]` section of the config file.
+///
+/// Call once at startup, after the logger and before anything is launched: a
+/// [`Program`] takes its slice when it is built. A section that names no slice
+/// leaves [`DEFAULT_SLICE`] in place.
+pub fn install(config: &crate::config::SpawnConfig) {
+    if let Some(slice) = config.slice.as_deref() {
+        use_slice(slice);
+    }
+}
+
+/// Put every program started from here in `slice` rather than in
+/// [`DEFAULT_SLICE`].
+///
+/// A name systemd would reject is ignored with a warning rather than being
+/// passed on. `systemd-run` would refuse the whole request, and one mistyped
+/// line in a config file should not leave the launcher unable to launch
+/// anything at all.
+fn use_slice(slice: &str) {
+    if !valid_slice_name(slice) {
+        log::warn!("spawn: {slice:?} is not a usable slice name, keeping {DEFAULT_SLICE}");
+        return;
+    }
+    if let Err(existing) = CONFIGURED_SLICE.set(slice.to_string()) {
+        if existing != slice {
+            log::warn!("spawn: the slice is already {existing:?}, ignoring {slice:?}");
+        }
+    }
+}
+
+/// The slice a new [`Program`] goes in.
+fn configured_slice() -> &'static str {
+    CONFIGURED_SLICE.get().map_or(DEFAULT_SLICE, String::as_str)
+}
+
+/// Whether systemd would accept `name` as a slice unit.
+///
+/// A slice's name *is* its position in the tree: `app-obayebar.slice` is a
+/// child of `app.slice`, so a dash is a separator and cannot be doubled or sit
+/// at either end. The rest is the unit-name alphabet.
+fn valid_slice_name(name: &str) -> bool {
+    let Some(stem) = name.strip_suffix(".slice") else {
+        return false;
+    };
+    // 255 is systemd's limit on a whole unit name, including the suffix.
+    if stem.is_empty() || name.len() > 255 {
+        return false;
+    }
+    if stem.starts_with('-') || stem.ends_with('-') || stem.contains("--") {
+        return false;
+    }
+    stem.chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':' | '\\'))
+}
 
 /// Prefix of every transient unit name, so `systemctl --user list-units
 /// 'obayebar-*'` shows exactly what the bar started.
@@ -134,6 +196,9 @@ pub struct Program {
     argv: Vec<OsString>,
     tag: String,
     mode: Mode,
+    /// Taken from [`configured_slice`] when the program is built, so a late
+    /// [`use_slice`] cannot move a program that is already on its way out.
+    slice: String,
     /// Fixed unit name, so a second start fails while the first still runs.
     singleton: bool,
     /// `ManagedOOMPreference=avoid`: oomd kills the rest of the slice first.
@@ -144,13 +209,7 @@ impl Program {
     /// Start building a program. `program` is argv[0].
     #[must_use]
     pub fn new(program: impl Into<OsString>) -> Self {
-        Self {
-            argv: vec![program.into()],
-            tag: "app".to_string(),
-            mode: Mode::default(),
-            singleton: false,
-            protected: false,
-        }
+        Self::from_argv([program.into()])
     }
 
     /// Build from a whole argv. The first element is the program.
@@ -164,9 +223,18 @@ impl Program {
             argv: argv.into_iter().map(Into::into).collect(),
             tag: "app".to_string(),
             mode: Mode::default(),
+            slice: configured_slice().to_string(),
             singleton: false,
             protected: false,
         }
+    }
+
+    /// Put this one program in `slice` rather than in whatever the config
+    /// chose. For a caller that has a reason to separate it from the rest.
+    #[must_use]
+    pub fn slice(mut self, slice: impl Into<String>) -> Self {
+        self.slice = slice.into();
+        self
     }
 
     #[must_use]
@@ -388,7 +456,7 @@ impl Program {
                 // Tear the unit down as soon as it is done, so a failed run
                 // does not block the next one with the same name.
                 argv.push("--collect".into());
-                argv.push(format!("--slice={SLICE}").into());
+                argv.push(format!("--slice={}", self.slice).into());
                 argv.push(format!("--description=obayebar: {}", self.tag).into());
                 // oomd only scores what it can measure.
                 argv.push("--property=MemoryAccounting=yes".into());
@@ -566,7 +634,7 @@ mod tests {
         );
         assert!(argv.contains(&"--user".to_string()));
         assert!(
-            argv.contains(&format!("--slice={SLICE}")),
+            argv.contains(&format!("--slice={DEFAULT_SLICE}")),
             "the slice is what makes one kill command reach every launched program"
         );
         assert!(
@@ -688,6 +756,57 @@ mod tests {
         assert_eq!(sanitize_tag("///"), "app");
         assert_eq!(sanitize_tag(""), "app");
         assert!(sanitize_tag(&"x".repeat(200)).len() <= 48);
+    }
+
+    #[test]
+    fn a_configured_slice_replaces_the_default_in_the_argv() {
+        let argv = strings(
+            &Program::new("firefox")
+                .slice("app-desktop.slice")
+                .wrapped_argv(&systemd(), None, &[]),
+        );
+        assert!(argv.contains(&"--slice=app-desktop.slice".to_string()));
+        assert!(!argv.contains(&format!("--slice={DEFAULT_SLICE}")));
+    }
+
+    #[test]
+    fn a_slice_name_systemd_would_take() {
+        assert!(valid_slice_name("app-obayebar.slice"));
+        assert!(valid_slice_name("app.slice"));
+        assert!(valid_slice_name("app-obayebar-launched.slice"));
+        assert!(valid_slice_name("my_slice.slice"));
+    }
+
+    #[test]
+    fn a_slice_name_systemd_would_refuse() {
+        // Without the suffix systemd does not know it is a slice at all, and
+        // the other shapes all break the dash-is-a-separator rule that makes
+        // the name the position in the tree.
+        assert!(!valid_slice_name("app-obayebar"));
+        assert!(!valid_slice_name("app-obayebar.service"));
+        assert!(!valid_slice_name(".slice"));
+        assert!(!valid_slice_name("-leading.slice"));
+        assert!(!valid_slice_name("trailing-.slice"));
+        assert!(!valid_slice_name("double--dash.slice"));
+        assert!(!valid_slice_name("with space.slice"));
+        assert!(!valid_slice_name(""));
+        assert!(!valid_slice_name(&format!("{}.slice", "x".repeat(255))));
+    }
+
+    #[test]
+    fn a_rejected_name_leaves_the_default_in_place() {
+        // A mistyped line in a config file would otherwise make systemd-run
+        // refuse every request, and the launcher would launch nothing at all.
+        install(&crate::config::SpawnConfig {
+            slice: Some("not a slice".to_string()),
+        });
+        assert_eq!(configured_slice(), DEFAULT_SLICE);
+    }
+
+    #[test]
+    fn a_config_that_names_no_slice_changes_nothing() {
+        install(&crate::config::SpawnConfig::default());
+        assert_eq!(configured_slice(), DEFAULT_SLICE);
     }
 
     #[test]

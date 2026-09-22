@@ -27,13 +27,24 @@ let
     // lib.optionalAttrs (cfg.lock.blurPasses != null) { blur_passes = cfg.lock.blurPasses; }
     // lib.optionalAttrs (cfg.lock.blurSize != null) { blur_size = cfg.lock.blurSize; };
 
+  # The name of the slice unit, without the suffix, as
+  # `systemd.user.slices.<name>` wants it.
+  sliceUnit = lib.removeSuffix ".slice" cfg.systemd.slice;
+
+  # Written only when it differs from the default the binaries already use,
+  # so the common case leaves config.toml alone.
+  spawnAttrs = lib.optionalAttrs (cfg.systemd.slice != "app-obayebar.slice") {
+    inherit (cfg.systemd) slice;
+  };
+
   # The union of every section, not just GitLab's. Gating on one feature's
   # attrs meant a wallpaper-only configuration produced no config.toml at all,
   # with no warning — the file simply was not written.
   settings =
     lib.optionalAttrs (gitlabAttrs != { }) { gitlab = gitlabAttrs; }
     // lib.optionalAttrs (wallpaperAttrs != { }) { wallpaper = wallpaperAttrs; }
-    // lib.optionalAttrs (lockAttrs != { }) { lock = lockAttrs; };
+    // lib.optionalAttrs (lockAttrs != { }) { lock = lockAttrs; }
+    // lib.optionalAttrs (spawnAttrs != { }) { spawn = spawnAttrs; };
 
   hasConfig = settings != { };
 
@@ -72,6 +83,24 @@ in {
         type = types.str;
         default = config.wayland.systemd.target;
         description = "The systemd target that will automatically start obayebar.";
+      };
+
+      slice = mkOption {
+        type = types.strMatching "[A-Za-z0-9_.:]+(-[A-Za-z0-9_.:]+)*\\.slice";
+        default = "app-obayebar.slice";
+        example = "app-obayebar-launched.slice";
+        description = ''
+          The systemd slice that every program launched from the bar is
+          put in. The module declares that slice, and writes the name to
+          `[spawn] slice` in config.toml, so the bar and the lock screen
+          agree on it.
+
+          A dash separates the levels of the tree, thus
+          app-obayebar.slice sits under app.slice, and `app-` is the
+          prefix that systemd reserves for the applications of a user.
+          Name a slice of obayebar's own here, and not one that another
+          unit already defines: the module writes the unit file.
+        '';
       };
 
       managedOom = mkOption {
@@ -198,7 +227,7 @@ in {
     # that restarting the bar does not close them. Declaring the slice is what
     # gives that namespace a description and a memory policy; systemd would
     # otherwise create it implicitly with neither.
-    systemd.user.slices.app-obayebar = lib.mkIf cfg.systemd.enable {
+    systemd.user.slices.${sliceUnit} = lib.mkIf cfg.systemd.enable {
       Unit = {
         Description = "Programs launched by obayebar";
       };

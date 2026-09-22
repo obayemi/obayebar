@@ -187,7 +187,8 @@ fn main() {
         gitlab_enable: args.gitlab_enable,
         gitlab_url: args.gitlab_url,
     };
-    config::install(&config::Config::load(), &cli);
+    let file = config::Config::load();
+    config::install(&file, &cli);
 
     // Default to info so the command and service logs are actually visible;
     // RUST_LOG still overrides, both up to debug and back down to error.
@@ -197,6 +198,11 @@ fn main() {
     log::set_boxed_logger(Box::new(FatalErrorLogger { inner: logger }))
         .map(|()| log::set_max_level(max_level))
         .ok();
+
+    // After the logger, because a slice name the config got wrong is reported
+    // rather than obeyed, and before the first launch, because a program takes
+    // its slice when it is built.
+    obayebar_core::spawn::install(&file.spawn);
 
     // The clipboard worker stays on now that the launcher lives here: its
     // search field is keyboard-interactive, so Ctrl+V in it is a real

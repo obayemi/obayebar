@@ -34,6 +34,18 @@ pub struct Config {
     pub gitlab: GitlabConfig,
     pub wallpaper: WallpaperConfig,
     pub lock: LockConfig,
+    pub spawn: SpawnConfig,
+}
+
+/// How programs started on the user's behalf are isolated.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SpawnConfig {
+    /// systemd slice every launched program is put in, e.g.
+    /// `"app-obayebar.slice"`. `None` keeps
+    /// [`crate::spawn::DEFAULT_SLICE`]. Whether the name is one systemd would
+    /// accept is [`crate::spawn::use_slice`]'s business, not this module's.
+    pub slice: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

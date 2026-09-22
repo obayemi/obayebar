@@ -131,7 +131,17 @@ enable = true                               # for the home-manager module only
 config = "~/.config/hypr/hyprlock.conf"     # default; your own file
 blur_passes = 1                             # default
 blur_size = 3                               # default
+
+[spawn]
+slice = "app-obayebar.slice"                # default; holds each launched program
 ```
+
+A name in `[spawn] slice` that systemd would refuse — one with no `.slice`
+suffix, a doubled dash, or a space — gives a warning, and the default stays.
+Thus one wrong line does not leave the launcher unable to start anything. If
+you write the slice yourself, and not through the home-manager module, define
+the unit too: systemd makes an undefined slice with no description and no
+limits.
 
 The precedence for each field is: command-line flag, then environment
 variable, then configuration file, then the default value.
@@ -205,10 +215,12 @@ the XDG directories. The `~` form works only in a hand-written
   the module writes no file.
 - The module adds the `obayebar` systemd user service. The service starts with
   `programs.obayebar.systemd.target`, and starts again after a failure.
-- The module adds the `app-obayebar.slice` slice. Each program that the bar
-  starts for you goes there, and not into the cgroup of the bar. Thus a
-  restart of the bar leaves them open. `systemd.managedOom` lets systemd-oomd
-  stop that slice when the session runs out of memory.
+- The module adds the slice of `systemd.slice`, `app-obayebar.slice` by
+  default. Each program that the bar starts for you goes there, and not into
+  the cgroup of the bar. Thus a restart of the bar leaves them open. The
+  module also writes the name to `[spawn] slice`, so the bar and the lock
+  screen agree on it. `systemd.managedOom` lets systemd-oomd stop that slice
+  when the session runs out of memory.
 - If `wallpaper.enable` is true, the module adds a second service,
   `obayebar-wallpaper`. The service is independent of the bar: a failure of
   the bar does not remove the wallpapers, and a restart of the bar does not
@@ -231,6 +243,7 @@ the XDG directories. The `~` form works only in a hand-written
 | `programs.obayebar.package`        | package | the package of this flake      | The package to install.                                      |
 | `systemd.enable`                   | bool    | `true`                         | Add the systemd user services.                               |
 | `systemd.target`                   | str     | `config.wayland.systemd.target`| The target that starts the services.                         |
+| `systemd.slice`                    | str     | `"app-obayebar.slice"`         | The slice that holds each program the bar starts.            |
 | `systemd.managedOom`               | bool    | `false`                        | Let systemd-oomd stop launched programs under memory pressure.|
 | `gitlab.enable`                    | bool    | `false`                        | Show the GitLab todos panel.                                 |
 | `gitlab.url`                       | str     | `null`                         | The GitLab instance. `null` gives `https://gitlab.com`.      |
@@ -580,7 +593,10 @@ decisions come from that goal:
   whole, so `programs.obayebar.systemd.managedOom` makes that slice the first
   thing a session out of memory gives up. The lock screen carries
   `ManagedOOMPreference=avoid`, because a session that shrinks must not unlock
-  itself.
+  itself. `[spawn] slice` names another slice, and the home-manager module
+  writes that key and defines the unit together. A program takes its slice at
+  the moment the bar builds it, thus the configuration is read one time at
+  the start, and not once for each launch.
 - **The lock screen takes a scope, and each other program takes a service.** A
   service belongs to the user manager, which is what the launcher wants: the
   bar hands the program over and forgets it. `obayebar-lock` has to report

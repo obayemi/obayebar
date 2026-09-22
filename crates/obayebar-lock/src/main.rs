@@ -79,6 +79,7 @@ fn write_config(path: &Path, contents: &str) -> Result<(), String> {
 
 fn run(args: &cli::Args) -> i32 {
     let config = Config::load();
+    obayebar_core::spawn::install(&config.spawn);
 
     let base_path = args
         .config
