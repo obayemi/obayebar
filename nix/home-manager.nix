@@ -61,6 +61,10 @@ let
     else
       "hyprctl";
 
+  # Hyprland 0.56 reads dispatch arguments as Lua, where the pre-0.56
+  # `dispatch dpms off` is a syntax error and the screens simply stay lit.
+  dpms = state: "${hyprctl} dispatch 'hl.dsp.dpms(\"${state}\")'";
+
   # Two independent listeners rather than one that locks and blanks: they
   # fire at different times, and either one alone is a valid setup.
   idleListeners =
@@ -70,8 +74,8 @@ let
     }
     ++ lib.optional (cfg.idle.screenOffTimeout != null) {
       timeout = cfg.idle.screenOffTimeout;
-      on-timeout = "${hyprctl} dispatch dpms off";
-      on-resume = "${hyprctl} dispatch dpms on";
+      on-timeout = dpms "off";
+      on-resume = dpms "on";
     };
 
   execStart =
