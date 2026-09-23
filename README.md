@@ -32,9 +32,12 @@ shared crate that contains no GUI stack. Refer to
 
 ## Quickstart
 
-Hyprland 0.56 or newer is required. 0.56 moved the dispatchers to Lua, and the
-bar sends that form (`hl.dsp.focus`), so on an older compositor a click on a
-workspace is refused and the bar logs the refusal.
+Hyprland 0.56 or newer is required. 0.56 moved the dispatchers to Lua, and
+both the bar and the Nix module's idle wiring send that form
+(`hl.dsp.focus`, `hl.dsp.dpms`). On an older compositor the bar logs the
+refusal, but hypridle runs its command through a shell and discards
+hyprctl's reply, so the idle path fails silently: the screens just never
+blank, with nothing logged.
 
 ### 1. Install the programs
 
@@ -233,12 +236,15 @@ the XDG directories. The `~` form works only in a hand-written
 - If `idle.enable` is true, the module configures hypridle. hypridle then
   turns the monitors off after `idle.screenOffTimeout`, and turns them back
   on at the first key or move. If `lock.enable` is true too, hypridle also
-  runs `obayebar-lock --replace` after `idle.lockTimeout`, and `obayebar-lock
-  --detach` before the machine goes to sleep. `--replace` there so that a
-  hyprlock left hanging by an earlier unlock is taken over rather than
-  treated as a lock screen that is already up. Either timeout takes `null` to
-  drop that behaviour: `screenOffTimeout = null` never blanks, `lockTimeout =
-  null` never locks on a timeout, and the lock before sleep stays either way.
+  runs `obayebar-lock --replace` after `idle.lockTimeout`, and
+  `obayebar-lock --replace --detach` before the machine goes to sleep. Both
+  use `--replace`, so a hyprlock left hanging by an earlier unlock does not
+  block the next one. The same flag restarts the lock screen when the
+  session is already locked legitimately, losing the grace period and
+  anything already typed into the password field. Either timeout takes
+  `null` to drop that behaviour: `screenOffTimeout = null` never blanks,
+  `lockTimeout = null` never locks on a timeout, and the lock before sleep
+  stays either way.
 - The module reads `gitlab.tokenFile` at start, and puts the contents in
   `OBAYEBAR_GITLAB_TOKEN`. The module reads the path at run time. Thus the
   token does not go into the Nix store.

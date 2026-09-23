@@ -50,6 +50,12 @@ let
 
   lockCmd = "${cfg.package}/bin/obayebar-lock";
 
+  # --replace: a hyprlock that hung after an unlock keeps its scope up, and
+  # a plain refusal would leave the session unlocked for as long as it does.
+  # Only the paths hypridle drives itself use it; the user's own keybind
+  # keeps refusing.
+  replacingLockCmd = "${lockCmd} --replace";
+
   # The session's own hyprctl, not one pinned into this closure: a hyprctl
   # built from a different Hyprland speaks a different IPC version to the
   # running compositor. Falls back to the PATH when Hyprland is configured
@@ -70,9 +76,7 @@ let
   idleListeners =
     lib.optional (cfg.lock.enable && cfg.idle.lockTimeout != null) {
       timeout = cfg.idle.lockTimeout;
-      # --replace: a hyprlock that hung after an unlock keeps its scope up, and
-      # a plain refusal would leave the session unlocked for as long as it does.
-      on-timeout = "${lockCmd} --replace";
+      on-timeout = replacingLockCmd;
     }
     ++ lib.optional (cfg.idle.screenOffTimeout != null) {
       timeout = cfg.idle.screenOffTimeout;
@@ -346,10 +350,10 @@ in {
         # No locker configured, no lock commands: hypridle would otherwise
         # run a binary the rest of the module never set up.
         general = lib.optionalAttrs cfg.lock.enable {
-          lock_cmd = lockCmd;
+          lock_cmd = replacingLockCmd;
           # Lock before the machine suspends, so the screen is never briefly
           # unlocked on resume.
-          before_sleep_cmd = "${lockCmd} --detach";
+          before_sleep_cmd = "${replacingLockCmd} --detach";
         };
         listener = idleListeners;
       };
