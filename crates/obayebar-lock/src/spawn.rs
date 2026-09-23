@@ -18,7 +18,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use obayebar_core::spawn::{self, Mode, Program};
+use obayebar_core::spawn::{self, Mode, OnCollision, Program};
 
 /// Env var naming the hyprlock binary, set by the Nix wrapper so the package
 /// does not depend on the ambient PATH.
@@ -50,11 +50,8 @@ pub struct Options {
     pub scope: bool,
     /// Return as soon as it starts rather than waiting for the unlock.
     pub detach: bool,
-    /// Stop a lock screen that is already up instead of refusing to start.
-    ///
-    /// What the idle daemon asks for: a hyprlock still running is not proof
-    /// that the screen is locked, and a hung one must not keep the session
-    /// unlocked for as long as it lives.
+    /// Take over from a lock screen that is already up, rather than refusing
+    /// to start. See [`OnCollision::Replace`] for why that is ever wanted.
     pub replace: bool,
     pub grace: Option<u32>,
 }
@@ -78,7 +75,14 @@ fn inside_a_unit() -> bool {
 /// Split out from [`lock`] so the rule is testable without a compositor: the
 /// whole point is that it fires *before* anything is started.
 fn refuse_unscoped(options: Options, inside_a_unit: bool) -> Option<String> {
-    if options.scope || !inside_a_unit {
+    if options.scope {
+        return None;
+    }
+    if options.replace {
+        // The singleton unit is the only thing a takeover can take over.
+        return Some("--replace has no lock screen to replace without a scope".to_string());
+    }
+    if !inside_a_unit {
         return None;
     }
     Some(if options.detach {
@@ -88,6 +92,22 @@ fn refuse_unscoped(options: Options, inside_a_unit: bool) -> Option<String> {
     })
 }
 
+/// The isolated hyprlock to run, and what it does about one already running.
+///
+/// Split out of [`lock`] so that what the flag asks for is visible without a
+/// systemd user manager to ask.
+fn program(hyprlock: &str, replace: bool) -> Program {
+    Program::new(hyprlock)
+        .tag(TAG)
+        .mode(Mode::Scope)
+        .singleton(if replace {
+            OnCollision::Replace
+        } else {
+            OnCollision::Refuse
+        })
+        .protected()
+}
+
 /// Run hyprlock against `config`.
 pub fn lock(config: &Path, options: Options) -> Outcome {
     if let Some(why) = refuse_unscoped(options, inside_a_unit()) {
@@ -95,24 +115,38 @@ pub fn lock(config: &Path, options: Options) -> Outcome {
     }
 
     let hyprlock = binary();
-    let mut command = if options.scope {
-        let mut program = Program::new(&hyprlock)
-            .tag(TAG)
-            .mode(Mode::Scope)
-            .singleton()
-            .protected();
-        if options.replace {
-            program = program.replace();
-        }
-        match program.command() {
-            Ok((command, _)) => command,
-            Err(spawn::Error::AlreadyRunning { .. }) => return Outcome::AlreadyLocked,
-            Err(e) => return Outcome::NotStarted(e.to_string()),
-        }
-    } else {
-        Command::new(&hyprlock)
+    if !options.scope {
+        return run(Command::new(&hyprlock), &hyprlock, config, options);
+    }
+
+    let command = match program(&hyprlock, options.replace).command() {
+        Ok((command, _)) => command,
+        Err(spawn::Error::AlreadyRunning { .. }) => return Outcome::AlreadyLocked,
+        Err(e) => return Outcome::NotStarted(e.to_string()),
     };
 
+    let outcome = run(command, &hyprlock, config, options);
+    if !rescue_needed(&outcome, options.replace) {
+        return outcome;
+    }
+    // A takeover stopped the lock screen that was up, and the compositor holds
+    // the session locked until some client takes it over. Leaving it there
+    // with none would need a VT to get back in, so an unscoped hyprlock — one
+    // a unit restart can kill — is the better of the two bad screens.
+    log::warn!("lock: the replacement did not start ({outcome:?}), retrying outside the scope");
+    run(Command::new(&hyprlock), &hyprlock, config, options)
+}
+
+/// Whether a failed takeover has left the session locked behind no client.
+///
+/// Only a takeover: without one, nothing was stopped, and a second attempt
+/// would just fail the same way.
+const fn rescue_needed(outcome: &Outcome, replace: bool) -> bool {
+    replace && matches!(outcome, Outcome::Failed(_) | Outcome::NotStarted(_))
+}
+
+/// Finish `command` into a hyprlock invocation and run it.
+fn run(mut command: Command, hyprlock: &str, config: &Path, options: Options) -> Outcome {
     command.arg("-c").arg(config);
     if let Some(grace) = options.grace {
         command.arg("--grace").arg(grace.to_string());
@@ -165,6 +199,44 @@ mod tests {
             replace: false,
             grace: None,
         }
+    }
+
+    const fn replacing(scope: bool) -> Options {
+        Options {
+            scope,
+            detach: false,
+            replace: true,
+            grace: None,
+        }
+    }
+
+    #[test]
+    fn the_flag_reaches_the_unit_that_has_to_give_way() {
+        assert_eq!(
+            program("hyprlock", true).on_collision(),
+            Some(OnCollision::Replace)
+        );
+        assert_eq!(
+            program("hyprlock", false).on_collision(),
+            Some(OnCollision::Refuse)
+        );
+    }
+
+    #[test]
+    fn replacing_without_a_scope_is_refused_rather_than_ignored() {
+        // There is no unit to take over, so honouring the flag would mean
+        // starting a second hyprlock next to the one meant to give way.
+        assert!(refuse_unscoped(replacing(false), false).is_some());
+        assert!(refuse_unscoped(replacing(true), true).is_none());
+    }
+
+    #[test]
+    fn only_a_takeover_that_failed_is_worth_a_second_attempt() {
+        assert!(rescue_needed(&Outcome::Failed(Some(1)), true));
+        assert!(rescue_needed(&Outcome::NotStarted(String::new()), true));
+        assert!(!rescue_needed(&Outcome::Failed(Some(1)), false));
+        assert!(!rescue_needed(&Outcome::Unlocked, true));
+        assert!(!rescue_needed(&Outcome::AlreadyLocked, true));
     }
 
     #[test]

@@ -850,7 +850,7 @@ impl App {
                 // like everything else the bar starts for the user.
                 if let Err(err) = obayebar_core::spawn::Program::new("pavucontrol")
                     .tag("pavucontrol")
-                    .singleton()
+                    .singleton(obayebar_core::spawn::OnCollision::Refuse)
                     .spawn()
                 {
                     // `AlreadyRunning` lands here too: a second click while

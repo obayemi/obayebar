@@ -125,6 +125,21 @@ const SESSION_ENV: [&str; 16] = [
     "GTK_THEME",
 ];
 
+/// What a [`Program::singleton`] does when its unit name is already taken.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OnCollision {
+    /// Leave the running one alone and fail with [`Error::AlreadyRunning`].
+    Refuse,
+    /// Take the running one down and start in its place.
+    ///
+    /// For a program whose unit proves nothing: hyprlock has been seen to hang
+    /// after the screen was unlocked, and a guard reading the unit alone would
+    /// then refuse to lock the session ever again. Replacing is safe there
+    /// because `ext-session-lock` keeps a session locked when its client dies,
+    /// so no desktop shows through the swap.
+    Replace,
+}
+
 /// What owns the program once it is running.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Mode {
@@ -162,6 +177,8 @@ pub enum Error {
     Empty,
     #[error("{unit} is already running")]
     AlreadyRunning { unit: String },
+    #[error("{unit} is already running and would not stop")]
+    NotReplaced { unit: String },
     #[error("starting {program}: {source}")]
     Io {
         program: String,
@@ -199,10 +216,9 @@ pub struct Program {
     /// Taken from [`configured_slice`] when the program is built, so a late
     /// [`use_slice`] cannot move a program that is already on its way out.
     slice: String,
-    /// Fixed unit name, so a second start fails while the first still runs.
-    singleton: bool,
-    /// Stop the singleton that is in the way instead of refusing.
-    replace: bool,
+    /// Fixed unit name, and what to do when that name is taken. `None` for a
+    /// program that gets a fresh name every time and cannot collide.
+    singleton: Option<OnCollision>,
     /// `ManagedOOMPreference=avoid`: oomd kills the rest of the slice first.
     protected: bool,
 }
@@ -226,8 +242,7 @@ impl Program {
             tag: "app".to_string(),
             mode: Mode::default(),
             slice: configured_slice().to_string(),
-            singleton: false,
-            replace: false,
+            singleton: None,
             protected: false,
         }
     }
@@ -271,26 +286,19 @@ impl Program {
         self
     }
 
-    /// Give it a fixed unit name, so that starting a second one while the
-    /// first runs is an [`Error::AlreadyRunning`] rather than two of them.
+    /// Give it a fixed unit name, so that a second start while the first runs
+    /// meets `on_collision` rather than quietly becoming two programs.
     #[must_use]
-    pub const fn singleton(mut self) -> Self {
-        self.singleton = true;
+    pub const fn singleton(mut self, on_collision: OnCollision) -> Self {
+        self.singleton = Some(on_collision);
         self
     }
 
-    /// Take over from a [`singleton`](Self::singleton) already running, rather
-    /// than refusing to start.
-    ///
-    /// For a program whose unit is evidence of nothing: hyprlock has been seen
-    /// to hang after the screen was unlocked, and a guard reading the unit
-    /// alone would then refuse to lock the session ever again. Taking over is
-    /// safe for it because `ext-session-lock` keeps a session locked when its
-    /// client dies, so no desktop shows through the swap.
+    /// What this program does about a unit of its name already running, if it
+    /// is a [`singleton`](Self::singleton) at all.
     #[must_use]
-    pub const fn replace(mut self) -> Self {
-        self.replace = true;
-        self
+    pub const fn on_collision(&self) -> Option<OnCollision> {
+        self.singleton
     }
 
     /// Ask systemd-oomd to kill the rest of the slice before this. For the
@@ -312,7 +320,7 @@ impl Program {
             Mode::Service => "service",
             Mode::Scope => "scope",
         };
-        if self.singleton {
+        if self.singleton.is_some() {
             format!("{UNIT_PREFIX}-{}.{suffix}", self.tag)
         } else {
             format!(
@@ -348,20 +356,12 @@ impl Program {
         }
         let runner = runner(self.mode);
         let unit = matches!(runner, Runner::Systemd(_)).then(|| self.unit_name());
-        if let Some(unit) = &unit {
-            if self.singleton {
-                match singleton_plan(unit_is_active(unit), self.replace) {
-                    Plan::Start => {}
-                    Plan::Stop if stop_unit(unit) => {}
-                    Plan::Stop | Plan::Refuse => {
-                        return Err(Error::AlreadyRunning { unit: unit.clone() })
-                    }
-                }
-                // A run that failed leaves the unit loaded, and `systemd-run
-                // --unit=` then refuses with "unit is already loaded". Only a
-                // singleton can collide with itself.
-                reset_failed(unit);
-            }
+        if let Some((unit, on_collision)) = unit.as_ref().zip(self.singleton) {
+            claim(unit, on_collision)?;
+            // A run that failed leaves the unit loaded, and `systemd-run
+            // --unit=` then refuses with "unit is already loaded". Only a
+            // singleton can collide with itself.
+            let _ = systemctl(&["reset-failed", unit]);
         }
         Ok((runner, unit))
     }
@@ -581,60 +581,46 @@ fn systemd_user_manager_is_up() -> bool {
         .is_some_and(|dir| PathBuf::from(dir).join("systemd/private").exists())
 }
 
-/// What to do about a singleton whose unit is already up.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Plan {
-    /// Nothing is in the way.
-    Start,
-    /// Stop what is there, then start ours.
-    Stop,
-    /// Leave the running one alone and say so.
-    Refuse,
-}
-
-/// Split out of [`Program::preflight`] so the rule can be read and tested
-/// without a systemd user manager to collide with.
-const fn singleton_plan(active: bool, replace: bool) -> Plan {
-    match (active, replace) {
-        (false, _) => Plan::Start,
-        (true, true) => Plan::Stop,
-        (true, false) => Plan::Refuse,
+/// Take the singleton's unit name, or explain why it cannot be had.
+fn claim(unit: &str, on_collision: OnCollision) -> Result<(), Error> {
+    if !unit_is_active(unit) {
+        return Ok(());
+    }
+    let unit = unit.to_string();
+    match on_collision {
+        OnCollision::Refuse => Err(Error::AlreadyRunning { unit }),
+        OnCollision::Replace if take_down(&unit) => Ok(()),
+        OnCollision::Replace => Err(Error::NotReplaced { unit }),
     }
 }
 
-/// Stop `unit`, reporting whether it is gone.
+/// Take `unit` down now, reporting whether it is gone.
 ///
-/// `systemctl stop` waits for its job, so success means the cgroup is empty
-/// and the name is free for the replacement to claim.
-fn stop_unit(unit: &str) -> bool {
-    Command::new("systemctl")
-        .args(["--user", "stop", unit])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
+/// SIGKILL before the stop, because a program worth replacing is usually one
+/// that stopped answering: `systemctl stop` alone would wait out
+/// `DefaultTimeoutStopSec` — a minute and a half of an unlocked session, for
+/// the lock screen — before systemd escalated on its own. The stop that
+/// follows waits for its job and frees the name.
+fn take_down(unit: &str) -> bool {
+    let _ = systemctl(&["kill", "--signal=KILL", unit]);
+    systemctl(&["stop", unit])
 }
 
 /// Whether `unit` is running.
 fn unit_is_active(unit: &str) -> bool {
+    systemctl(&["is-active", unit])
+}
+
+/// Run `systemctl --user` with nothing on the terminal, reporting success.
+fn systemctl(args: &[&str]) -> bool {
     Command::new("systemctl")
-        .args(["--user", "is-active", "--quiet", unit])
+        .arg("--user")
+        .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
         .is_ok_and(|status| status.success())
-}
-
-/// Clear a failed unit left by a previous run.
-fn reset_failed(unit: &str) {
-    let _ = Command::new("systemctl")
-        .args(["--user", "reset-failed", unit])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
 }
 
 /// The session variables worth forwarding that this process actually has.
@@ -792,16 +778,10 @@ mod tests {
     }
 
     #[test]
-    fn a_live_singleton_is_only_stopped_when_replacing_it_was_asked_for() {
-        assert_eq!(singleton_plan(false, false), Plan::Start);
-        assert_eq!(singleton_plan(false, true), Plan::Start);
-        assert_eq!(singleton_plan(true, false), Plan::Refuse);
-        assert_eq!(singleton_plan(true, true), Plan::Stop);
-    }
-
-    #[test]
     fn a_singleton_keeps_its_name_and_an_instance_does_not() {
-        let lock = Program::new("hyprlock").tag("lock").singleton();
+        let lock = Program::new("hyprlock")
+            .tag("lock")
+            .singleton(OnCollision::Refuse);
         assert_eq!(lock.unit_name(), lock.unit_name());
         assert_eq!(lock.unit_name(), "obayebar-lock.service");
 
