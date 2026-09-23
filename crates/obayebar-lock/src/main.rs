@@ -203,6 +203,7 @@ fn finish(config: &Path, args: &cli::Args) -> i32 {
         spawn::Options {
             scope: !args.no_scope,
             detach: args.detach,
+            replace: args.replace,
             grace: args.grace,
         },
     );

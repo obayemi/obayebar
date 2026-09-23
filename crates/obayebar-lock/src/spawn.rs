@@ -50,6 +50,12 @@ pub struct Options {
     pub scope: bool,
     /// Return as soon as it starts rather than waiting for the unlock.
     pub detach: bool,
+    /// Stop a lock screen that is already up instead of refusing to start.
+    ///
+    /// What the idle daemon asks for: a hyprlock still running is not proof
+    /// that the screen is locked, and a hung one must not keep the session
+    /// unlocked for as long as it lives.
+    pub replace: bool,
     pub grace: Option<u32>,
 }
 
@@ -90,11 +96,14 @@ pub fn lock(config: &Path, options: Options) -> Outcome {
 
     let hyprlock = binary();
     let mut command = if options.scope {
-        let program = Program::new(&hyprlock)
+        let mut program = Program::new(&hyprlock)
             .tag(TAG)
             .mode(Mode::Scope)
             .singleton()
             .protected();
+        if options.replace {
+            program = program.replace();
+        }
         match program.command() {
             Ok((command, _)) => command,
             Err(spawn::Error::AlreadyRunning { .. }) => return Outcome::AlreadyLocked,
@@ -153,6 +162,7 @@ mod tests {
         Options {
             scope,
             detach,
+            replace: false,
             grace: None,
         }
     }

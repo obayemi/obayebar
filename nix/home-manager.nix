@@ -70,7 +70,9 @@ let
   idleListeners =
     lib.optional (cfg.lock.enable && cfg.idle.lockTimeout != null) {
       timeout = cfg.idle.lockTimeout;
-      on-timeout = lockCmd;
+      # --replace: a hyprlock that hung after an unlock keeps its scope up, and
+      # a plain refusal would leave the session unlocked for as long as it does.
+      on-timeout = "${lockCmd} --replace";
     }
     ++ lib.optional (cfg.idle.screenOffTimeout != null) {
       timeout = cfg.idle.screenOffTimeout;

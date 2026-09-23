@@ -13,6 +13,7 @@ obayebar-lock [OPTIONS]
       --blur <P>x<S>      Blur passes and size, e.g. 2x5
   -g, --grace <SECS>      Seconds before a password is required
       --detach            Do not wait for hyprlock to exit
+      --replace           Take over from a lock screen that is already up
       --no-scope          Do not wrap hyprlock in its own systemd scope
   -h, --help              Print this help
   -V, --version           Print version";
@@ -30,6 +31,7 @@ pub struct Args {
     pub blur: Option<(u32, u32)>,
     pub grace: Option<u32>,
     pub detach: bool,
+    pub replace: bool,
     pub no_scope: bool,
 }
 
@@ -62,6 +64,7 @@ pub fn parse<I: Iterator<Item = String>>(args: I) -> Result<Args, Error> {
             "--print" => out.print = true,
             "--check" => out.check = true,
             "--detach" => out.detach = true,
+            "--replace" => out.replace = true,
             "--no-scope" => out.no_scope = true,
             "-c" | "--config" => out.config = Some(PathBuf::from(value(&mut iter, &arg)?)),
             "--state" => out.state = Some(PathBuf::from(value(&mut iter, &arg)?)),
@@ -122,6 +125,12 @@ mod tests {
     #[test]
     fn no_arguments_locks_with_defaults() {
         assert_eq!(parse_args(&[]).unwrap(), Args::default());
+    }
+
+    #[test]
+    fn replacing_a_running_lock_is_opt_in() {
+        assert!(!parse_args(&[]).unwrap().replace);
+        assert!(parse_args(&["--replace"]).unwrap().replace);
     }
 
     #[test]

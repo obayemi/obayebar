@@ -233,10 +233,12 @@ the XDG directories. The `~` form works only in a hand-written
 - If `idle.enable` is true, the module configures hypridle. hypridle then
   turns the monitors off after `idle.screenOffTimeout`, and turns them back
   on at the first key or move. If `lock.enable` is true too, hypridle also
-  runs `obayebar-lock` after `idle.lockTimeout`, and `obayebar-lock --detach`
-  before the machine goes to sleep. Either timeout takes `null` to drop that
-  behaviour: `screenOffTimeout = null` never blanks, `lockTimeout = null`
-  never locks on a timeout, and the lock before sleep stays either way.
+  runs `obayebar-lock --replace` after `idle.lockTimeout`, and `obayebar-lock
+  --detach` before the machine goes to sleep. `--replace` there so that a
+  hyprlock left hanging by an earlier unlock is taken over rather than
+  treated as a lock screen that is already up. Either timeout takes `null` to
+  drop that behaviour: `screenOffTimeout = null` never blanks, `lockTimeout =
+  null` never locks on a timeout, and the lock before sleep stays either way.
 - The module reads `gitlab.tokenFile` at start, and puts the contents in
   `OBAYEBAR_GITLAB_TOKEN`. The module reads the path at run time. Thus the
   token does not go into the Nix store.
@@ -319,6 +321,7 @@ obayebar-lock [OPTIONS]
       --blur <P>x<S>      Blur passes and size, e.g. 2x5
   -g, --grace <SECS>      Seconds before a password is required
       --detach            Do not wait for hyprlock to exit
+      --replace           Take over from a lock screen that is already up
       --no-scope          Do not wrap hyprlock in its own systemd scope
   -h, --help              Print this help
   -V, --version           Print version

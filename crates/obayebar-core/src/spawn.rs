@@ -201,6 +201,8 @@ pub struct Program {
     slice: String,
     /// Fixed unit name, so a second start fails while the first still runs.
     singleton: bool,
+    /// Stop the singleton that is in the way instead of refusing.
+    replace: bool,
     /// `ManagedOOMPreference=avoid`: oomd kills the rest of the slice first.
     protected: bool,
 }
@@ -225,6 +227,7 @@ impl Program {
             mode: Mode::default(),
             slice: configured_slice().to_string(),
             singleton: false,
+            replace: false,
             protected: false,
         }
     }
@@ -273,6 +276,20 @@ impl Program {
     #[must_use]
     pub const fn singleton(mut self) -> Self {
         self.singleton = true;
+        self
+    }
+
+    /// Take over from a [`singleton`](Self::singleton) already running, rather
+    /// than refusing to start.
+    ///
+    /// For a program whose unit is evidence of nothing: hyprlock has been seen
+    /// to hang after the screen was unlocked, and a guard reading the unit
+    /// alone would then refuse to lock the session ever again. Taking over is
+    /// safe for it because `ext-session-lock` keeps a session locked when its
+    /// client dies, so no desktop shows through the swap.
+    #[must_use]
+    pub const fn replace(mut self) -> Self {
+        self.replace = true;
         self
     }
 
@@ -333,8 +350,12 @@ impl Program {
         let unit = matches!(runner, Runner::Systemd(_)).then(|| self.unit_name());
         if let Some(unit) = &unit {
             if self.singleton {
-                if unit_is_active(unit) {
-                    return Err(Error::AlreadyRunning { unit: unit.clone() });
+                match singleton_plan(unit_is_active(unit), self.replace) {
+                    Plan::Start => {}
+                    Plan::Stop if stop_unit(unit) => {}
+                    Plan::Stop | Plan::Refuse => {
+                        return Err(Error::AlreadyRunning { unit: unit.clone() })
+                    }
                 }
                 // A run that failed leaves the unit loaded, and `systemd-run
                 // --unit=` then refuses with "unit is already loaded". Only a
@@ -560,6 +581,41 @@ fn systemd_user_manager_is_up() -> bool {
         .is_some_and(|dir| PathBuf::from(dir).join("systemd/private").exists())
 }
 
+/// What to do about a singleton whose unit is already up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Plan {
+    /// Nothing is in the way.
+    Start,
+    /// Stop what is there, then start ours.
+    Stop,
+    /// Leave the running one alone and say so.
+    Refuse,
+}
+
+/// Split out of [`Program::preflight`] so the rule can be read and tested
+/// without a systemd user manager to collide with.
+const fn singleton_plan(active: bool, replace: bool) -> Plan {
+    match (active, replace) {
+        (false, _) => Plan::Start,
+        (true, true) => Plan::Stop,
+        (true, false) => Plan::Refuse,
+    }
+}
+
+/// Stop `unit`, reporting whether it is gone.
+///
+/// `systemctl stop` waits for its job, so success means the cgroup is empty
+/// and the name is free for the replacement to claim.
+fn stop_unit(unit: &str) -> bool {
+    Command::new("systemctl")
+        .args(["--user", "stop", unit])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
 /// Whether `unit` is running.
 fn unit_is_active(unit: &str) -> bool {
     Command::new("systemctl")
@@ -733,6 +789,14 @@ mod tests {
                 .wrapped_argv(&Runner::Shell, None, &[]),
         );
         assert_eq!(argv, vec!["hyprlock", "-c"]);
+    }
+
+    #[test]
+    fn a_live_singleton_is_only_stopped_when_replacing_it_was_asked_for() {
+        assert_eq!(singleton_plan(false, false), Plan::Start);
+        assert_eq!(singleton_plan(false, true), Plan::Start);
+        assert_eq!(singleton_plan(true, false), Plan::Refuse);
+        assert_eq!(singleton_plan(true, true), Plan::Stop);
     }
 
     #[test]
