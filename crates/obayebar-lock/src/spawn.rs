@@ -129,7 +129,7 @@ pub fn lock(config: &Path, options: Options) -> Outcome {
         return run(Command::new(&hyprlock), &hyprlock, config, options);
     }
 
-    if options.replace && lock_state::session_locked() {
+    if skip_takeover(options.replace, lock_state::session_locked) {
         return Outcome::AlreadyLocked;
     }
 
@@ -150,6 +150,16 @@ pub fn lock(config: &Path, options: Options) -> Outcome {
          start ({outcome:?}), retrying outside the scope"
     );
     run(Command::new(&hyprlock), &hyprlock, config, options)
+}
+
+/// Whether a takeover must leave the running lock screen alone rather than
+/// killing it.
+///
+/// `locked` is called at all only when `replace` is set: without a
+/// takeover there is nothing to guard, and asking costs a blocking
+/// Wayland roundtrip.
+fn skip_takeover(replace: bool, locked: impl FnOnce() -> bool) -> bool {
+    replace && locked()
 }
 
 /// Turn a failed claim into an [`Outcome`].
@@ -265,6 +275,24 @@ mod tests {
         assert!(!rescue_needed(&Outcome::Failed(Some(1)), false));
         assert!(!rescue_needed(&Outcome::Unlocked, true));
         assert!(!rescue_needed(&Outcome::AlreadyLocked, true));
+    }
+
+    #[test]
+    fn a_takeover_leaves_a_live_locker_alone() {
+        assert!(skip_takeover(true, || true));
+    }
+
+    #[test]
+    fn an_unlocked_session_keeps_the_takeover() {
+        assert!(!skip_takeover(true, || false));
+    }
+
+    #[test]
+    fn without_replace_the_query_is_never_made() {
+        assert!(!skip_takeover(
+            false,
+            || panic!("session_locked should not be called without --replace")
+        ));
     }
 
     #[test]
