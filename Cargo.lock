@@ -3132,7 +3132,6 @@ dependencies = [
  "env_logger",
  "log",
  "obayebar-core",
- "wayland-backend",
  "wayland-client",
  "wayland-protocols-hyprland",
 ]

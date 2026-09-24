@@ -23,7 +23,6 @@ obayebar-core.workspace = true
 log.workspace = true
 env_logger.workspace = true
 wayland-client.workspace = true
-wayland-backend.workspace = true
 wayland-protocols-hyprland.workspace = true
 
 [lints]
