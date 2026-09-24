@@ -239,18 +239,18 @@ the XDG directories. The `~` form works only in a hand-written
   runs `obayebar-lock --replace` after `idle.lockTimeout`, and
   `obayebar-lock --replace --detach` before the machine goes to sleep. Both
   use `--replace`, so a hyprlock left hanging by an earlier unlock does not
-  block the next one. Before taking anything down, `--replace` asks the
-  compositor whether the session is already locked, through
-  `hyprland_lock_notifier_v1`; if it is, the running lock screen is left
-  alone rather than killed, so a lock via keybind followed by a lid close or
-  an idle timeout keeps its grace period and anything already typed into the
-  password field. When the compositor cannot be asked — a Hyprland version
-  or another compositor without that global, or no Wayland display at all —
-  `--replace` falls back to taking over as before, restarting the lock
-  screen and losing both. Either timeout takes
-  `null` to drop that behaviour: `screenOffTimeout = null` never blanks,
-  `lockTimeout = null` never locks on a timeout, and the lock before sleep
-  stays either way.
+  block the next one. Either timeout takes `null` to drop that behaviour:
+  `screenOffTimeout = null` never blanks, `lockTimeout = null` never locks
+  on a timeout, and the lock before sleep stays either way. Before taking
+  anything down, `--replace` asks the compositor whether the session
+  is already locked, through `hyprland_lock_notifier_v1`; if it is,
+  the running lock screen is left alone rather than killed, so a lock
+  via keybind followed by a lid close or an idle timeout keeps its grace
+  period and anything already typed into the password field. When the
+  compositor cannot be asked — a Hyprland version or another compositor
+  without that global, or no Wayland display at all — `--replace` falls
+  back to taking over as before, restarting the lock screen and losing
+  the grace period and the typed password.
 - The module reads `gitlab.tokenFile` at start, and puts the contents in
   `OBAYEBAR_GITLAB_TOKEN`. The module reads the path at run time. Thus the
   token does not go into the Nix store.
