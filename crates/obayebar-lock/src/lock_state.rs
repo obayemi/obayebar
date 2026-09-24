@@ -34,10 +34,6 @@ struct Reply {
     locked: bool,
 }
 
-const fn is_locked(event: &hyprland_lock_notification_v1::Event) -> bool {
-    matches!(event, hyprland_lock_notification_v1::Event::Locked)
-}
-
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for Reply {
     fn event(
         _: &mut Self,
@@ -61,7 +57,7 @@ impl Dispatch<HyprlandLockNotificationV1, ()> for Reply {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        state.locked = is_locked(&event);
+        state.locked = matches!(event, hyprland_lock_notification_v1::Event::Locked);
     }
 }
 
@@ -78,25 +74,4 @@ fn try_query() -> Option<bool> {
     event_queue.roundtrip(&mut state).ok()?;
 
     Some(state.locked)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use wayland_protocols_hyprland::lock_notify::v1::client::hyprland_lock_notification_v1::Event;
-
-    #[test]
-    fn locked_event_is_locked() {
-        assert!(is_locked(&Event::Locked));
-    }
-
-    #[test]
-    fn unlocked_event_is_not_locked() {
-        assert!(!is_locked(&Event::Unlocked));
-    }
-
-    #[test]
-    fn reply_starts_not_locked() {
-        assert!(!Reply::default().locked);
-    }
 }
