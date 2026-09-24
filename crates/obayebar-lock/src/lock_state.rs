@@ -12,7 +12,7 @@ use wayland_client::globals::{registry_queue_init, GlobalListContents};
 use wayland_client::protocol::wl_registry;
 use wayland_client::{delegate_noop, Connection, Dispatch, QueueHandle};
 use wayland_protocols_hyprland::lock_notify::v1::client::hyprland_lock_notification_v1::{
-    self, HyprlandLockNotificationV1,
+    Event, HyprlandLockNotificationV1,
 };
 use wayland_protocols_hyprland::lock_notify::v1::client::hyprland_lock_notifier_v1::HyprlandLockNotifierV1;
 
@@ -52,12 +52,12 @@ impl Dispatch<HyprlandLockNotificationV1, ()> for Reply {
     fn event(
         state: &mut Self,
         _: &HyprlandLockNotificationV1,
-        event: hyprland_lock_notification_v1::Event,
+        event: Event,
         (): &(),
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        state.locked = matches!(event, hyprland_lock_notification_v1::Event::Locked);
+        state.locked = matches!(event, Event::Locked);
     }
 }
 
