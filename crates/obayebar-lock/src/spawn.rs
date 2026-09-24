@@ -14,11 +14,19 @@
 //! `--no-scope` opts out of all of it. It is a debugging flag, and the guards
 //! below are what stop it from quietly producing a lock screen that
 //! `systemctl --user restart` can kill.
+//!
+//! A takeover is one more guard short of safe: the unit says a lock screen is
+//! up, never whether it is the live one holding the session lock or one that
+//! hung after an unlock. [`crate::lock_state`] asks the compositor instead,
+//! and a takeover that would kill a live locker turns into
+//! [`Outcome::AlreadyLocked`] before anything is touched.
 
 use std::path::Path;
 use std::process::Command;
 
 use obayebar_core::spawn::{self, Mode, OnCollision, Program};
+
+use crate::lock_state::{self, LockState};
 
 /// Env var naming the hyprlock binary, set by the Nix wrapper so the package
 /// does not depend on the ambient PATH.
@@ -52,6 +60,8 @@ pub struct Options {
     pub detach: bool,
     /// Take over from a lock screen that is already up, rather than refusing
     /// to start. See [`OnCollision::Replace`] for why that is ever wanted.
+    /// Never takes over one the compositor says is the live lock: see
+    /// [`skip_takeover`].
     pub replace: bool,
     pub grace: Option<u32>,
 }
@@ -119,13 +129,19 @@ pub fn lock(config: &Path, options: Options) -> Outcome {
         return run(Command::new(&hyprlock), &hyprlock, config, options);
     }
 
-    let command = match program(&hyprlock, options.replace).command() {
-        Ok((command, _)) => command,
-        Err(spawn::Error::AlreadyRunning { .. }) => return Outcome::AlreadyLocked,
-        Err(e) => return Outcome::NotStarted(e.to_string()),
+    let state = if options.replace {
+        lock_state::query()
+    } else {
+        LockState::Unknown
     };
+    if skip_takeover(options.replace, state) {
+        return Outcome::AlreadyLocked;
+    }
 
-    let outcome = run(command, &hyprlock, config, options);
+    let outcome = match program(&hyprlock, options.replace).command() {
+        Ok((command, _)) => run(command, &hyprlock, config, options),
+        Err(e) => claim_failed(e),
+    };
     if !rescue_needed(&outcome, options.replace) {
         return outcome;
     }
@@ -135,6 +151,31 @@ pub fn lock(config: &Path, options: Options) -> Outcome {
     // a unit restart can kill — is the better of the two bad screens.
     log::warn!("lock: the replacement did not start ({outcome:?}), retrying outside the scope");
     run(Command::new(&hyprlock), &hyprlock, config, options)
+}
+
+/// Whether a takeover must leave the running lock screen alone rather than
+/// killing it.
+///
+/// True only when the session is positively known to be locked. `Unknown`
+/// keeps the existing takeover behaviour rather than refusing it, because
+/// that is the hung-after-unlock case `--replace` exists for in the first
+/// place, and refusing it would leave the machine unlocked behind no client.
+const fn skip_takeover(replace: bool, state: LockState) -> bool {
+    replace && matches!(state, LockState::Locked)
+}
+
+/// Turn a failed claim into the same shape [`run`] would have produced, so
+/// both feed [`rescue_needed`] alike.
+///
+/// The unit was already running and refused to give way
+/// ([`spawn::Error::NotReplaced`]) is exactly as much a reason to fall back
+/// to an unscoped hyprlock as the replacement failing to start once claimed:
+/// either way the compositor is left locked behind no client.
+fn claim_failed(error: spawn::Error) -> Outcome {
+    match error {
+        spawn::Error::AlreadyRunning { .. } => Outcome::AlreadyLocked,
+        other => Outcome::NotStarted(other.to_string()),
+    }
 }
 
 /// Whether a failed takeover has left the session locked behind no client.
@@ -237,6 +278,46 @@ mod tests {
         assert!(!rescue_needed(&Outcome::Failed(Some(1)), false));
         assert!(!rescue_needed(&Outcome::Unlocked, true));
         assert!(!rescue_needed(&Outcome::AlreadyLocked, true));
+    }
+
+    #[test]
+    fn a_takeover_leaves_a_live_locker_alone() {
+        assert!(skip_takeover(true, LockState::Locked));
+    }
+
+    #[test]
+    fn an_unlocked_or_unknown_session_keeps_the_takeover() {
+        assert!(!skip_takeover(true, LockState::Unlocked));
+        assert!(!skip_takeover(true, LockState::Unknown));
+    }
+
+    #[test]
+    fn without_replace_the_lock_state_never_matters() {
+        for state in [LockState::Locked, LockState::Unlocked, LockState::Unknown] {
+            assert!(!skip_takeover(false, state));
+        }
+    }
+
+    #[test]
+    fn a_unit_that_would_not_stop_is_worth_rescuing_too() {
+        // Failing to claim the unit at all is exactly as much a reason to
+        // fall back to an unscoped hyprlock as the replacement starting and
+        // then failing: either way nothing is left to service the lock the
+        // compositor is still holding.
+        let outcome = claim_failed(spawn::Error::NotReplaced {
+            unit: TAG.to_string(),
+        });
+        assert!(matches!(outcome, Outcome::NotStarted(_)));
+        assert!(rescue_needed(&outcome, true));
+    }
+
+    #[test]
+    fn a_unit_already_running_is_reported_as_already_locked_not_a_failure() {
+        let outcome = claim_failed(spawn::Error::AlreadyRunning {
+            unit: TAG.to_string(),
+        });
+        assert_eq!(outcome, Outcome::AlreadyLocked);
+        assert!(!rescue_needed(&outcome, true));
     }
 
     #[test]

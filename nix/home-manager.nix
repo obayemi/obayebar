@@ -52,6 +52,9 @@ let
 
   # --replace: a hyprlock that hung after an unlock keeps its scope up, and
   # a plain refusal would leave the session unlocked for as long as it does.
+  # It asks the compositor first, so a lock screen that is actually holding
+  # the session lock is left alone rather than killed and restarted — the
+  # case hypridle's own lock-then-idle-then-sleep sequence hits routinely.
   # Only the paths hypridle drives itself use it; the user's own keybind
   # keeps refusing.
   replacingLockCmd = "${lockCmd} --replace";

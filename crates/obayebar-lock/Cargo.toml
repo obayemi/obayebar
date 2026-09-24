@@ -14,12 +14,17 @@ name = "obayebar-lock"
 path = "src/main.rs"
 
 # A one-shot: enumerate monitors, read a JSON file, render text, run hyprlock.
-# No async runtime, no GUI, no dbus — it stands between the user and a locked
-# screen, so it should build small and start instantly.
+# No async runtime, no GUI toolkit, no dbus — it stands between the user and a
+# locked screen, so it should build small and start instantly. The one talk to
+# the outside world beyond that is a short, blocking Wayland roundtrip to ask
+# the compositor whether the session is already locked before a takeover.
 [dependencies]
 obayebar-core.workspace = true
 log.workspace = true
 env_logger.workspace = true
+wayland-client.workspace = true
+wayland-backend.workspace = true
+wayland-scanner.workspace = true
 
 [lints]
 workspace = true

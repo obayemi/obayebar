@@ -16,6 +16,7 @@
 
 mod cli;
 mod compose;
+mod lock_state;
 mod spawn;
 
 use std::io::Write as _;
