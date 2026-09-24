@@ -143,14 +143,9 @@ pub fn lock(config: &Path, options: Options) -> Outcome {
     outcome
 }
 
-/// Retry `config` outside the scope after a takeover that left the
-/// compositor holding the lock behind no client.
-///
-/// A takeover can fail two ways: it stopped the old lock screen and the
-/// replacement never started, or the old one refused to stop at all.
-/// Either way the compositor may hold the session locked with no client,
-/// which needs a VT to escape, so an unscoped hyprlock — one a unit
-/// restart can kill — is the better of the two bad screens.
+/// Retry `config` outside the scope: an unscoped hyprlock — one a unit
+/// restart can kill — beats a session locked behind no client, which
+/// needs a VT to escape.
 fn rescue(hyprlock: &str, config: &Path, options: Options, outcome: &Outcome) -> Outcome {
     log::warn!(
         "lock: the old lock screen would not stop or the replacement did not \
@@ -172,9 +167,7 @@ fn skip_takeover(replace: bool, locked: impl FnOnce() -> bool) -> bool {
 /// Turn a failed claim into an [`Outcome`].
 ///
 /// `AlreadyRunning` becomes [`Outcome::AlreadyLocked`], a shape [`run`]
-/// itself never produces; every other error becomes [`Outcome::NotStarted`],
-/// which is what lets a takeover that never claimed the unit reach
-/// [`rescue_needed`] alongside one that claimed it and then failed to start.
+/// itself never produces; every other error becomes [`Outcome::NotStarted`].
 fn claim_failed(error: spawn::Error) -> Outcome {
     match error {
         spawn::Error::AlreadyRunning { .. } => Outcome::AlreadyLocked,
@@ -182,7 +175,14 @@ fn claim_failed(error: spawn::Error) -> Outcome {
     }
 }
 
-/// Whether a failed takeover has left the session locked behind no client.
+/// Whether a failed takeover may have left the session locked behind no
+/// client.
+///
+/// A takeover can fail two ways: it stopped the old lock screen and the
+/// replacement never started, or the claim itself failed and the old one
+/// never stopped ([`spawn::Error::NotReplaced`], which [`claim_failed`]
+/// maps to [`Outcome::NotStarted`]). Either way the compositor may hold
+/// the session locked with no client.
 ///
 /// Only a takeover: without one, nothing was stopped, and a second attempt
 /// would just fail the same way.
