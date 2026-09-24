@@ -686,7 +686,7 @@ operates.
 | `serde` + `toml`             | Config file parsing                                       |
 | `ab_glyph` + `fontdb`        | Vector text on the workspace canvas                       |
 | `thiserror`                  | Typed errors on the IPC and rendering paths               |
-| `wayland-protocols-hyprland` | `hyprland_lock_notifier_v1`, whether the session is locked|
+| `wayland-protocols-hyprland` | `hyprland_lock_notifier_v1`, whether the session is locked |
 
 ## Build from source
 
