@@ -18,9 +18,9 @@ use wayland_protocols_hyprland::lock_notify::v1::client::hyprland_lock_notifier_
 
 /// Ask the compositor whether the session is locked right now.
 ///
-/// Blocking, and bounded to the couple of roundtrips the protocol needs:
-/// never a wait for something that may never come. `true` is the only
-/// definite answer: a session mid-transition, a missing
+/// Blocks on a Wayland roundtrip with no timeout of its own: a compositor
+/// that accepts the connection but never answers leaves this call waiting.
+/// `true` is the only definite answer: a session mid-transition, a missing
 /// `hyprland_lock_notifier_v1` global, no Wayland display, or the exchange
 /// failing some other way all come back `false`, which means "not known to
 /// be locked", never proof that the session is unlocked.

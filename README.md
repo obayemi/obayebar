@@ -333,7 +333,7 @@ obayebar-lock [OPTIONS]
       --blur <P>x<S>      Blur passes and size, e.g. 2x5
   -g, --grace <SECS>      Seconds before a password is required
       --detach            Do not wait for hyprlock to exit
-      --replace           Take over a hung lock screen, never a live one
+      --replace           Take over a lock screen unless known to be locked
       --no-scope          Do not wrap hyprlock in its own systemd scope
   -h, --help              Print this help
   -V, --version           Print version

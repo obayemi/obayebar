@@ -137,19 +137,26 @@ pub fn lock(config: &Path, options: Options) -> Outcome {
         Ok((command, _)) => run(command, &hyprlock, config, options),
         Err(e) => claim_failed(e),
     };
-    if !rescue_needed(&outcome, options.replace) {
-        return outcome;
+    if rescue_needed(&outcome, options.replace) {
+        return rescue(&hyprlock, config, options, &outcome);
     }
-    // A takeover can fail two ways: it stopped the old lock screen and the
-    // replacement never started, or the old one refused to stop at all.
-    // Either way the compositor may hold the session locked with no client,
-    // which needs a VT to escape, so an unscoped hyprlock — one a unit
-    // restart can kill — is the better of the two bad screens.
+    outcome
+}
+
+/// Retry `config` outside the scope after a takeover that left the
+/// compositor holding the lock behind no client.
+///
+/// A takeover can fail two ways: it stopped the old lock screen and the
+/// replacement never started, or the old one refused to stop at all.
+/// Either way the compositor may hold the session locked with no client,
+/// which needs a VT to escape, so an unscoped hyprlock — one a unit
+/// restart can kill — is the better of the two bad screens.
+fn rescue(hyprlock: &str, config: &Path, options: Options, outcome: &Outcome) -> Outcome {
     log::warn!(
         "lock: the old lock screen would not stop or the replacement did not \
          start ({outcome:?}), retrying outside the scope"
     );
-    run(Command::new(&hyprlock), &hyprlock, config, options)
+    run(Command::new(hyprlock), hyprlock, config, options)
 }
 
 /// Whether a takeover must leave the running lock screen alone rather than
@@ -289,10 +296,9 @@ mod tests {
 
     #[test]
     fn without_replace_the_query_is_never_made() {
-        assert!(!skip_takeover(
-            false,
-            || panic!("session_locked should not be called without --replace")
-        ));
+        assert!(!skip_takeover(false, || panic!(
+            "session_locked should not be called without --replace"
+        )));
     }
 
     #[test]
