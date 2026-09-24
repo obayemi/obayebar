@@ -52,13 +52,9 @@ let
 
   # --replace: a hyprlock that hung after an unlock keeps its scope up, and
   # a plain refusal would leave the session unlocked for as long as it does.
-  # It asks the compositor first, so a lock screen that is actually holding
-  # the session lock is left alone rather than killed and restarted — the
-  # case hypridle's own lock-then-idle-then-sleep sequence hits routinely.
-  # That guard only works when the compositor answers through
-  # hyprland_lock_notifier_v1; without it, --replace still takes over and
-  # restarts the lock screen. Only the paths hypridle drives itself use it;
-  # the user's own keybind keeps refusing.
+  # Only the paths hypridle drives itself use it; the user's own keybind
+  # keeps refusing. --replace still leaves a lock screen that holds the
+  # session lock alone; see the README.
   replacingLockCmd = "${lockCmd} --replace";
 
   # The session's own hyprctl, not one pinned into this closure: a hyprctl
