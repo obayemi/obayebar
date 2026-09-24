@@ -13,7 +13,7 @@ obayebar-lock [OPTIONS]
       --blur <P>x<S>      Blur passes and size, e.g. 2x5
   -g, --grace <SECS>      Seconds before a password is required
       --detach            Do not wait for hyprlock to exit
-      --replace           Take over a lock screen already up, unless it holds the lock
+      --replace           Take over a hung lock screen, never a live one
       --no-scope          Do not wrap hyprlock in its own systemd scope
   -h, --help              Print this help
   -V, --version           Print version";
@@ -125,6 +125,13 @@ mod tests {
     #[test]
     fn no_arguments_locks_with_defaults() {
         assert_eq!(parse_args(&[]).unwrap(), Args::default());
+    }
+
+    #[test]
+    fn usage_fits_an_80_column_terminal() {
+        for line in USAGE.lines() {
+            assert!(line.len() <= 80, "{line:?} is {} columns wide", line.len());
+        }
     }
 
     #[test]

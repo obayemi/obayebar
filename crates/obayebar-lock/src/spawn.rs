@@ -15,9 +15,9 @@
 //! below are what stop it from quietly producing a lock screen that
 //! `systemctl --user restart` can kill.
 //!
-//! A takeover is one more guard short of safe: the unit says a lock screen is
-//! up, never whether it is the live one holding the session lock or one that
-//! hung after an unlock. [`crate::lock_state`] asks the compositor instead,
+//! A takeover needs one more guard: the unit says a lock screen is up, never
+//! whether it is the live one holding the session lock or one that hung
+//! after an unlock. [`crate::lock_state`] asks the compositor instead,
 //! and a takeover that would kill a live locker turns into
 //! [`Outcome::AlreadyLocked`] before anything is touched.
 
@@ -140,21 +140,24 @@ pub fn lock(config: &Path, options: Options) -> Outcome {
     if !rescue_needed(&outcome, options.replace) {
         return outcome;
     }
-    // A takeover stopped the lock screen that was up, and the compositor holds
-    // the session locked until some client takes it over. Leaving it there
-    // with none would need a VT to get back in, so an unscoped hyprlock — one
-    // a unit restart can kill — is the better of the two bad screens.
-    log::warn!("lock: the replacement did not start ({outcome:?}), retrying outside the scope");
+    // A takeover can fail two ways: it stopped the old lock screen and the
+    // replacement never started, or the old one refused to stop at all.
+    // Either way the compositor may hold the session locked with no client,
+    // which needs a VT to escape, so an unscoped hyprlock — one a unit
+    // restart can kill — is the better of the two bad screens.
+    log::warn!(
+        "lock: the old lock screen would not stop or the replacement did not \
+         start ({outcome:?}), retrying outside the scope"
+    );
     run(Command::new(&hyprlock), &hyprlock, config, options)
 }
 
-/// Turn a failed claim into the same shape [`run`] would have produced, so
-/// both feed [`rescue_needed`] alike.
+/// Turn a failed claim into an [`Outcome`].
 ///
-/// The unit was already running and refused to give way
-/// ([`spawn::Error::NotReplaced`]) is exactly as much a reason to fall back
-/// to an unscoped hyprlock as the replacement failing to start once claimed:
-/// either way the compositor is left locked behind no client.
+/// `AlreadyRunning` becomes [`Outcome::AlreadyLocked`], a shape [`run`]
+/// itself never produces; every other error becomes [`Outcome::NotStarted`],
+/// which is what lets a takeover that never claimed the unit reach
+/// [`rescue_needed`] alongside one that claimed it and then failed to start.
 fn claim_failed(error: spawn::Error) -> Outcome {
     match error {
         spawn::Error::AlreadyRunning { .. } => Outcome::AlreadyLocked,
@@ -266,10 +269,6 @@ mod tests {
 
     #[test]
     fn a_unit_that_would_not_stop_is_worth_rescuing_too() {
-        // Failing to claim the unit at all is exactly as much a reason to
-        // fall back to an unscoped hyprlock as the replacement starting and
-        // then failing: either way nothing is left to service the lock the
-        // compositor is still holding.
         let outcome = claim_failed(spawn::Error::NotReplaced {
             unit: TAG.to_string(),
         });

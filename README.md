@@ -240,10 +240,14 @@ the XDG directories. The `~` form works only in a hand-written
   `obayebar-lock --replace --detach` before the machine goes to sleep. Both
   use `--replace`, so a hyprlock left hanging by an earlier unlock does not
   block the next one. Before taking anything down, `--replace` asks the
-  compositor whether the session is already locked; if it is, the running
-  lock screen is left alone rather than killed, so a lock via keybind
-  followed by a lid close or an idle timeout never loses its grace period or
-  anything already typed into the password field. Either timeout takes
+  compositor whether the session is already locked, through
+  `hyprland_lock_notifier_v1`; if it is, the running lock screen is left
+  alone rather than killed, so a lock via keybind followed by a lid close or
+  an idle timeout keeps its grace period and anything already typed into the
+  password field. When the compositor cannot be asked — a Hyprland version
+  or another compositor without that global, or no Wayland display at all —
+  `--replace` falls back to taking over as before, restarting the lock
+  screen and losing both. Either timeout takes
   `null` to drop that behaviour: `screenOffTimeout = null` never blanks,
   `lockTimeout = null` never locks on a timeout, and the lock before sleep
   stays either way.
@@ -329,7 +333,7 @@ obayebar-lock [OPTIONS]
       --blur <P>x<S>      Blur passes and size, e.g. 2x5
   -g, --grace <SECS>      Seconds before a password is required
       --detach            Do not wait for hyprlock to exit
-      --replace           Take over a lock screen already up, unless it holds the lock
+      --replace           Take over a hung lock screen, never a live one
       --no-scope          Do not wrap hyprlock in its own systemd scope
   -h, --help              Print this help
   -V, --version           Print version

@@ -2,10 +2,11 @@
 //!
 //! `hyprland_lock_notifier_v1` is Hyprland's own bookkeeping: binding it and
 //! calling `get_lock_notification` makes the compositor send `locked`
-//! immediately if a lock is up (hypridle relies on the same guarantee to know
-//! when to stop polling). Asking the compositor instead of trusting a
-//! systemd unit's state is what lets a takeover tell a live lock screen apart
-//! from a hung one — both hold the same unit up.
+//! immediately if a lock is up. The protocol guarantees it: "If the session
+//! is already locked when calling this method, the locked event shall be
+//! sent immediately." `locked` itself is only sent once the lock client has
+//! presented a frame on every output, so a session mid-transition still
+//! comes back not-locked until that frame is up.
 
 mod protocol;
 
@@ -19,9 +20,11 @@ use protocol::hyprland_lock_notifier_v1::HyprlandLockNotifierV1;
 /// Ask the compositor whether the session is locked right now.
 ///
 /// Blocking, and bounded to the couple of roundtrips the protocol needs:
-/// never a wait for something that may never come. Anything short of a
-/// definite answer comes back as `false`, which a caller must
-/// treat like "don't know", not like "unlocked".
+/// never a wait for something that may never come. `true` is the only
+/// definite answer: a session mid-transition, a missing
+/// `hyprland_lock_notifier_v1` global, no Wayland display, or the exchange
+/// failing some other way all come back `false`, which means "not known to
+/// be locked", never proof that the session is unlocked.
 #[must_use]
 pub fn session_locked() -> bool {
     try_query().unwrap_or(false)

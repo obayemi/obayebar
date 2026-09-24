@@ -15,8 +15,8 @@ path = "src/main.rs"
 
 # A one-shot: enumerate monitors, read a JSON file, render text, run hyprlock.
 # No async runtime, no GUI toolkit, no dbus — it stands between the user and a
-# locked screen, so it should build small and start instantly. The one talk to
-# the outside world beyond that is a short, blocking Wayland roundtrip to ask
+# locked screen, so it should build small and start instantly. Its only other
+# contact with the outside world is a short, blocking Wayland roundtrip to ask
 # the compositor whether the session is already locked before a takeover.
 [dependencies]
 obayebar-core.workspace = true
