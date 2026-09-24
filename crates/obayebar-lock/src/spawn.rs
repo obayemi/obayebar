@@ -26,7 +26,7 @@ use std::process::Command;
 
 use obayebar_core::spawn::{self, Mode, OnCollision, Program};
 
-use crate::lock_state::{self, LockState};
+use crate::lock_state;
 
 /// Env var naming the hyprlock binary, set by the Nix wrapper so the package
 /// does not depend on the ambient PATH.
@@ -61,7 +61,7 @@ pub struct Options {
     /// Take over from a lock screen that is already up, rather than refusing
     /// to start. See [`OnCollision::Replace`] for why that is ever wanted.
     /// Never takes over one the compositor says is the live lock: see
-    /// [`skip_takeover`].
+    /// [`lock_state::session_locked`].
     pub replace: bool,
     pub grace: Option<u32>,
 }
@@ -129,12 +129,7 @@ pub fn lock(config: &Path, options: Options) -> Outcome {
         return run(Command::new(&hyprlock), &hyprlock, config, options);
     }
 
-    let state = if options.replace {
-        lock_state::query()
-    } else {
-        LockState::Unknown
-    };
-    if skip_takeover(options.replace, state) {
+    if options.replace && lock_state::session_locked() {
         return Outcome::AlreadyLocked;
     }
 
@@ -151,17 +146,6 @@ pub fn lock(config: &Path, options: Options) -> Outcome {
     // a unit restart can kill — is the better of the two bad screens.
     log::warn!("lock: the replacement did not start ({outcome:?}), retrying outside the scope");
     run(Command::new(&hyprlock), &hyprlock, config, options)
-}
-
-/// Whether a takeover must leave the running lock screen alone rather than
-/// killing it.
-///
-/// True only when the session is positively known to be locked. `Unknown`
-/// keeps the existing takeover behaviour rather than refusing it, because
-/// that is the hung-after-unlock case `--replace` exists for in the first
-/// place, and refusing it would leave the machine unlocked behind no client.
-const fn skip_takeover(replace: bool, state: LockState) -> bool {
-    replace && matches!(state, LockState::Locked)
 }
 
 /// Turn a failed claim into the same shape [`run`] would have produced, so
@@ -278,24 +262,6 @@ mod tests {
         assert!(!rescue_needed(&Outcome::Failed(Some(1)), false));
         assert!(!rescue_needed(&Outcome::Unlocked, true));
         assert!(!rescue_needed(&Outcome::AlreadyLocked, true));
-    }
-
-    #[test]
-    fn a_takeover_leaves_a_live_locker_alone() {
-        assert!(skip_takeover(true, LockState::Locked));
-    }
-
-    #[test]
-    fn an_unlocked_or_unknown_session_keeps_the_takeover() {
-        assert!(!skip_takeover(true, LockState::Unlocked));
-        assert!(!skip_takeover(true, LockState::Unknown));
-    }
-
-    #[test]
-    fn without_replace_the_lock_state_never_matters() {
-        for state in [LockState::Locked, LockState::Unlocked, LockState::Unknown] {
-            assert!(!skip_takeover(false, state));
-        }
     }
 
     #[test]

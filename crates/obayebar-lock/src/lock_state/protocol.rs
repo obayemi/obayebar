@@ -11,13 +11,11 @@
     missing_debug_implementations
 )]
 
-pub mod hyprland_lock_notify_v1 {
-    use wayland_client;
+use wayland_client;
 
-    pub mod __interfaces {
-        wayland_scanner::generate_interfaces!("protocols/hyprland-lock-notify-v1.xml");
-    }
-    use self::__interfaces::*;
-
-    wayland_scanner::generate_client_code!("protocols/hyprland-lock-notify-v1.xml");
+pub mod __interfaces {
+    wayland_scanner::generate_interfaces!("protocols/hyprland-lock-notify-v1.xml");
 }
+use self::__interfaces::*;
+
+wayland_scanner::generate_client_code!("protocols/hyprland-lock-notify-v1.xml");
