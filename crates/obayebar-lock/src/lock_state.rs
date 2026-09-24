@@ -29,6 +29,21 @@ pub fn session_locked() -> bool {
     try_query().unwrap_or(false)
 }
 
+/// The actual exchange, `?`-chained through whichever step fails first.
+fn try_query() -> Option<bool> {
+    let conn = Connection::connect_to_env().ok()?;
+    let (globals, mut event_queue) = registry_queue_init::<Reply>(&conn).ok()?;
+    let qh = event_queue.handle();
+
+    let notifier: HyprlandLockNotifierV1 = globals.bind(&qh, 1..=1, ()).ok()?;
+    let mut state = Reply::default();
+    notifier.get_lock_notification(&qh, ());
+
+    event_queue.roundtrip(&mut state).ok()?;
+
+    Some(state.locked)
+}
+
 #[derive(Default)]
 struct Reply {
     locked: bool,
@@ -59,19 +74,4 @@ impl Dispatch<HyprlandLockNotificationV1, ()> for Reply {
     ) {
         state.locked = matches!(event, Event::Locked);
     }
-}
-
-/// The actual exchange, `?`-chained through whichever step fails first.
-fn try_query() -> Option<bool> {
-    let conn = Connection::connect_to_env().ok()?;
-    let (globals, mut event_queue) = registry_queue_init::<Reply>(&conn).ok()?;
-    let qh = event_queue.handle();
-
-    let notifier: HyprlandLockNotifierV1 = globals.bind(&qh, 1..=1, ()).ok()?;
-    let mut state = Reply::default();
-    notifier.get_lock_notification(&qh, ());
-
-    event_queue.roundtrip(&mut state).ok()?;
-
-    Some(state.locked)
 }
