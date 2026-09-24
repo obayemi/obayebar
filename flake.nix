@@ -86,7 +86,10 @@
           meta = {
             description = "Wayland status bar inspired by caelestia-shell";
             homepage = "https://github.com/obayemi/obayebar";
-            license = pkgs.lib.licenses.mit;
+            # obayebar itself is MIT; obayebar-lock, built into the same
+            # derivation, links wayland-protocols-hyprland, which is
+            # LGPL-3.0-only.
+            license = with pkgs.lib.licenses; [ mit lgpl3Only ];
             mainProgram = "obayebar";
           };
         };

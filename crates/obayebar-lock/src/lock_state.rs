@@ -8,14 +8,13 @@
 //! presented a frame on every output, so a session mid-transition still
 //! comes back not-locked until that frame is up.
 
-mod protocol;
-
 use wayland_client::globals::{registry_queue_init, GlobalListContents};
 use wayland_client::protocol::wl_registry;
 use wayland_client::{delegate_noop, Connection, Dispatch, QueueHandle};
-
-use protocol::hyprland_lock_notification_v1::{self, HyprlandLockNotificationV1};
-use protocol::hyprland_lock_notifier_v1::HyprlandLockNotifierV1;
+use wayland_protocols_hyprland::lock_notify::v1::client::hyprland_lock_notification_v1::{
+    self, HyprlandLockNotificationV1,
+};
+use wayland_protocols_hyprland::lock_notify::v1::client::hyprland_lock_notifier_v1::HyprlandLockNotifierV1;
 
 /// Ask the compositor whether the session is locked right now.
 ///
@@ -84,7 +83,7 @@ fn try_query() -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use protocol::hyprland_lock_notification_v1::Event;
+    use wayland_protocols_hyprland::lock_notify::v1::client::hyprland_lock_notification_v1::Event;
 
     #[test]
     fn locked_event_is_locked() {

@@ -79,9 +79,10 @@ fast_image_resize = { version = "6", default-features = false, features = ["std"
 wayland-client = "0.31"
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 # `hyprland_lock_notifier_v1` is Hyprland-specific and outside
-# wayland-protocols-wlr, so the lock screen generates its own binding from a
-# vendored protocol XML.
-wayland-scanner = "0.31"
+# wayland-protocols-wlr; wayland-protocols-hyprland ships it instead, at the
+# cost of an LGPL-3.0-only dependency for the lock screen binary — see the
+# README's License section.
+wayland-protocols-hyprland = { version = "1.2", features = ["client"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

@@ -783,4 +783,5 @@ We will find the answer before you write the patch.
 
 ## License
 
-MIT.
+MIT. `obayebar-lock` additionally depends on `wayland-protocols-hyprland`,
+which is LGPL-3.0-only.
