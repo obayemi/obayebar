@@ -295,20 +295,20 @@ An overlay is also available. The overlay adds `obayebar` to `pkgs`.
 
 ## Modules on the bar
 
-| Module          | Source                                   | Notes                                                                    |
-|-----------------|------------------------------------------|--------------------------------------------------------------------------|
-| Workspaces      | Hyprland IPC (`j/workspaces`, socket2)   | One set per monitor. A click focuses one. A spring moves the indicator.  |
-| Active window   | Hyprland IPC (`activewindow` event)      | Shows the class and the title. The bar draws the text vertically.       |
-| System tray     | StatusNotifierItem (dbus)                | A click activates the item. The bar keeps the icons in a cache.         |
-| Media           | MPRIS (dbus)                             | Shows the track. The panel plays, seeks, loops. `--no-media` hides it.  |
-| GitLab todos    | GitLab REST API + Secret Service keyring | Off by default. Use `--gitlab`, the config file, or the Nix option.     |
-| Clock           | local time tick                          | Shows the local time.                                                   |
-| Audio           | PipeWire (native, with `pipewire-rs`)    | Shows the volume. The panel has sliders, mute, and sink selection.      |
-| Network         | NetworkManager (dbus)                    | The panel shows the Wi-Fi list, and connects or disconnects.            |
-| Bluetooth       | BlueZ (dbus)                             | The panel starts the adapter, finds devices, and forgets devices.       |
-| Battery / power | UPower + `power-profiles-daemon` (dbus)  | Shows the percentage. The panel changes the power profile.              |
-| Sysinfo         | `/proc`, NVML                            | Shows CPU, GPU, RAM, and network rates. The color changes at a limit.   |
-| Notifications   | `org.freedesktop.Notifications` (dbus)   | Replaces `mako` and `dunst`. Maximum height is 2/5 of the monitor.      |
+| Module          | Source                                   | Notes                                                                                    |
+|-----------------|------------------------------------------|------------------------------------------------------------------------------------------|
+| Workspaces      | Hyprland IPC (`j/workspaces`, socket2)   | One set per monitor. A click focuses one. A spring moves the indicator.                  |
+| Active window   | Hyprland IPC (`activewindow` event)      | Shows the class and the title. The bar draws the text vertically.                        |
+| System tray     | StatusNotifierItem (dbus)                | A click activates the item. The bar keeps the icons in a cache.                          |
+| Media           | MPRIS (dbus)                             | Shows the track. The panel plays, seeks, loops, switches players. `--no-media` hides it. |
+| GitLab todos    | GitLab REST API + Secret Service keyring | Off by default. Use `--gitlab`, the config file, or the Nix option.                      |
+| Clock           | local time tick                          | Shows the local time.                                                                    |
+| Audio           | PipeWire (native, with `pipewire-rs`)    | Shows the volume. The panel has sliders, mute, and sink selection.                       |
+| Network         | NetworkManager (dbus)                    | The panel shows the Wi-Fi list, and connects or disconnects.                             |
+| Bluetooth       | BlueZ (dbus)                             | The panel starts the adapter, finds devices, and forgets devices.                        |
+| Battery / power | UPower + `power-profiles-daemon` (dbus)  | Shows the percentage. The panel changes the power profile.                               |
+| Sysinfo         | `/proc`, NVML                            | Shows CPU, GPU, RAM, and network rates. The color changes at a limit.                    |
+| Notifications   | `org.freedesktop.Notifications` (dbus)   | Replaces `mako` and `dunst`. Maximum height is 2/5 of the monitor.                       |
 
 ## Command-line reference
 
