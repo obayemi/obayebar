@@ -12,6 +12,7 @@ mod rotated_text;
 mod status;
 pub mod sysinfo_panel;
 mod tray;
+mod trigger;
 mod wave_slider;
 mod widgets;
 pub mod workspaces;

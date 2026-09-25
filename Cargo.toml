@@ -28,7 +28,7 @@ categories = ["gui"]
 # binaries take neither tokio nor the image decoders.
 obayebar-core = { path = "crates/obayebar-core", default-features = false }
 
-iced = { version = "0.14.0", default-features = false, features = ["wgpu", "crisp", "linux-theme-detection", "wayland", "tokio", "canvas", "image-without-codecs", "lazy"] }
+iced = { version = "0.14.0", default-features = false, features = ["wgpu", "crisp", "linux-theme-detection", "wayland", "tokio", "canvas", "image-without-codecs", "lazy", "advanced"] }
 iced_layershell = "0.19.1"
 iced_runtime = "0.14.0"
 tokio = { version = "1.53.1", features = ["full"] }
@@ -65,6 +65,7 @@ reqwest = { version = "0.13.4", default-features = false, features = ["rustls-no
 rustls = { version = "0.23.43", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 url = "2.5.8"
 thiserror = "2.0"
+num-traits = "0.2.19"
 secret-service = { version = "5", default-features = false, features = ["rt-tokio-crypto-rust"] }
 toml = { version = "1.1", default-features = false, features = ["parse", "serde", "std"] }
 

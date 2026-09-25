@@ -1,5 +1,6 @@
 //! Shared iced widget builders used across panels.
 
+use super::trigger::PanelTrigger;
 use crate::panel::PanelKind;
 use crate::Message;
 use iced::widget::canvas::{self, path::Arc, Frame, Geometry, LineCap, Path, Stroke};
@@ -130,13 +131,7 @@ pub fn panel_with_exit(kind: PanelKind, content: Element<'_, Message>) -> Elemen
         container(content)
             .width(Length::Fill)
             .height(Length::Fill)
-            .align_y(Alignment::End)
-            .padding(Padding {
-                top: 0.0,
-                right: 0.0,
-                bottom: style::PANEL_GAP,
-                left: style::PANEL_GAP,
-            })
+            .padding(Padding::ZERO.left(style::PANEL_GAP))
             .style(style::panel_wrapper_container),
     )
     .on_enter(Message::PanelPointerEntered(kind))
@@ -164,24 +159,14 @@ pub fn icon_text(glyph: &str, size: f32, color: Color) -> iced::widget::Text<'_>
 }
 
 /// A bar entry that opens `kind`'s panel: `content` wrapped in the standard
-/// pill container, wired to open on press or hover and to arm the grace timer
-/// when the pointer leaves.
-///
-/// Every bar trigger wires this identically, and panel dismissal in
-/// `App::update` depends on that wiring staying the same everywhere: a
-/// trigger that skipped `on_exit` would never arm the grace close.
+/// pill container, wired through [`PanelTrigger`] to open on press or hover
+/// and to arm the grace timer when the pointer leaves.
 pub fn panel_trigger<'a>(
     kind: PanelKind,
     monitor: Option<String>,
     content: impl Into<Element<'a, Message>>,
 ) -> Element<'a, Message> {
-    let open_msg = Message::PanelOpen(kind, monitor);
-    let clickable = mouse_area(content)
-        .on_press(open_msg.clone())
-        .on_enter(open_msg)
-        .on_exit(Message::PanelPointerLeftTrigger(kind));
-
-    container(clickable)
+    container(PanelTrigger::new(kind, monitor, content))
         .padding(style::PADDING_NORMAL)
         .width(Length::Fill)
         .align_x(Alignment::Center)

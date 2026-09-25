@@ -3101,6 +3101,7 @@ dependencies = [
  "inotify",
  "log",
  "lru",
+ "num-traits",
  "nvml-wrapper",
  "obayebar-core",
  "pipewire",

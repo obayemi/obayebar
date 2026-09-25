@@ -386,7 +386,7 @@ pub enum Message {
     NotifActivate(u32),
     NotifHoverEnter(u32),
     NotifHoverExit(u32),
-    PanelOpen(PanelKind, Option<String>),
+    PanelOpen(PanelKind, Option<String>, panel::TriggerSpot),
     Bluetooth(BluetoothInfo),
     BluetoothToggleDevice {
         path: String,
@@ -690,7 +690,7 @@ impl App {
                 }
                 self.maybe_close_popup_window()
             }
-            Message::PanelOpen(kind, monitor) => self.open_panel(kind, monitor),
+            Message::PanelOpen(kind, monitor, spot) => self.open_panel(kind, monitor, spot),
             Message::Gitlab(info) => {
                 if self.gitlab != info {
                     self.gitlab = info;
@@ -1669,7 +1669,12 @@ impl App {
     }
 
     /// Open `kind`'s popup, replacing whichever panel is currently shown.
-    fn open_panel(&mut self, kind: PanelKind, monitor: Option<String>) -> Task<Message> {
+    fn open_panel(
+        &mut self,
+        kind: PanelKind,
+        monitor: Option<String>,
+        spot: panel::TriggerSpot,
+    ) -> Task<Message> {
         // A bar with no monitor is not a state we can place a panel from, and
         // guessing an output is what the `LastOutput` fallback used to do.
         // Every bar surface is now tracked with its monitor, so this only fires
@@ -1704,7 +1709,7 @@ impl App {
             .panels
             .entry(kind)
             .or_default()
-            .open(kind, width, height, &monitor);
+            .open(kind, width, height, &monitor, spot);
         Task::batch([close, open])
     }
 

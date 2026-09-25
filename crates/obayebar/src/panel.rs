@@ -1,7 +1,8 @@
-use iced::window;
+use iced::{window, Rectangle};
 use iced_layershell::reexport::{
     Anchor, KeyboardInteractivity, Layer, NewLayerShellSettings, OutputOption,
 };
+use num_traits::ToPrimitive;
 
 use crate::services;
 use crate::Message;
@@ -66,6 +67,41 @@ impl PanelKind {
     }
 }
 
+/// Where a panel's trigger sits on its bar, in the bar surface's logical
+/// pixels. The bar spans its output's full height, so this is also where the
+/// trigger sits on the output.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TriggerSpot {
+    centre_y: f32,
+    output_height: f32,
+}
+
+impl TriggerSpot {
+    /// Spot of a trigger laid out at `bounds` on a bar surface of `viewport`.
+    pub fn new(bounds: Rectangle, viewport: Rectangle) -> Self {
+        Self {
+            centre_y: bounds.center_y(),
+            output_height: viewport.height,
+        }
+    }
+
+    /// Layer-shell margin placing a panel of content `height` beside the bar,
+    /// centred on the trigger and kept `PANEL_GAP_PX` clear of the output's
+    /// top and bottom edges. A panel taller than the room sticks to the top.
+    fn margin(self, height: u32) -> (i32, i32, i32, i32) {
+        let height = f64::from(height);
+        let gap = f64::from(style::PANEL_GAP_PX);
+        let lowest = (f64::from(self.output_height) - height - gap).max(gap);
+        let top = (f64::from(self.centre_y) - height / 2.0).clamp(gap, lowest);
+        (
+            top.round().to_i32().unwrap_or_default(),
+            0,
+            0,
+            style::BAR_WIDTH.cast_signed(),
+        )
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct Panel {
     id: Option<window::Id>,
@@ -73,19 +109,19 @@ pub struct Panel {
     /// Content size the surface was last sized to, so `resize` only dispatches
     /// when the size actually changes.
     size: Option<(u32, u32)>,
+    /// Trigger the open surface is centred on, re-read on every resize.
+    spot: Option<TriggerSpot>,
 }
 
 impl Panel {
     /// Layer-shell surface size for a panel with content size `(width, height)`.
     ///
-    /// The gap is part of the surface so the compositor includes it in the
-    /// input region. `open` and `resize` must agree on it, which is why it
+    /// The gap between bar and panel is part of the surface so the compositor
+    /// includes it in the input region, and the pointer crossing it never
+    /// leaves the panel. `open` and `resize` must agree on it, which is why it
     /// lives here rather than being spelled out at each site.
     const fn surface_size(width: u32, height: u32) -> (u32, u32) {
-        (
-            width.saturating_add(style::PANEL_GAP_PX),
-            height.saturating_add(style::PANEL_GAP_PX),
-        )
+        (width.saturating_add(style::PANEL_GAP_PX), height)
     }
 
     /// Whether this panel currently has a surface.
@@ -101,25 +137,33 @@ impl Panel {
     /// which was guaranteed, since the services withheld their lists until the
     /// panel-open signal flipped — kept the wrong height for its whole
     /// lifetime.
+    ///
+    /// The surface moves with its size so it stays centred on its trigger.
     pub fn resize(&mut self, width: u32, height: u32) -> iced::Task<Message> {
-        let Some(id) = self.id else {
+        let (Some(id), Some(spot)) = (self.id, self.spot) else {
             return iced::Task::none();
         };
         if self.size == Some((width, height)) {
             return iced::Task::none();
         }
         self.size = Some((width, height));
-        iced::Task::done(Message::SizeChange {
-            id,
-            size: Self::surface_size(width, height),
-        })
+        iced::Task::batch([
+            iced::Task::done(Message::SizeChange {
+                id,
+                size: Self::surface_size(width, height),
+            }),
+            iced::Task::done(Message::MarginChange {
+                id,
+                margin: spot.margin(height),
+            }),
+        ])
     }
 
     pub fn is_window(&self, id: window::Id) -> bool {
         self.id == Some(id)
     }
 
-    /// Open this panel on `monitor`.
+    /// Open this panel on `monitor`, beside the bar and centred on `spot`.
     ///
     /// `monitor` is required rather than optional. The old `None` branch used
     /// `OutputOption::LastOutput`, which resolves through `last_wloutput` —
@@ -134,6 +178,7 @@ impl Panel {
         width: u32,
         height: u32,
         monitor: &str,
+        spot: TriggerSpot,
     ) -> iced::Task<Message> {
         if self.open {
             // Unreachable: `open_panel` short-circuits when this kind is
@@ -146,13 +191,14 @@ impl Panel {
         let id = window::Id::unique();
         self.id = Some(id);
         self.size = Some((width, height));
+        self.spot = Some(spot);
         iced::Task::done(Message::NewLayerShell {
             settings: NewLayerShellSettings {
-                anchor: Anchor::Left | Anchor::Bottom,
+                anchor: Anchor::Left | Anchor::Top,
                 layer: Layer::Overlay,
                 exclusive_zone: Some(-1),
                 size: Some(Self::surface_size(width, height)),
-                margin: Some((0, 0, 0, style::BAR_WIDTH.cast_signed())),
+                margin: Some(spot.margin(height)),
                 keyboard_interactivity: KeyboardInteractivity::None,
                 output_option: OutputOption::OutputName(monitor.to_string()),
                 // Per-kind namespace so `j/layers` can tell a panel from a bar
@@ -168,6 +214,7 @@ impl Panel {
     pub fn close(&mut self) -> iced::Task<Message> {
         self.open = false;
         self.size = None;
+        self.spot = None;
         self.id
             .take()
             .map_or_else(iced::Task::none, super::close_window)
@@ -181,9 +228,77 @@ impl Panel {
             self.id = None;
             self.open = false;
             self.size = None;
+            self.spot = None;
             true
         } else {
             false
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const OUTPUT: Rectangle = Rectangle {
+        x: 0.0,
+        y: 0.0,
+        width: 54.0,
+        height: 1080.0,
+    };
+
+    fn spot_at(centre_y: f32) -> TriggerSpot {
+        TriggerSpot::new(
+            Rectangle {
+                x: 0.0,
+                y: centre_y - 10.0,
+                width: 54.0,
+                height: 20.0,
+            },
+            OUTPUT,
+        )
+    }
+
+    fn top(spot: TriggerSpot, height: u32) -> i32 {
+        spot.margin(height).0
+    }
+
+    #[test]
+    fn spot_is_the_trigger_centre_on_a_full_height_bar() {
+        assert_eq!(
+            spot_at(120.0),
+            TriggerSpot {
+                centre_y: 120.0,
+                output_height: 1080.0,
+            }
+        );
+    }
+
+    #[test]
+    fn panel_is_centred_on_its_trigger_when_there_is_room() {
+        assert_eq!(
+            spot_at(500.0).margin(200),
+            (400, 0, 0, style::BAR_WIDTH.cast_signed())
+        );
+    }
+
+    #[test]
+    fn panel_near_the_top_keeps_the_gap_to_the_edge() {
+        assert_eq!(top(spot_at(20.0), 200), 8);
+    }
+
+    #[test]
+    fn panel_near_the_bottom_keeps_the_gap_to_the_edge() {
+        assert_eq!(top(spot_at(1070.0), 200), 872);
+    }
+
+    #[test]
+    fn panel_taller_than_the_output_sticks_to_the_top_gap() {
+        assert_eq!(top(spot_at(500.0), 2000), 8);
+    }
+
+    #[test]
+    fn surface_adds_the_gap_on_the_bar_side_only() {
+        assert_eq!(Panel::surface_size(360, 184), (368, 184));
     }
 }

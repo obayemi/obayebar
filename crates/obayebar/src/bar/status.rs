@@ -1,3 +1,4 @@
+use super::trigger::PanelTrigger;
 use super::widgets::icon_text;
 use crate::panel::PanelKind;
 use crate::services::audio::AudioInfo;
@@ -187,11 +188,6 @@ pub fn view(
             .color(style::M3_SECONDARY)
             .align_x(Alignment::Center),
     )
-    .on_enter(Message::PanelOpen(
-        PanelKind::Audio,
-        monitor.map(String::from),
-    ))
-    .on_exit(Message::PanelPointerLeftTrigger(PanelKind::Audio))
     .on_press(Message::AudioOpenPavucontrol)
     // Emit a *relative* nudge rather than an absolute target. This subtree is
     // built inside `lazy(status_cache_key(..))`, and that key deliberately
@@ -206,39 +202,33 @@ pub fn view(
         };
         Message::AudioNudgeVolume(dy * VOLUME_SCROLL_STEP)
     });
+    let audio_icon = PanelTrigger::new(PanelKind::Audio, monitor.map(String::from), audio_icon);
 
-    let network_icon = mouse_area(
+    let network_icon = PanelTrigger::new(
+        PanelKind::Network,
+        monitor.map(String::from),
         text(network.icon_name)
             .font(style::ICON_FONT)
             .size(style::FONT_SIZE_LARGE)
             .color(style::M3_SECONDARY)
             .align_x(Alignment::Center),
-    )
-    .on_enter(Message::PanelOpen(
-        PanelKind::Network,
-        monitor.map(String::from),
-    ))
-    .on_exit(Message::PanelPointerLeftTrigger(PanelKind::Network));
+    );
 
-    let bluetooth_icon = mouse_area(
+    let bluetooth_icon = PanelTrigger::new(
+        PanelKind::Bluetooth,
+        monitor.map(String::from),
         text(bluetooth.icon_name)
             .font(style::ICON_FONT)
             .size(style::FONT_SIZE_LARGE)
             .color(style::M3_SECONDARY)
             .align_x(Alignment::Center),
-    )
-    .on_enter(Message::PanelOpen(
-        PanelKind::Bluetooth,
-        monitor.map(String::from),
-    ))
-    .on_exit(Message::PanelPointerLeftTrigger(PanelKind::Bluetooth));
+    );
 
-    let sysinfo_icon = mouse_area(sysinfo_icon_view(sysinfo))
-        .on_enter(Message::PanelOpen(
-            PanelKind::Sysinfo,
-            monitor.map(String::from),
-        ))
-        .on_exit(Message::PanelPointerLeftTrigger(PanelKind::Sysinfo));
+    let sysinfo_icon = PanelTrigger::new(
+        PanelKind::Sysinfo,
+        monitor.map(String::from),
+        sysinfo_icon_view(sysinfo),
+    );
 
     icons = icons.push(audio_icon);
     icons = icons.push(bluetooth_icon);
@@ -251,18 +241,15 @@ pub fn view(
         } else {
             style::M3_SECONDARY
         };
-        let battery_icon = mouse_area(
+        let battery_icon = PanelTrigger::new(
+            PanelKind::Battery,
+            monitor.map(String::from),
             text(battery.icon_name)
                 .font(style::ICON_FONT)
                 .size(style::FONT_SIZE_LARGE)
                 .color(battery_color)
                 .align_x(Alignment::Center),
-        )
-        .on_enter(Message::PanelOpen(
-            PanelKind::Battery,
-            monitor.map(String::from),
-        ))
-        .on_exit(Message::PanelPointerLeftTrigger(PanelKind::Battery));
+        );
         icons = icons.push(battery_icon);
     }
 
