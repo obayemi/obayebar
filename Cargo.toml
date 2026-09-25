@@ -48,6 +48,7 @@ tokio-stream = "0.1.19"
 nvml-wrapper = "0.12.1"
 fontdb = "0.24.0"
 fuzzy-matcher = "0.3"
+lru = "0.16.4"
 freedesktop-desktop-entry = { version = "0.8.1", default-features = false }
 freedesktop-icons = "0.4.0"
 # `stream` is the only feature: the watcher lives on the bar's tokio runtime.

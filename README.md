@@ -699,6 +699,7 @@ operates.
 | `inotify`                    | Watch of the application directories                      |
 | `reqwest` (rustls + ring)    | GitLab REST API, album art of the media panel             |
 | `url`                        | Parsing `file:` URIs from notifications and album art     |
+| `lru`                        | Least-recently-used eviction of the album art cache       |
 | `secret-service`             | Storage of the GitLab PAT in the kernel keyring           |
 | `serde` + `toml`             | Config file parsing                                       |
 | `ab_glyph` + `fontdb`        | Vector text on the workspace canvas                       |

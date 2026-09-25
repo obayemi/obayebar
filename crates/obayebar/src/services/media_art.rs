@@ -1,12 +1,14 @@
 //! Album art for the media panel: fetched from the `mpris:artUrl` of the
 //! active track, decoded off the UI thread, and cached by URL.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashSet;
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::Duration;
 
 use iced::widget::image;
+use lru::LruCache;
 
 use crate::services::http;
 
@@ -14,7 +16,7 @@ use crate::services::http;
 /// so anything larger only costs memory.
 const ART_SIZE: u32 = 512;
 /// Covers kept decoded, so skipping back and forth does not refetch.
-const CACHE_CAPACITY: usize = 8;
+const CACHE_CAPACITY: NonZeroUsize = NonZeroUsize::MIN.saturating_add(7);
 const MAX_DOWNLOAD_BYTES: usize = 8 * 1024 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -41,38 +43,45 @@ impl ArtSource {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct ArtCache {
-    entries: VecDeque<(String, Art)>,
+    entries: LruCache<String, Art>,
     pending: HashSet<String>,
 }
 
+impl Default for ArtCache {
+    fn default() -> Self {
+        Self {
+            entries: LruCache::new(CACHE_CAPACITY),
+            pending: HashSet::new(),
+        }
+    }
+}
+
 impl ArtCache {
+    /// The cover to show, without counting the look as a use: a view holds
+    /// only `&self` and must not reorder the cache while composing a frame.
     #[must_use]
-    pub fn get(&self, url: &str) -> Option<&Art> {
-        self.entries
-            .iter()
-            .find_map(|(cached, art)| (cached == url).then_some(art))
+    pub fn peek(&self, url: &str) -> Option<&Art> {
+        self.entries.peek(url)
     }
 
-    /// Whether `url` has to be fetched: neither cached nor already on its way.
-    /// A `true` marks it as on its way.
+    /// Whether `url` has to be fetched: neither cached nor already on its
+    /// way. A `true` marks it as on its way. A cache hit counts as a use,
+    /// promoting it so a track that stays in view survives eviction.
     pub fn request(&mut self, url: &str) -> bool {
-        if self.get(url).is_some() || self.pending.contains(url) {
+        if self.entries.get(url).is_some() || self.pending.contains(url) {
             return false;
         }
         self.pending.insert(url.to_string());
         true
     }
 
-    /// Store a finished fetch, evicting the oldest cover past the capacity.
+    /// Store a finished fetch, evicting the least recently used cover past
+    /// the capacity.
     pub fn insert(&mut self, url: String, art: Art) {
         self.pending.remove(&url);
-        self.entries.retain(|(cached, _)| cached != &url);
-        self.entries.push_back((url, art));
-        while self.entries.len() > CACHE_CAPACITY {
-            self.entries.pop_front();
-        }
+        self.entries.put(url, art);
     }
 }
 
@@ -222,7 +231,7 @@ mod tests {
         assert!(!cache.request("a"));
         cache.insert("a".to_string(), handle());
         assert!(!cache.request("a"));
-        assert!(matches!(cache.get("a"), Some(Art::Loaded(_))));
+        assert!(matches!(cache.peek("a"), Some(Art::Loaded(_))));
     }
 
     #[test]
@@ -231,7 +240,7 @@ mod tests {
         assert!(cache.request("a"));
         cache.insert("a".to_string(), Art::Failed);
         assert!(!cache.request("a"));
-        assert!(matches!(cache.get("a"), Some(Art::Failed)));
+        assert!(matches!(cache.peek("a"), Some(Art::Failed)));
     }
 
     #[test]
@@ -252,12 +261,24 @@ mod tests {
     #[test]
     fn the_oldest_cover_is_evicted_past_capacity() {
         let mut cache = ArtCache::default();
-        for i in 0..=CACHE_CAPACITY {
+        for i in 0..=CACHE_CAPACITY.get() {
             cache.insert(i.to_string(), handle());
         }
-        assert!(cache.get("0").is_none());
-        assert!(cache.get("1").is_some());
-        assert!(cache.get(&CACHE_CAPACITY.to_string()).is_some());
+        assert!(cache.peek("0").is_none());
+        assert!(cache.peek("1").is_some());
+        assert!(cache.peek(&CACHE_CAPACITY.get().to_string()).is_some());
+    }
+
+    #[test]
+    fn touching_the_oldest_cover_saves_it_from_eviction() {
+        let mut cache = ArtCache::default();
+        for i in 0..CACHE_CAPACITY.get() {
+            cache.insert(i.to_string(), handle());
+        }
+        assert!(!cache.request("0"));
+        cache.insert(CACHE_CAPACITY.get().to_string(), handle());
+        assert!(cache.peek("0").is_some());
+        assert!(cache.peek("1").is_none());
     }
 
     #[test]

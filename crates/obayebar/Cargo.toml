@@ -40,6 +40,7 @@ tokio-stream.workspace = true
 nvml-wrapper.workspace = true
 fontdb.workspace = true
 fuzzy-matcher.workspace = true
+lru.workspace = true
 freedesktop-desktop-entry.workspace = true
 freedesktop-icons.workspace = true
 inotify.workspace = true

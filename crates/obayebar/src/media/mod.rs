@@ -194,7 +194,7 @@ impl MediaState {
     #[must_use]
     pub fn art(&self) -> Option<&image::Handle> {
         let url = self.active()?.track.art_url.as_deref()?;
-        match self.art.get(url)? {
+        match self.art.peek(url)? {
             Art::Loaded(handle) => Some(handle),
             Art::Failed => None,
         }
