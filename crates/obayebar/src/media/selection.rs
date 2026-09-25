@@ -4,6 +4,14 @@ use std::collections::HashMap;
 
 use crate::services::media::{PlaybackStatus, Player};
 
+/// Where the active player sits among several, in cycling order: the
+/// `index`th, counted from one, of `total`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Rotation {
+    pub index: usize,
+    pub total: usize,
+}
+
 /// The player that most recently started playing wins; before any player has
 /// played, the one that appeared last. Cycling from the panel chip pins a
 /// player, and the pin holds until some *other* player starts playing or the
@@ -61,13 +69,28 @@ impl Selection {
 
     /// Pin the player after the active one, wrapping around.
     pub fn cycle(&mut self, players: &[Player]) {
-        let current = self.active(players).map(|p| p.bus_name.as_str());
-        let next = players
-            .iter()
-            .skip_while(|p| Some(p.bus_name.as_str()) != current)
-            .nth(1)
+        let next = self
+            .active_position(players)
+            .and_then(|i| players.get(i.checked_add(1)?))
             .or_else(|| players.first());
         self.pinned = next.map(|p| p.bus_name.clone());
+    }
+
+    /// The active player's place among the others. `None` unless there is
+    /// another player to cycle to.
+    #[must_use]
+    pub fn rotation(&self, players: &[Player]) -> Option<Rotation> {
+        let total = players.len();
+        if total < 2 {
+            return None;
+        }
+        let index = self.active_position(players)?.checked_add(1)?;
+        Some(Rotation { index, total })
+    }
+
+    fn active_position(&self, players: &[Player]) -> Option<usize> {
+        let active = self.active(players)?;
+        players.iter().position(|p| p.bus_name == active.bus_name)
     }
 }
 
@@ -163,6 +186,35 @@ mod tests {
         assert_eq!(active_bus(&selection, &players), Some("c".to_string()));
         selection.cycle(&players);
         assert_eq!(active_bus(&selection, &players), Some("a".to_string()));
+    }
+
+    #[test]
+    fn a_lone_player_has_no_rotation() {
+        let mut selection = Selection::default();
+        assert_eq!(selection.rotation(&[]), None);
+        let alone = [player("a", PlaybackStatus::Playing)];
+        selection.observe(&alone);
+        assert_eq!(selection.rotation(&alone), None);
+    }
+
+    #[test]
+    fn the_rotation_follows_the_active_player() {
+        let mut selection = Selection::default();
+        let players = [
+            player("a", PlaybackStatus::Playing),
+            player("b", PlaybackStatus::Paused),
+            player("c", PlaybackStatus::Paused),
+        ];
+        selection.observe(&players);
+        assert_eq!(
+            selection.rotation(&players),
+            Some(Rotation { index: 1, total: 3 })
+        );
+        selection.cycle(&players);
+        assert_eq!(
+            selection.rotation(&players),
+            Some(Rotation { index: 2, total: 3 })
+        );
     }
 
     #[test]

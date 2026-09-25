@@ -14,6 +14,7 @@ use iced::Animation;
 
 use art_cache::ArtCache;
 pub use controls::Controls;
+pub use selection::Rotation;
 use selection::Selection;
 
 use crate::services::media::{Command, Player};
@@ -42,14 +43,6 @@ pub enum Action {
     CycleLoop,
     ToggleShuffle,
     Seek(Duration),
-}
-
-/// Where the active player sits among several, in cycling order: the
-/// `index`th, counted from one, of `total`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Rotation {
-    pub index: usize,
-    pub total: usize,
 }
 
 /// A message from the media service or the panel's widgets.
@@ -194,12 +187,7 @@ impl MediaState {
     /// another player to cycle to.
     #[must_use]
     pub fn rotation(&self) -> Option<Rotation> {
-        let total = self.players.len();
-        let active = &self.active()?.bus_name;
-        let index = (1..)
-            .zip(&self.players)
-            .find_map(|(index, p)| (&p.bus_name == active).then_some(index))?;
-        (total > 1).then_some(Rotation { index, total })
+        self.selection.rotation(&self.players)
     }
 
     #[must_use]
@@ -395,29 +383,6 @@ mod tests {
         media.tick(t1 + Duration::from_secs(5));
         assert!(!media.animating());
         assert!(media.wave_level().abs() < f32::EPSILON);
-    }
-
-    #[test]
-    fn a_lone_player_has_no_rotation() {
-        let t0 = Instant::now();
-        let mut media = MediaState::new(t0, true);
-        assert_eq!(media.rotation(), None);
-        media.update(vec![player("a", PlaybackStatus::Playing, None, t0)]);
-        assert_eq!(media.rotation(), None);
-    }
-
-    #[test]
-    fn the_rotation_follows_the_active_player() {
-        let t0 = Instant::now();
-        let mut media = MediaState::new(t0, true);
-        media.update(vec![
-            player("a", PlaybackStatus::Playing, None, t0),
-            player("b", PlaybackStatus::Paused, None, t0),
-            player("c", PlaybackStatus::Paused, None, t0),
-        ]);
-        assert_eq!(media.rotation(), Some(Rotation { index: 1, total: 3 }));
-        media.cycle_player();
-        assert_eq!(media.rotation(), Some(Rotation { index: 2, total: 3 }));
     }
 
     fn commanded(media: &mut MediaState, action: Action) -> Option<String> {
