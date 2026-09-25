@@ -6,6 +6,7 @@ mod clock;
 mod gitlab;
 pub mod gitlab_panel;
 pub mod network_panel;
+mod rotated_text;
 mod status;
 pub mod sysinfo_panel;
 mod tray;
