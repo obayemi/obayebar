@@ -96,19 +96,13 @@ fn player_chip(identity: &str, rotation: Option<Rotation>) -> Element<'_, Messag
 /// stays legible on light art. The padding holds either way so nothing
 /// shifts when a cover loads.
 fn legible<'a>(content: impl Into<Element<'a, Message>>, over_art: bool) -> Element<'a, Message> {
-    let surface = move |_: &Theme| container::Style {
-        background: over_art
-            .then(|| iced::Background::Color(style::with_alpha(Color::BLACK, SURFACE_ALPHA))),
-        border: iced::Border {
-            radius: style::ROUNDING_SMALL.into(),
-            ..iced::Border::default()
-        },
-        ..container::Style::default()
-    };
-    container(content)
-        .padding([2.0, style::PADDING_SMALL])
-        .style(surface)
-        .into()
+    let surface = container(content).padding([2.0, style::PADDING_SMALL]);
+    if over_art {
+        surface.style(shade(SURFACE_ALPHA, style::ROUNDING_SMALL))
+    } else {
+        surface
+    }
+    .into()
 }
 
 fn play_button(state: PlayPause) -> Element<'static, Message> {
@@ -215,17 +209,10 @@ fn transport<'a>(media: &MediaState, player: &Player, controls: &Controls) -> El
 }
 
 /// Darken the cover so the overlaid text stays legible on any art.
-fn scrim(_theme: &Theme) -> container::Style {
-    container::Style {
-        background: Some(iced::Background::Color(style::with_alpha(
-            Color::BLACK,
-            SCRIM_ALPHA,
-        ))),
-        border: iced::Border {
-            radius: style::ROUNDING_NORMAL.into(),
-            ..iced::Border::default()
-        },
-        ..container::Style::default()
+fn shade(alpha: f32, radius: f32) -> impl Fn(&Theme) -> container::Style {
+    move |_| {
+        container::background(style::with_alpha(Color::BLACK, alpha))
+            .border(iced::border::rounded(radius))
     }
 }
 
@@ -242,7 +229,9 @@ fn background(art: Option<&image::Handle>) -> Element<'_, Message> {
                     .height(Length::Fill)
                     .border_radius(style::ROUNDING_NORMAL)
                     .into(),
-                container(fill()).style(scrim).into(),
+                container(fill())
+                    .style(shade(SCRIM_ALPHA, style::ROUNDING_NORMAL))
+                    .into(),
             ])
             .into()
         },
@@ -310,5 +299,31 @@ mod tests {
             chip_label("Spotify", selection.rotation(&players)),
             "Spotify · 3/3"
         );
+    }
+
+    #[test]
+    fn the_scrim_darkens_the_cover_within_the_card_corners() {
+        let shaded = shade(SCRIM_ALPHA, style::ROUNDING_NORMAL)(&Theme::Dark);
+        assert_eq!(
+            shaded.background,
+            Some(iced::Background::Color(style::with_alpha(
+                Color::BLACK,
+                SCRIM_ALPHA
+            )))
+        );
+        assert_eq!(shaded.border, iced::border::rounded(style::ROUNDING_NORMAL));
+    }
+
+    #[test]
+    fn the_text_surface_shades_within_small_corners() {
+        let surface = shade(SURFACE_ALPHA, style::ROUNDING_SMALL)(&Theme::Dark);
+        assert_eq!(
+            surface.background,
+            Some(iced::Background::Color(style::with_alpha(
+                Color::BLACK,
+                SURFACE_ALPHA
+            )))
+        );
+        assert_eq!(surface.border, iced::border::rounded(style::ROUNDING_SMALL));
     }
 }
