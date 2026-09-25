@@ -150,6 +150,7 @@ pub const ICON_SKIP_PREVIOUS: &str = "\u{E045}";
 pub const ICON_REPEAT: &str = "\u{E040}";
 pub const ICON_REPEAT_ONE: &str = "\u{E041}";
 pub const ICON_SHUFFLE: &str = "\u{E043}";
+pub const ICON_SWAP_HORIZ: &str = "\u{E8D4}";
 
 pub const AUDIO_PANEL_WIDTH: u32 = 320;
 pub const NETWORK_PANEL_WIDTH: u32 = 300;

@@ -4,7 +4,7 @@ use super::rotated_text::truncate_with_ellipsis;
 use super::wave_slider;
 use super::widgets::{icon_text, panel_with_exit};
 use crate::media::controls::{Controls, PlayPause};
-use crate::media::{Action, MediaState, Message as MediaMessage};
+use crate::media::{Action, MediaState, Message as MediaMessage, Rotation};
 use crate::panel::PanelKind;
 use crate::services::media::{LoopStatus, Player};
 use crate::Message;
@@ -19,6 +19,8 @@ const MAX_TITLE_CHARS: usize = 26;
 const MAX_ARTIST_CHARS: usize = 36;
 /// Darkening laid over the cover so text stays legible on any art.
 const SCRIM_ALPHA: f32 = 0.55;
+/// Extra darkening under the text laid over the cover.
+const SURFACE_ALPHA: f32 = 0.4;
 
 /// `m:ss`, or `h:mm:ss` from an hour up.
 fn format_time(time: Duration) -> String {
@@ -60,16 +62,52 @@ const fn loop_icon(status: LoopStatus) -> &'static str {
     }
 }
 
+/// The player's name, followed by its place among the others when there are.
+fn chip_label(identity: &str, rotation: Option<Rotation>) -> String {
+    rotation.map_or_else(
+        || identity.to_string(),
+        |Rotation { index, total }| format!("{identity} · {index}/{total}"),
+    )
+}
+
 /// The player's name; a button cycling to the next player when there is one.
-fn player_chip(identity: &str, cycles: bool) -> Element<'_, Message> {
-    let label = text(identity)
-        .size(style::FONT_SIZE_SMALL)
-        .color(style::M3_ON_SURFACE);
+fn player_chip(identity: &str, rotation: Option<Rotation>) -> Element<'_, Message> {
+    let label = row![
+        rotation.map(|_| icon_text(
+            style::ICON_SWAP_HORIZ,
+            style::FONT_SIZE_SMALL,
+            style::M3_PRIMARY
+        )),
+        text(chip_label(identity, rotation))
+            .size(style::FONT_SIZE_SMALL)
+            .color(style::M3_ON_SURFACE),
+    ]
+    .spacing(style::SPACING_SMALL)
+    .align_y(Alignment::Center);
     let bg = style::with_alpha(style::M3_SURFACE_CONTAINER_HIGHEST, 0.7);
     button(label)
         .padding([2.0, style::PADDING_NORMAL])
         .style(round_button(bg, style::M3_ON_SURFACE))
-        .on_press_maybe(cycles.then_some(Message::Media(MediaMessage::CyclePlayer)))
+        .on_press_maybe(rotation.map(|_| Message::Media(MediaMessage::CyclePlayer)))
+        .into()
+}
+
+/// Lay a darker surface under `content` while it sits over a cover, so it
+/// stays legible on light art. The padding holds either way so nothing
+/// shifts when a cover loads.
+fn legible<'a>(content: impl Into<Element<'a, Message>>, over_art: bool) -> Element<'a, Message> {
+    let surface = move |_: &Theme| container::Style {
+        background: over_art
+            .then(|| iced::Background::Color(style::with_alpha(Color::BLACK, SURFACE_ALPHA))),
+        border: iced::Border {
+            radius: style::ROUNDING_SMALL.into(),
+            ..iced::Border::default()
+        },
+        ..container::Style::default()
+    };
+    container(content)
+        .padding([2.0, style::PADDING_SMALL])
+        .style(surface)
         .into()
 }
 
@@ -91,13 +129,13 @@ fn play_button(state: PlayPause) -> Element<'static, Message> {
     .into()
 }
 
-fn header<'a>(media: &'a MediaState, player: &'a Player) -> Element<'a, Message> {
+fn header<'a>(media: &'a MediaState, player: &'a Player, over_art: bool) -> Element<'a, Message> {
     let elapsed = player.position_at(media.now());
     let times = player.track.length.map_or_else(
         || format_time(elapsed),
         |length| format!("{} / {}", format_time(elapsed), format_time(length)),
     );
-    row![
+    let clock = row![
         icon_text(
             style::ICON_MUSIC_NOTE,
             style::FONT_SIZE_NORMAL,
@@ -106,15 +144,23 @@ fn header<'a>(media: &'a MediaState, player: &'a Player) -> Element<'a, Message>
         text(times)
             .size(style::FONT_SIZE_SMALL)
             .color(style::M3_ON_SURFACE_VARIANT),
-        Space::new().width(Length::Fill),
-        player_chip(&player.identity, media.players().len() > 1),
     ]
     .spacing(style::SPACING_SMALL)
+    .align_y(Alignment::Center);
+    row![
+        legible(clock, over_art),
+        Space::new().width(Length::Fill),
+        player_chip(&player.identity, media.rotation()),
+    ]
     .align_y(Alignment::Center)
     .into()
 }
 
-fn now_playing(player: &Player, play_pause: Option<PlayPause>) -> Element<'_, Message> {
+fn now_playing(
+    player: &Player,
+    play_pause: Option<PlayPause>,
+    over_art: bool,
+) -> Element<'_, Message> {
     let labels = column![
         text(truncate_with_ellipsis(player.title(), MAX_TITLE_CHARS))
             .size(style::FONT_SIZE_LARGE)
@@ -125,11 +171,14 @@ fn now_playing(player: &Player, play_pause: Option<PlayPause>) -> Element<'_, Me
                 .color(style::M3_ON_SURFACE_VARIANT)
         }),
     ]
-    .spacing(2.0)
-    .width(Length::Fill);
-    row![labels, play_pause.map(play_button)]
-        .align_y(Alignment::Center)
-        .into()
+    .spacing(2.0);
+    row![
+        legible(labels, over_art),
+        Space::new().width(Length::Fill),
+        play_pause.map(play_button),
+    ]
+    .align_y(Alignment::Center)
+    .into()
 }
 
 fn transport<'a>(media: &MediaState, player: &Player, controls: &Controls) -> Element<'a, Message> {
@@ -202,9 +251,10 @@ fn background(art: Option<&image::Handle>) -> Element<'_, Message> {
 
 fn card_content<'a>(media: &'a MediaState, player: &'a Player) -> Element<'a, Message> {
     let controls = Controls::for_player(player);
+    let over_art = media.art().is_some();
     column![
-        header(media, player),
-        now_playing(player, controls.play_pause),
+        header(media, player, over_art),
+        now_playing(player, controls.play_pause, over_art),
         Space::new().height(Length::Fill),
         transport(media, player, &controls),
     ]
@@ -246,5 +296,14 @@ mod tests {
         assert_eq!(format_time(Duration::ZERO), "0:00");
         assert_eq!(format_time(Duration::from_millis(187_900)), "3:07");
         assert_eq!(format_time(Duration::from_secs(3723)), "1:02:03");
+    }
+
+    #[test]
+    fn the_chip_counts_players_only_when_there_are_others() {
+        assert_eq!(chip_label("Spotify", None), "Spotify");
+        assert_eq!(
+            chip_label("Spotify", Some(Rotation { index: 1, total: 3 })),
+            "Spotify · 1/3"
+        );
     }
 }
