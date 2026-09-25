@@ -217,7 +217,8 @@ fn transport<'a>(media: &MediaState, player: &Player, controls: &Controls) -> El
     .into()
 }
 
-/// Darken the cover so the overlaid text stays legible on any art.
+/// A black overlay at `alpha`, rounded to `radius`, darkening whatever it
+/// covers so the text above stays legible.
 fn shade(alpha: f32, radius: f32) -> impl Fn(&Theme) -> container::Style {
     move |_| {
         container::background(style::with_alpha(Color::BLACK, alpha))
