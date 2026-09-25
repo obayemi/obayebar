@@ -33,12 +33,11 @@ enum ArtSource {
 
 impl ArtSource {
     fn parse(url: &str) -> Option<Self> {
-        let url = reqwest::Url::parse(url).ok()?;
-        match url.scheme() {
-            "file" => Some(Self::File(url.to_file_path().ok()?)),
-            "http" | "https" => Some(Self::Http(url)),
-            _ => None,
+        if let Some(path) = crate::file_uri::local_path(url) {
+            return Some(Self::File(path));
         }
+        let url = reqwest::Url::parse(url).ok()?;
+        matches!(url.scheme(), "http" | "https").then_some(Self::Http(url))
     }
 }
 
@@ -201,7 +200,14 @@ mod tests {
     #[test]
     fn other_schemes_are_not_supported() {
         assert_eq!(ArtSource::parse("data:image/png;base64,AAAA"), None);
-        assert_eq!(ArtSource::parse("/no/scheme.png"), None);
+    }
+
+    #[test]
+    fn a_bare_absolute_path_is_treated_as_a_file() {
+        assert_eq!(
+            ArtSource::parse("/no/scheme.png"),
+            Some(ArtSource::File(PathBuf::from("/no/scheme.png")))
+        );
     }
 
     #[test]
