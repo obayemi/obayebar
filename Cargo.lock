@@ -3102,6 +3102,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "toml",
+ "url",
  "wayland-backend",
  "zbus",
 ]

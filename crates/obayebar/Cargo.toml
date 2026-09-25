@@ -47,6 +47,7 @@ image.workspace = true
 resvg.workspace = true
 reqwest.workspace = true
 rustls.workspace = true
+url.workspace = true
 secret-service.workspace = true
 thiserror.workspace = true
 

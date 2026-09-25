@@ -698,6 +698,7 @@ operates.
 | `freedesktop-icons`          | Icon lookup, with the inheritance of a theme              |
 | `inotify`                    | Watch of the application directories                      |
 | `reqwest` (rustls + ring)    | GitLab REST API, album art of the media panel             |
+| `url`                        | Parsing `file:` URIs from notifications and album art     |
 | `secret-service`             | Storage of the GitLab PAT in the kernel keyring           |
 | `serde` + `toml`             | Config file parsing                                       |
 | `ab_glyph` + `fontdb`        | Vector text on the workspace canvas                       |

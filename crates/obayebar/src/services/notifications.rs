@@ -1,5 +1,6 @@
 use futures_util::Stream;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock};
 use zbus::object_server::{InterfaceRef, SignalEmitter};
@@ -528,9 +529,16 @@ fn parse_image_data(value: &zbus::zvariant::OwnedValue) -> Option<NotificationIm
     }
 }
 
+/// Resolve an `image-path`/`app_icon` hint to a local file path, without
+/// touching the filesystem. A bare icon name or anything else that is not a
+/// local path is `None`.
+fn resolve_image_path(path: &str) -> Option<PathBuf> {
+    crate::file_uri::local_path(path)
+}
+
 /// Load an image from a file path and convert to RGBA.
 fn load_image_from_path(path: &str) -> Option<NotificationImage> {
-    let path = path.strip_prefix("file://").unwrap_or(path).to_string();
+    let path = resolve_image_path(path)?;
 
     let img = image::open(&path).ok()?.into_rgba8();
     let width = img.width();
@@ -589,7 +597,21 @@ pub fn stream() -> impl Stream<Item = NotifEvent> {
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod tests {
-    use super::{to_rgba, ImageDataError, ImageGeometry, MAX_IMAGE_DIM};
+    use super::{resolve_image_path, to_rgba, ImageDataError, ImageGeometry, MAX_IMAGE_DIM};
+    use std::path::PathBuf;
+
+    #[test]
+    fn an_image_path_hint_decodes_a_percent_encoded_file_uri() {
+        assert_eq!(
+            resolve_image_path("file:///home/me/My%20Pics/a.png"),
+            Some(PathBuf::from("/home/me/My Pics/a.png"))
+        );
+    }
+
+    #[test]
+    fn an_app_icon_name_does_not_resolve_to_a_path() {
+        assert_eq!(resolve_image_path("firefox"), None);
+    }
 
     /// A 2x2 RGBA payload with no stride padding.
     fn rgba_2x2() -> Vec<u8> {
