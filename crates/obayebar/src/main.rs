@@ -425,14 +425,8 @@ pub enum Message {
     AudioSetDefaultSink(u32),
     AudioOpenPavucontrol,
     SetPowerProfile(String),
-    /// A fresh snapshot of every MPRIS player, from the media service.
-    Media(Vec<services::media::Player>),
-    /// A cover fetch for this URL finished.
-    MediaArt(String, services::media_art::Art),
-    /// An animation frame for the media panel's slider.
-    MediaFrame,
-    MediaControl(media::Action),
-    MediaCyclePlayer,
+    /// A message from the media service or the media panel's widgets.
+    Media(media::Message),
     WindowClosed(window::Id),
     /// A line arrived on the control socket, from `obayebar-launcher`.
     Control(obayebar_core::control::BarCommand),
@@ -533,7 +527,7 @@ impl App {
         let task = self.handle_message(message);
         self.sync_panel_signals();
         // Any message can change what a panel renders, so refit here rather
-        // than in each of the five service arms. `Panel::resize` no-ops when
+        // than in each service arm. `Panel::resize` no-ops when
         // the size is unchanged, so this costs nothing in the common case.
         let resize = self.resize_open_panel();
         Task::batch([task, resize])
@@ -874,10 +868,7 @@ impl App {
                 services::battery::set_power_profile(&profile);
                 Task::none()
             }
-            Message::Media(_)
-            | Message::MediaArt(..)
-            | Message::MediaControl(_)
-            | Message::MediaCyclePlayer => self.update_media(message),
+            Message::Media(message) => self.update_media(message),
             Message::AudioOpenPavucontrol => {
                 // A mixer the user opened from the bar has no business dying
                 // when the bar restarts, so it goes out through the spawner
@@ -1445,7 +1436,7 @@ impl App {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        let is_animating = self.ws_spring.values().any(SpringState::is_animating);
+        let mut is_animating = self.ws_spring.values().any(SpringState::is_animating);
 
         let mut subs = vec![
             Subscription::run(services::timers::clock_stream).map(|_| Message::Tick),
@@ -1486,13 +1477,11 @@ impl App {
         }
 
         if let Some(media) = &self.media {
-            subs.push(Subscription::run(services::media::stream).map(Message::Media));
-            if self.media_panel_open() && media.animating() {
-                subs.push(
-                    iced::time::every(std::time::Duration::from_millis(16))
-                        .map(|_| Message::MediaFrame),
-                );
-            }
+            subs.push(
+                Subscription::run(services::media::stream)
+                    .map(|players| Message::Media(media::Message::Players(players))),
+            );
+            is_animating |= self.media_panel_open() && media.animating();
         }
 
         if is_animating {
@@ -1615,39 +1604,43 @@ impl App {
     }
 
     /// Handle a media message. Only a running media module receives any.
-    fn update_media(&mut self, message: Message) -> Task<Message> {
+    ///
+    /// A snapshot that hides the bar entry while the panel is open does not
+    /// close the panel directly: the entry's own pointer leave can never
+    /// arrive once it is gone, but the panel might still be pinned open by
+    /// the pointer sitting over it (say, right after the user paused
+    /// playback from inside the panel itself). So this only clears the
+    /// trigger half of the pointer state and arms the grace timer, and
+    /// [`Message::PanelGraceElapsed`] closes the panel once the pointer is
+    /// confirmed to be on neither the trigger nor the panel.
+    fn update_media(&mut self, message: media::Message) -> Task<Message> {
         let Some(media) = self.media.as_mut() else {
             return Task::none();
         };
-        let now = media.now();
         match message {
-            Message::Media(players) => {
-                let art = Self::fetch_media_art(media.update(players, now));
-                if media.trigger() == media::Trigger::Hidden && self.media_panel_open() {
-                    return Task::batch([art, self.close_all_panels()]);
+            media::Message::Players(players) => {
+                let art = Self::fetch_media_art(media.update(players));
+                if media.trigger().is_none() && self.media_panel_open() {
+                    self.panel_pointer.left_trigger(PanelKind::Media);
+                    return Task::batch([art, Self::arm_panel_grace()]);
                 }
                 art
             }
-            Message::MediaArt(url, art) => {
+            media::Message::Art(url, art) => {
                 media.art_loaded(url, art);
                 Task::none()
             }
-            Message::MediaControl(action) => {
-                if let Some((bus_name, command)) = media.command(action) {
+            media::Message::Control(action) => {
+                if let Some((bus_name, command)) = media.apply(action) {
                     services::media::send(bus_name, command);
-                    if let media::Action::Seek(position) = action {
-                        media.seek(position, now);
-                    }
                 }
                 Task::none()
             }
-            Message::MediaCyclePlayer => Self::fetch_media_art(media.cycle_player(now)),
-            _ => Task::none(),
+            media::Message::CyclePlayer => Self::fetch_media_art(media.cycle_player()),
         }
     }
 
-    /// Whether the media panel is up. It is closed when its bar entry goes
-    /// away, since that entry's pointer leave would then never arrive.
+    /// Whether the media panel is up.
     fn media_panel_open(&self) -> bool {
         self.panels
             .get(&PanelKind::Media)
@@ -1658,7 +1651,7 @@ impl App {
     fn fetch_media_art(url: Option<String>) -> Task<Message> {
         url.map_or_else(Task::none, |url| {
             Task::perform(services::media_art::load(url.clone()), move |art| {
-                Message::MediaArt(url, art)
+                Message::Media(media::Message::Art(url, art))
             })
         })
     }

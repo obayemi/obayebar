@@ -3075,6 +3075,7 @@ version = "0.1.0"
 dependencies = [
  "ab_glyph",
  "async-channel",
+ "bitflags 2.13.1",
  "chrono",
  "env_logger",
  "fontdb 0.24.0",

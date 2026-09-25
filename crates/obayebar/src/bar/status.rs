@@ -1,3 +1,4 @@
+use super::widgets::icon_text;
 use crate::panel::PanelKind;
 use crate::services::audio::AudioInfo;
 use crate::services::battery::BatteryInfo;
@@ -32,12 +33,7 @@ fn usage_color(percent: f32) -> Color {
 
 /// Render a single icon at the standard bar size.
 fn single_icon(icon: &str, color: Color) -> Element<'_, Message> {
-    text(icon)
-        .font(style::ICON_FONT)
-        .size(style::FONT_SIZE_LARGE)
-        .color(color)
-        .align_x(Alignment::Center)
-        .into()
+    icon_text(icon, style::FONT_SIZE_LARGE, color).into()
 }
 
 /// Canvas program that draws two icon glyphs split diagonally:

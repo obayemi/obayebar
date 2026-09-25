@@ -153,6 +153,42 @@ pub fn hover_button_style(
     style::hover_button(bg, text_color, style::ROUNDING_SMALL)
 }
 
+/// A centered icon glyph at `size`, ready to drop into a button or a stack.
+pub fn icon_text(glyph: &str, size: f32, color: Color) -> iced::widget::Text<'_> {
+    text(glyph)
+        .font(style::ICON_FONT)
+        .size(size)
+        .color(color)
+        .align_x(Alignment::Center)
+        .align_y(Alignment::Center)
+}
+
+/// A bar entry that opens `kind`'s panel: `content` wrapped in the standard
+/// pill container, wired to open on press or hover and to arm the grace timer
+/// when the pointer leaves.
+///
+/// Every bar trigger wires this identically, and panel dismissal in
+/// `App::update` depends on that wiring staying the same everywhere: a
+/// trigger that skipped `on_exit` would never arm the grace close.
+pub fn panel_trigger<'a>(
+    kind: PanelKind,
+    monitor: Option<String>,
+    content: impl Into<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    let open_msg = Message::PanelOpen(kind, monitor);
+    let clickable = mouse_area(content)
+        .on_press(open_msg.clone())
+        .on_enter(open_msg)
+        .on_exit(Message::PanelPointerLeftTrigger(kind));
+
+    container(clickable)
+        .padding(style::PADDING_NORMAL)
+        .width(Length::Fill)
+        .align_x(Alignment::Center)
+        .style(style::pill_container)
+        .into()
+}
+
 /// Small icon-only button with `hover_button_style` and transparent baseline.
 pub fn icon_button(icon: &str, color: Color, message: Message) -> Element<'_, Message> {
     button(

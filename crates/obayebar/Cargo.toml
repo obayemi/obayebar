@@ -33,6 +33,7 @@ log.workspace = true
 env_logger.workspace = true
 async-channel.workspace = true
 ab_glyph.workspace = true
+bitflags.workspace = true
 pipewire.workspace = true
 wayland-backend.workspace = true
 tokio-stream.workspace = true

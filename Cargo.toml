@@ -41,6 +41,7 @@ log = "0.4.34"
 env_logger = "0.11.11"
 async-channel = "2.5.0"
 ab_glyph = "0.2"
+bitflags = "2"
 pipewire = "0.10.1"
 wayland-backend = { version = "0.3", features = ["log"] }
 tokio-stream = "0.1.19"

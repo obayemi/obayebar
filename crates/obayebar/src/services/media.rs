@@ -4,9 +4,10 @@
 use std::collections::{BTreeMap, HashMap};
 use std::time::{Duration, Instant};
 
+use bitflags::bitflags;
 use futures_util::stream::StreamExt;
 use futures_util::Stream;
-use zbus::names::InterfaceName;
+use zbus::names::{InterfaceName, OwnedUniqueName};
 use zbus::zvariant::{OwnedObjectPath, OwnedValue};
 
 use crate::services::dbus_util::{self, PanelSignal};
@@ -17,10 +18,16 @@ const ROOT_IFACE: &str = "org.mpris.MediaPlayer2";
 const PLAYER_IFACE: &str = "org.mpris.MediaPlayer2.Player";
 /// The track id MPRIS reserves for "no track".
 const NO_TRACK: &str = "/org/mpris/MediaPlayer2/TrackList/NoTrack";
+/// `playerctld` re-exports whichever player last had focus under its own
+/// MPRIS name, which is not a player to list alongside the one it mirrors.
+const PLAYERCTLD: &str = "org.mpris.MediaPlayer2.playerctld";
 
 /// How often `Position` is re-read while the panel shows a playing player, to
 /// correct the drift of the extrapolation.
 const RESAMPLE_INTERVAL: Duration = Duration::from_secs(4);
+/// Longest a single property read may take before it counts as failed, so one
+/// unresponsive player cannot stall every other player's signals.
+const READ_TIMEOUT: Duration = Duration::from_secs(2);
 
 static PANEL: PanelSignal = PanelSignal::new();
 
@@ -28,6 +35,12 @@ static PANEL: PanelSignal = PanelSignal::new();
 /// resampled while it is open, since nothing else shows it.
 pub fn set_panel_open(open: bool) {
     PANEL.set(open);
+}
+
+/// Whether `name` is a real MPRIS player rather than an aggregator such as
+/// `playerctld`, which re-exports another player's name under its own.
+fn is_player_name(name: &str) -> bool {
+    name.starts_with(MPRIS_PREFIX) && name != PLAYERCTLD
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,13 +69,10 @@ pub enum LoopStatus {
 }
 
 impl LoopStatus {
+    const ALL: [Self; 3] = [Self::None, Self::Track, Self::Playlist];
+
     fn parse(raw: &str) -> Option<Self> {
-        match raw {
-            "None" => Some(Self::None),
-            "Track" => Some(Self::Track),
-            "Playlist" => Some(Self::Playlist),
-            _ => None,
-        }
+        Self::ALL.into_iter().find(|status| status.as_str() == raw)
     }
 
     const fn as_str(self) -> &'static str {
@@ -85,61 +95,44 @@ impl LoopStatus {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Capability {
-    GoNext,
-    GoPrevious,
-    Play,
-    Pause,
-    Seek,
-    Control,
-}
-
-impl Capability {
-    const ALL: [(Self, &'static str); 6] = [
-        (Self::GoNext, "CanGoNext"),
-        (Self::GoPrevious, "CanGoPrevious"),
-        (Self::Play, "CanPlay"),
-        (Self::Pause, "CanPause"),
-        (Self::Seek, "CanSeek"),
-        (Self::Control, "CanControl"),
-    ];
-
-    const fn bit(self) -> u8 {
-        match self {
-            Self::GoNext => 1,
-            Self::GoPrevious => 2,
-            Self::Play => 4,
-            Self::Pause => 8,
-            Self::Seek => 16,
-            Self::Control => 32,
-        }
+bitflags! {
+    /// The `Can*` properties of a player, as a set.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+    pub struct Capabilities: u8 {
+        const GO_NEXT = 1 << 0;
+        const GO_PREVIOUS = 1 << 1;
+        const PLAY = 1 << 2;
+        const PAUSE = 1 << 3;
+        const SEEK = 1 << 4;
+        const CONTROL = 1 << 5;
     }
 }
 
-/// The `Can*` properties of a player, as a set.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct Capabilities(u8);
-
-impl Capabilities {
-    #[must_use]
-    pub const fn with(self, capability: Capability) -> Self {
-        Self(self.0 | capability.bit())
-    }
-
-    #[must_use]
-    pub const fn has(self, capability: Capability) -> bool {
-        self.0 & capability.bit() != 0
-    }
-}
+/// The `Can*` property names, in the order their bit is declared.
+const CAPABILITY_PROPERTIES: [(Capabilities, &str); 6] = [
+    (Capabilities::GO_NEXT, "CanGoNext"),
+    (Capabilities::GO_PREVIOUS, "CanGoPrevious"),
+    (Capabilities::PLAY, "CanPlay"),
+    (Capabilities::PAUSE, "CanPause"),
+    (Capabilities::SEEK, "CanSeek"),
+    (Capabilities::CONTROL, "CanControl"),
+];
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Track {
     pub id: Option<OwnedObjectPath>,
-    pub title: String,
+    pub title: Option<String>,
     pub artists: Vec<String>,
     pub length: Option<Duration>,
     pub art_url: Option<String>,
+}
+
+impl Track {
+    /// The artists, joined for display; `None` when there are none.
+    #[must_use]
+    pub fn artists_line(&self) -> Option<String> {
+        (!self.artists.is_empty()).then(|| self.artists.join(", "))
+    }
 }
 
 /// A `Position` read and the moment it was read. MPRIS never signals position
@@ -189,6 +182,38 @@ impl Player {
     pub fn position_at(&self, now: Instant) -> Duration {
         extrapolate(self.position, self.status, self.track.length, now)
     }
+
+    #[must_use]
+    pub fn is_playing(&self) -> bool {
+        self.status == PlaybackStatus::Playing
+    }
+
+    /// The track's title, or the player's identity while it has none.
+    #[must_use]
+    pub fn title(&self) -> &str {
+        self.track.title.as_deref().unwrap_or(&self.identity)
+    }
+
+    /// A player fixture for tests: an untitled, unpositioned track with no
+    /// capabilities, built with struct update syntax from the field or two a
+    /// test actually cares about.
+    #[cfg(test)]
+    pub(crate) fn test_player(bus: &str, status: PlaybackStatus) -> Self {
+        Self {
+            bus_name: bus.to_string(),
+            identity: bus.to_string(),
+            status,
+            track: Track::default(),
+            position: PositionSample {
+                position: Duration::ZERO,
+                sampled_at: Instant::now(),
+                rate: 1.0,
+            },
+            capabilities: Capabilities::default(),
+            loop_status: None,
+            shuffle: None,
+        }
+    }
 }
 
 /// Build a [`Player`] from the `GetAll` reply of `org.mpris.MediaPlayer2.Player`.
@@ -199,11 +224,11 @@ fn parse_player(
     sampled_at: Instant,
 ) -> Player {
     let get = |key: &str| props.get(key);
-    let capabilities = Capability::ALL
+    let capabilities = CAPABILITY_PROPERTIES
         .into_iter()
         .filter(|(_, key)| get(key).and_then(as_bool) == Some(true))
-        .fold(Capabilities::default(), |caps, (capability, _)| {
-            caps.with(capability)
+        .fold(Capabilities::empty(), |caps, (capability, _)| {
+            caps | capability
         });
     Player {
         bus_name: bus_name.to_string(),
@@ -241,7 +266,9 @@ fn parse_track(metadata: &OwnedValue) -> Track {
         id: get("mpris:trackid")
             .and_then(as_object_path)
             .filter(|id| id.as_str() != NO_TRACK),
-        title: get("xesam:title").and_then(as_string).unwrap_or_default(),
+        title: get("xesam:title")
+            .and_then(as_string)
+            .filter(|title| !title.is_empty()),
         artists: get("xesam:artist").map(as_strings).unwrap_or_default(),
         length: get("mpris:length")
             .and_then(as_micros)
@@ -290,62 +317,6 @@ fn as_object_path(value: &OwnedValue) -> Option<OwnedObjectPath> {
         .ok()
         .map(OwnedObjectPath::from)
         .or_else(|| as_string(value).and_then(|raw| OwnedObjectPath::try_from(raw).ok()))
-}
-
-/// Which player the bar and the panel show.
-///
-/// The player that most recently started playing wins; before any player has
-/// played, the one that appeared last. Cycling from the panel chip pins a
-/// player, and the pin holds until some *other* player starts playing.
-#[derive(Debug, Default)]
-pub struct Selection {
-    statuses: HashMap<String, PlaybackStatus>,
-    last_started: Option<String>,
-    last_seen: Option<String>,
-    pinned: Option<String>,
-}
-
-impl Selection {
-    /// Record a fresh snapshot, noticing appearances and starts.
-    pub fn observe(&mut self, players: &[Player]) {
-        for player in players {
-            let previous = self.statuses.insert(player.bus_name.clone(), player.status);
-            if previous.is_none() {
-                self.last_seen = Some(player.bus_name.clone());
-            }
-            let started = player.status == PlaybackStatus::Playing
-                && previous != Some(PlaybackStatus::Playing);
-            if started {
-                self.last_started = Some(player.bus_name.clone());
-                if self.pinned.as_ref() != Some(&player.bus_name) {
-                    self.pinned = None;
-                }
-            }
-        }
-        self.statuses
-            .retain(|bus, _| players.iter().any(|p| &p.bus_name == bus));
-    }
-
-    #[must_use]
-    pub fn active<'a>(&self, players: &'a [Player]) -> Option<&'a Player> {
-        [&self.pinned, &self.last_started, &self.last_seen]
-            .into_iter()
-            .flatten()
-            .find_map(|bus| players.iter().find(|p| &p.bus_name == bus))
-            .or_else(|| players.iter().find(|p| p.status == PlaybackStatus::Playing))
-            .or_else(|| players.first())
-    }
-
-    /// Pin the player after the active one, wrapping around.
-    pub fn cycle(&mut self, players: &[Player]) {
-        let current = self.active(players).map(|p| p.bus_name.as_str());
-        let next = players
-            .iter()
-            .skip_while(|p| Some(p.bus_name.as_str()) != current)
-            .nth(1)
-            .or_else(|| players.first());
-        self.pinned = next.map(|p| p.bus_name.clone());
-    }
 }
 
 /// The name to show for a player whose `Identity` could not be read.
@@ -402,15 +373,46 @@ async fn run_command(
     Ok(())
 }
 
-/// A player on the bus, with the unique name that owns it: signals carry the
-/// unique sender, never the well-known name.
-#[derive(Debug)]
+/// A player on the bus, with the unique name that owns it — signals carry the
+/// unique sender, never the well-known name — and the last successful read,
+/// kept until a read under the *same* owner replaces it. `None` only while a
+/// fresh owner has not answered yet.
+#[derive(Debug, Clone, PartialEq)]
 struct Tracked {
-    owner: String,
-    player: Player,
+    owner: OwnedUniqueName,
+    player: Option<Player>,
+}
+
+/// What `bus_name`'s entry becomes after one read attempt: the fresh player
+/// on success; on failure, the previous read if `owner` is unchanged, and
+/// unread otherwise, since a new owner's silence says nothing about what the
+/// old one was playing.
+fn resolve_read(
+    previous: Option<&Tracked>,
+    owner: &OwnedUniqueName,
+    read: Option<Player>,
+) -> Tracked {
+    let kept = previous
+        .filter(|tracked| &tracked.owner == owner)
+        .and_then(|tracked| tracked.player.clone());
+    Tracked {
+        owner: owner.clone(),
+        player: read.or(kept),
+    }
 }
 
 async fn read_player(
+    conn: &zbus::Connection,
+    bus_name: &str,
+    identity: Option<String>,
+) -> Option<Player> {
+    tokio::time::timeout(READ_TIMEOUT, read_player_untimed(conn, bus_name, identity))
+        .await
+        .ok()
+        .flatten()
+}
+
+async fn read_player_untimed(
     conn: &zbus::Connection,
     bus_name: &str,
     identity: Option<String>,
@@ -442,25 +444,21 @@ async fn read_player(
     ))
 }
 
-/// Read `bus_name` into `players`, or drop it when it cannot be read.
-async fn track(
+/// Read `bus_name` into `players`, keeping its previous read rather than
+/// dropping the entry when the fresh read fails.
+async fn refresh_player(
     conn: &zbus::Connection,
     players: &mut BTreeMap<String, Tracked>,
     bus_name: &str,
-    owner: String,
+    owner: OwnedUniqueName,
 ) {
-    let identity = players
-        .get(bus_name)
+    let previous = players.get(bus_name);
+    let identity = previous
         .filter(|tracked| tracked.owner == owner)
-        .map(|tracked| tracked.player.identity.clone());
-    match read_player(conn, bus_name, identity).await {
-        Some(player) => {
-            players.insert(bus_name.to_string(), Tracked { owner, player });
-        }
-        None => {
-            players.remove(bus_name);
-        }
-    }
+        .and_then(|tracked| tracked.player.as_ref())
+        .map(|player| player.identity.clone());
+    let read = read_player(conn, bus_name, identity).await;
+    players.insert(bus_name.to_string(), resolve_read(previous, &owner, read));
 }
 
 async fn refresh_where(
@@ -468,13 +466,13 @@ async fn refresh_where(
     players: &mut BTreeMap<String, Tracked>,
     keep: impl Fn(&Tracked) -> bool,
 ) {
-    let stale: Vec<(String, String)> = players
+    let stale: Vec<(String, OwnedUniqueName)> = players
         .iter()
         .filter(|(_, tracked)| keep(tracked))
         .map(|(bus, tracked)| (bus.clone(), tracked.owner.clone()))
         .collect();
     for (bus, owner) in stale {
-        track(conn, players, &bus, owner).await;
+        refresh_player(conn, players, &bus, owner).await;
     }
 }
 
@@ -488,17 +486,17 @@ async fn scan(
         .await
         .map_err(|e| log::warn!("media: ListNames failed: {e}"))
         .unwrap_or_default();
-    for name in names.iter().filter(|n| n.starts_with(MPRIS_PREFIX)) {
+    for name in names.iter().filter(|n| is_player_name(n)) {
         let Ok(owner) = dbus.get_name_owner(name.inner().clone()).await else {
             continue;
         };
-        track(conn, &mut players, name, owner.to_string()).await;
+        refresh_player(conn, &mut players, name, owner).await;
     }
     players
 }
 
 fn snapshot(players: &BTreeMap<String, Tracked>) -> Vec<Player> {
-    players.values().map(|t| t.player.clone()).collect()
+    players.values().filter_map(|t| t.player.clone()).collect()
 }
 
 pub fn stream() -> impl Stream<Item = Vec<Player>> {
@@ -533,30 +531,30 @@ async fn run_media_loop(
         let resample = PANEL.is_open()
             && players
                 .values()
-                .any(|t| t.player.status == PlaybackStatus::Playing);
+                .filter_map(|t| t.player.as_ref())
+                .any(Player::is_playing);
         tokio::select! {
             Some(change) = owner_changes.next() => {
                 let Ok(args) = change.args() else { continue };
                 let name = args.name().to_string();
-                if !name.starts_with(MPRIS_PREFIX) {
+                if !is_player_name(&name) {
                     continue;
                 }
                 match args.new_owner().as_ref() {
-                    Some(owner) => track(conn, &mut players, &name, owner.to_string()).await,
+                    Some(owner) => refresh_player(conn, &mut players, &name, OwnedUniqueName::from(owner.clone())).await,
                     None => {
                         players.remove(&name);
                     }
                 }
             }
             Some(Ok(signal)) = player_signals.next() => {
-                let Some(sender) = signal.header().sender().map(ToString::to_string) else {
-                    continue;
-                };
-                refresh_where(conn, &mut players, |t| t.owner == sender).await;
+                let header = signal.header();
+                let Some(sender) = header.sender() else { continue };
+                refresh_where(conn, &mut players, |t| &t.owner == sender).await;
             }
             () = PANEL.changed() => refresh_where(conn, &mut players, |_| true).await,
             () = tokio::time::sleep(RESAMPLE_INTERVAL), if resample => {
-                refresh_where(conn, &mut players, |t| t.player.status == PlaybackStatus::Playing).await;
+                refresh_where(conn, &mut players, |t| t.player.as_ref().is_some_and(Player::is_playing)).await;
             }
         }
         dbus_util::send_if_changed(tx, &mut last, snapshot(&players))?;
@@ -585,6 +583,10 @@ mod tests {
             .into_iter()
             .map(|(k, v)| (k.to_string(), v))
             .collect()
+    }
+
+    fn owned_unique(name: &str) -> OwnedUniqueName {
+        OwnedUniqueName::try_from(name).unwrap_or_else(|e| unreachable!("{e}"))
     }
 
     fn full_props() -> HashMap<String, OwnedValue> {
@@ -627,23 +629,6 @@ mod tests {
         }
     }
 
-    fn player(bus: &str, status: PlaybackStatus) -> Player {
-        Player {
-            bus_name: bus.to_string(),
-            identity: bus.to_string(),
-            status,
-            track: Track::default(),
-            position: sample(Duration::ZERO, Instant::now()),
-            capabilities: Capabilities::default(),
-            loop_status: None,
-            shuffle: None,
-        }
-    }
-
-    fn active_bus(selection: &Selection, players: &[Player]) -> Option<String> {
-        selection.active(players).map(|p| p.bus_name.clone())
-    }
-
     #[test]
     fn parses_every_player_property() {
         let at = Instant::now();
@@ -655,7 +640,7 @@ mod tests {
         );
         assert_eq!(p.identity, "Music Player Daemon");
         assert_eq!(p.status, PlaybackStatus::Playing);
-        assert_eq!(p.track.title, "Song");
+        assert_eq!(p.track.title.as_deref(), Some("Song"));
         assert_eq!(p.track.artists, vec!["A".to_string(), "B".to_string()]);
         assert_eq!(p.track.length, Some(Duration::from_secs(180)));
         assert_eq!(p.track.art_url.as_deref(), Some("file:///tmp/cover.png"));
@@ -666,9 +651,9 @@ mod tests {
         assert_eq!(p.position.position, Duration::from_secs(42));
         assert_eq!(p.position.sampled_at, at);
         assert!((p.position.rate - 1.5).abs() < f64::EPSILON);
-        assert!(p.capabilities.has(Capability::GoNext));
-        assert!(!p.capabilities.has(Capability::GoPrevious));
-        assert!(p.capabilities.has(Capability::Seek));
+        assert!(p.capabilities.contains(Capabilities::GO_NEXT));
+        assert!(!p.capabilities.contains(Capabilities::GO_PREVIOUS));
+        assert!(p.capabilities.contains(Capabilities::SEEK));
         assert_eq!(p.loop_status, Some(LoopStatus::Playlist));
         assert_eq!(p.shuffle, Some(true));
     }
@@ -685,57 +670,45 @@ mod tests {
     }
 
     #[test]
+    fn a_title_less_track_falls_back_to_the_players_identity() {
+        let p = parse_player("b", "Spotify", &props(vec![]), Instant::now());
+        assert_eq!(p.title(), "Spotify");
+    }
+
+    #[test]
     fn metadata_tolerates_the_loose_types_players_send() {
-        let p = parse_player(
-            "b",
-            "b",
-            &props(vec![(
-                "Metadata",
-                metadata(vec![
-                    ("xesam:artist", Value::from("Solo")),
-                    ("mpris:length", Value::from(5_000_000_u64)),
-                    ("mpris:trackid", Value::from("/org/chromium/Track/9")),
-                ]),
-            )]),
-            Instant::now(),
-        );
-        assert_eq!(p.track.artists, vec!["Solo".to_string()]);
-        assert_eq!(p.track.length, Some(Duration::from_secs(5)));
+        let track = parse_track(&metadata(vec![
+            ("xesam:artist", Value::from("Solo")),
+            ("mpris:length", Value::from(5_000_000_u64)),
+            ("mpris:trackid", Value::from("/org/chromium/Track/9")),
+        ]));
+        assert_eq!(track.artists, vec!["Solo".to_string()]);
+        assert_eq!(track.artists_line().as_deref(), Some("Solo"));
+        assert_eq!(track.length, Some(Duration::from_secs(5)));
         assert_eq!(
-            p.track.id.as_ref().map(|id| id.as_str()),
+            track.id.as_ref().map(|id| id.as_str()),
             Some("/org/chromium/Track/9")
         );
     }
 
     #[test]
+    fn no_artists_means_no_artist_line() {
+        assert_eq!(Track::default().artists_line(), None);
+    }
+
+    #[test]
     fn the_no_track_id_is_no_id() {
-        let p = parse_player(
-            "b",
-            "b",
-            &props(vec![(
-                "Metadata",
-                metadata(vec![(
-                    "mpris:trackid",
-                    Value::from("/org/mpris/MediaPlayer2/TrackList/NoTrack"),
-                )]),
-            )]),
-            Instant::now(),
-        );
-        assert_eq!(p.track.id, None);
+        let track = parse_track(&metadata(vec![(
+            "mpris:trackid",
+            Value::from("/org/mpris/MediaPlayer2/TrackList/NoTrack"),
+        )]));
+        assert_eq!(track.id, None);
     }
 
     #[test]
     fn a_negative_or_zero_length_is_unknown() {
-        let p = parse_player(
-            "b",
-            "b",
-            &props(vec![(
-                "Metadata",
-                metadata(vec![("mpris:length", Value::from(0_i64))]),
-            )]),
-            Instant::now(),
-        );
-        assert_eq!(p.track.length, None);
+        let track = parse_track(&metadata(vec![("mpris:length", Value::from(0_i64))]));
+        assert_eq!(track.length, None);
     }
 
     #[test]
@@ -768,9 +741,16 @@ mod tests {
 
     #[test]
     fn loop_status_round_trips_through_its_wire_name() {
-        for status in [LoopStatus::None, LoopStatus::Track, LoopStatus::Playlist] {
+        for status in LoopStatus::ALL {
             assert_eq!(LoopStatus::parse(status.as_str()), Some(status));
         }
+    }
+
+    #[test]
+    fn playerctld_is_not_a_player() {
+        assert!(is_player_name("org.mpris.MediaPlayer2.spotify"));
+        assert!(!is_player_name("org.mpris.MediaPlayer2.playerctld"));
+        assert!(!is_player_name("org.freedesktop.Notifications"));
     }
 
     #[test]
@@ -840,124 +820,51 @@ mod tests {
         }
     }
 
-    #[test]
-    fn no_players_means_no_active_player() {
-        let mut selection = Selection::default();
-        selection.observe(&[]);
-        assert_eq!(active_bus(&selection, &[]), None);
+    fn tracked(owner: &str, player: Option<Player>) -> Tracked {
+        Tracked {
+            owner: owned_unique(owner),
+            player,
+        }
     }
 
     #[test]
-    fn falls_back_to_the_last_player_seen() {
-        let mut selection = Selection::default();
-        let first = [player("a", PlaybackStatus::Paused)];
-        selection.observe(&first);
-        let both = [
-            player("a", PlaybackStatus::Paused),
-            player("b", PlaybackStatus::Stopped),
-        ];
-        selection.observe(&both);
-        assert_eq!(active_bus(&selection, &both), Some("b".to_string()));
+    fn a_successful_read_replaces_whatever_was_there() {
+        let fresh = Player::test_player("a", PlaybackStatus::Playing);
+        let resolved = resolve_read(None, &owned_unique(":1.1"), Some(fresh.clone()));
+        assert_eq!(resolved.player, Some(fresh));
     }
 
     #[test]
-    fn the_most_recent_player_to_start_wins() {
-        let mut selection = Selection::default();
-        let a_plays = [
-            player("a", PlaybackStatus::Playing),
-            player("b", PlaybackStatus::Paused),
-        ];
-        selection.observe(&a_plays);
-        assert_eq!(active_bus(&selection, &a_plays), Some("a".to_string()));
-
-        let both_play = [
-            player("a", PlaybackStatus::Playing),
-            player("b", PlaybackStatus::Playing),
-        ];
-        selection.observe(&both_play);
-        assert_eq!(active_bus(&selection, &both_play), Some("b".to_string()));
+    fn a_failed_read_keeps_the_previous_player_under_the_same_owner() {
+        let previous = tracked(
+            ":1.1",
+            Some(Player::test_player("a", PlaybackStatus::Playing)),
+        );
+        let resolved = resolve_read(Some(&previous), &owned_unique(":1.1"), None);
+        assert_eq!(resolved.player, previous.player);
     }
 
     #[test]
-    fn pausing_keeps_the_player_active() {
-        let mut selection = Selection::default();
-        selection.observe(&[
-            player("a", PlaybackStatus::Playing),
-            player("b", PlaybackStatus::Paused),
-        ]);
-        let paused = [
-            player("a", PlaybackStatus::Paused),
-            player("b", PlaybackStatus::Paused),
-        ];
-        selection.observe(&paused);
-        assert_eq!(active_bus(&selection, &paused), Some("a".to_string()));
+    fn a_failed_read_under_a_new_owner_is_unread() {
+        let previous = tracked(
+            ":1.1",
+            Some(Player::test_player("a", PlaybackStatus::Playing)),
+        );
+        let resolved = resolve_read(Some(&previous), &owned_unique(":1.2"), None);
+        assert_eq!(resolved.player, None);
     }
 
     #[test]
-    fn a_vanished_active_player_hands_over() {
-        let mut selection = Selection::default();
-        selection.observe(&[
-            player("a", PlaybackStatus::Paused),
-            player("b", PlaybackStatus::Playing),
-        ]);
-        let left = [player("a", PlaybackStatus::Paused)];
-        selection.observe(&left);
-        assert_eq!(active_bus(&selection, &left), Some("a".to_string()));
-    }
-
-    #[test]
-    fn cycling_pins_the_next_player_and_wraps() {
-        let mut selection = Selection::default();
-        let players = [
-            player("a", PlaybackStatus::Playing),
-            player("b", PlaybackStatus::Paused),
-            player("c", PlaybackStatus::Paused),
-        ];
-        selection.observe(&players);
-        selection.cycle(&players);
-        assert_eq!(active_bus(&selection, &players), Some("b".to_string()));
-        selection.cycle(&players);
-        assert_eq!(active_bus(&selection, &players), Some("c".to_string()));
-        selection.cycle(&players);
-        assert_eq!(active_bus(&selection, &players), Some("a".to_string()));
-    }
-
-    #[test]
-    fn a_pin_survives_updates_until_another_player_starts() {
-        let mut selection = Selection::default();
-        let players = [
-            player("a", PlaybackStatus::Playing),
-            player("b", PlaybackStatus::Paused),
-            player("c", PlaybackStatus::Paused),
-        ];
-        selection.observe(&players);
-        selection.cycle(&players);
-        selection.observe(&players);
-        assert_eq!(active_bus(&selection, &players), Some("b".to_string()));
-
-        let c_starts = [
-            player("a", PlaybackStatus::Playing),
-            player("b", PlaybackStatus::Paused),
-            player("c", PlaybackStatus::Playing),
-        ];
-        selection.observe(&c_starts);
-        assert_eq!(active_bus(&selection, &c_starts), Some("c".to_string()));
-    }
-
-    #[test]
-    fn the_pinned_player_starting_keeps_its_pin() {
-        let mut selection = Selection::default();
-        let players = [
-            player("a", PlaybackStatus::Playing),
-            player("b", PlaybackStatus::Paused),
-        ];
-        selection.observe(&players);
-        selection.cycle(&players);
-        let b_starts = [
-            player("a", PlaybackStatus::Playing),
-            player("b", PlaybackStatus::Playing),
-        ];
-        selection.observe(&b_starts);
-        assert_eq!(active_bus(&selection, &b_starts), Some("b".to_string()));
+    fn snapshot_skips_unread_entries() {
+        let mut players = BTreeMap::new();
+        players.insert("a".to_string(), tracked(":1.1", None));
+        players.insert(
+            "b".to_string(),
+            tracked(
+                ":1.2",
+                Some(Player::test_player("b", PlaybackStatus::Playing)),
+            ),
+        );
+        assert_eq!(snapshot(&players).len(), 1);
     }
 }

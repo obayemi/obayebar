@@ -786,6 +786,12 @@ experience stays the same as today.
   feature than to pay for that feature on each machine that does not use the
   feature.
 
+The media module is the deliberate exception: it ships on by default and
+runs its dbus watcher and art fetcher outside a Cargo feature flag, because
+it needs no account and costs nothing without a player running, and
+`[media].enable`, `--no-media`, and `media.enable` in home-manager give it
+the same runtime control the rule above asks for.
+
 If you do not know the correct group for your feature, open the issue first.
 We will find the answer before you write the patch.
 

@@ -12,6 +12,7 @@ mod rotated_text;
 mod status;
 pub mod sysinfo_panel;
 mod tray;
+mod wave_slider;
 mod widgets;
 pub mod workspaces;
 
@@ -111,28 +112,13 @@ pub fn view<'a>(app: &'a App, monitor: Option<&'a str>) -> Element<'a, Message> 
         lazy(tray_items, |items| { tray::view(items) }),
     ];
 
-    let media_trigger = app.media.as_ref().map_or(
-        crate::media::Trigger::Hidden,
-        crate::media::MediaState::trigger,
-    );
-    let media_label = match media_trigger {
-        crate::media::Trigger::Hidden => None,
-        crate::media::Trigger::Idle => Some(None),
-        crate::media::Trigger::Player(player) => {
-            Some(Some(media::label(&player.track, &player.identity)))
-        }
-    };
-    if let Some(media_label) = media_label {
-        let media_font = app.vector_font.clone();
-        let media_monitor = monitor.map(String::from);
-        let media_key = (media_label.clone(), has_font, media_monitor.clone());
-        bar_col = bar_col.push(lazy(media_key, move |_| {
-            media::view(
-                media_label.as_deref(),
-                media_font.as_ref(),
-                media_monitor.clone(),
-            )
-        }));
+    if let Some(entry) = media::entry(
+        app.media.as_ref(),
+        app.vector_font.clone(),
+        has_font,
+        monitor,
+    ) {
+        bar_col = bar_col.push(entry);
     }
 
     if app.gitlab_enabled {

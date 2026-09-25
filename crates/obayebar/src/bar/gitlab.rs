@@ -1,8 +1,9 @@
+use super::widgets::{icon_text, panel_trigger};
 use crate::panel::PanelKind;
 use crate::services::gitlab::AuthState;
 use crate::Message;
-use iced::widget::{column, container, mouse_area, text, Column};
-use iced::{Alignment, Element, Length};
+use iced::widget::{column, text};
+use iced::{Alignment, Element};
 use obayebar::style;
 
 /// Render the bar entry: GitLab icon, plus a count badge when there are open
@@ -15,38 +16,24 @@ pub fn view<'a>(auth: AuthState, count: usize, monitor: Option<String>) -> Eleme
         AuthState::Invalid => style::M3_ERROR,
     };
 
-    let icon = text(style::ICON_TASK_ALT)
-        .font(style::ICON_FONT)
-        .size(style::FONT_SIZE_LARGE)
-        .color(icon_color)
-        .align_x(Alignment::Center);
-
-    let mut stack: Column<'_, Message> = column![icon].spacing(2.0).align_x(Alignment::Center);
-
-    if matches!(auth, AuthState::Authenticated) && count > 0 {
+    let badge = (matches!(auth, AuthState::Authenticated) && count > 0).then(|| {
         let label = if count > 99 {
             "99+".to_string()
         } else {
             count.to_string()
         };
-        stack = stack.push(
-            text(label)
-                .size(style::FONT_SIZE_SMALL)
-                .color(icon_color)
-                .align_x(Alignment::Center),
-        );
-    }
+        text(label)
+            .size(style::FONT_SIZE_SMALL)
+            .color(icon_color)
+            .align_x(Alignment::Center)
+    });
 
-    let open_msg = Message::PanelOpen(PanelKind::Gitlab, monitor);
-    let clickable = mouse_area(stack)
-        .on_press(open_msg.clone())
-        .on_enter(open_msg)
-        .on_exit(Message::PanelPointerLeftTrigger(PanelKind::Gitlab));
+    let stack = column![
+        icon_text(style::ICON_TASK_ALT, style::FONT_SIZE_LARGE, icon_color),
+        badge,
+    ]
+    .spacing(2.0)
+    .align_x(Alignment::Center);
 
-    container(clickable)
-        .padding(style::PADDING_NORMAL)
-        .width(Length::Fill)
-        .align_x(Alignment::Center)
-        .style(style::pill_container)
-        .into()
+    panel_trigger(PanelKind::Gitlab, monitor, stack)
 }

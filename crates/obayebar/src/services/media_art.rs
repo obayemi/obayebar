@@ -1,7 +1,7 @@
 //! Album art for the media panel: fetched from the `mpris:artUrl` of the
 //! active track, decoded off the UI thread, and cached by URL.
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -28,51 +28,24 @@ pub enum Art {
 #[derive(Debug, PartialEq, Eq)]
 enum ArtSource {
     File(PathBuf),
-    Http(String),
+    Http(reqwest::Url),
 }
 
 impl ArtSource {
     fn parse(url: &str) -> Option<Self> {
-        if let Some(path) = url.strip_prefix("file://") {
-            let path = path.strip_prefix("localhost").unwrap_or(path);
-            return Some(Self::File(PathBuf::from(percent_decode(path))));
+        let url = reqwest::Url::parse(url).ok()?;
+        match url.scheme() {
+            "file" => Some(Self::File(url.to_file_path().ok()?)),
+            "http" | "https" => Some(Self::Http(url)),
+            _ => None,
         }
-        (url.starts_with("http://") || url.starts_with("https://"))
-            .then(|| Self::Http(url.to_string()))
     }
-}
-
-/// Decode the `%XX` escapes of a URI path. A malformed escape is kept as is.
-fn percent_decode(raw: &str) -> String {
-    let mut decoded = Vec::with_capacity(raw.len());
-    let mut rest = raw.as_bytes();
-    while let Some((&first, tail)) = rest.split_first() {
-        if let (b'%', [hi, lo, after @ ..]) = (first, tail) {
-            if let Some(byte) = hex_byte(*hi, *lo) {
-                decoded.push(byte);
-                rest = after;
-                continue;
-            }
-        }
-        decoded.push(first);
-        rest = tail;
-    }
-    String::from_utf8_lossy(&decoded).into_owned()
-}
-
-fn hex_byte(hi: u8, lo: u8) -> Option<u8> {
-    if !(hi.is_ascii_hexdigit() && lo.is_ascii_hexdigit()) {
-        return None;
-    }
-    std::str::from_utf8(&[hi, lo])
-        .ok()
-        .and_then(|digits| u8::from_str_radix(digits, 16).ok())
 }
 
 #[derive(Debug, Default)]
 pub struct ArtCache {
     entries: VecDeque<(String, Art)>,
-    pending: Option<String>,
+    pending: HashSet<String>,
 }
 
 impl ArtCache {
@@ -86,18 +59,16 @@ impl ArtCache {
     /// Whether `url` has to be fetched: neither cached nor already on its way.
     /// A `true` marks it as on its way.
     pub fn request(&mut self, url: &str) -> bool {
-        if self.get(url).is_some() || self.pending.as_deref() == Some(url) {
+        if self.get(url).is_some() || self.pending.contains(url) {
             return false;
         }
-        self.pending = Some(url.to_string());
+        self.pending.insert(url.to_string());
         true
     }
 
     /// Store a finished fetch, evicting the oldest cover past the capacity.
     pub fn insert(&mut self, url: String, art: Art) {
-        if self.pending.as_ref() == Some(&url) {
-            self.pending = None;
-        }
+        self.pending.remove(&url);
         self.entries.retain(|(cached, _)| cached != &url);
         self.entries.push_back((url, art));
         while self.entries.len() > CACHE_CAPACITY {
@@ -125,7 +96,7 @@ pub async fn load(url: String) -> Art {
     };
     let bytes = match source {
         ArtSource::File(path) => read_file(path).await,
-        ArtSource::Http(url) => fetch(&url).await,
+        ArtSource::Http(url) => fetch(url).await,
     };
     let Some(bytes) = bytes else {
         return Art::Failed;
@@ -134,16 +105,12 @@ pub async fn load(url: String) -> Art {
         .await
         .ok()
         .flatten();
-    decoded.map_or_else(
-        || {
-            log::warn!("media: could not decode art from {url}");
-            Art::Failed
-        },
-        |img| {
-            let (width, height) = img.dimensions();
-            Art::Loaded(image::Handle::from_rgba(width, height, img.into_raw()))
-        },
-    )
+    let Some(img) = decoded else {
+        log::warn!("media: could not decode art from {url}");
+        return Art::Failed;
+    };
+    let (width, height) = img.dimensions();
+    Art::Loaded(image::Handle::from_rgba(width, height, img.into_raw()))
 }
 
 async fn read_file(path: PathBuf) -> Option<Vec<u8>> {
@@ -171,9 +138,9 @@ fn http_client() -> Option<&'static reqwest::Client> {
         .as_ref()
 }
 
-async fn fetch(url: &str) -> Option<Vec<u8>> {
+async fn fetch(url: reqwest::Url) -> Option<Vec<u8>> {
     let mut response = http_client()?
-        .get(url)
+        .get(url.clone())
         .send()
         .await
         .and_then(reqwest::Response::error_for_status)
@@ -224,9 +191,9 @@ mod tests {
     #[test]
     fn http_urls_are_fetched_as_given() {
         for url in ["https://i.scdn.co/image/ab67", "http://localhost/a%20b.png"] {
-            assert_eq!(
-                ArtSource::parse(url),
-                Some(ArtSource::Http(url.to_string()))
+            let parsed = ArtSource::parse(url);
+            assert!(
+                matches!(&parsed, Some(ArtSource::Http(parsed_url)) if parsed_url.as_str() == url)
             );
         }
     }
@@ -238,10 +205,8 @@ mod tests {
     }
 
     #[test]
-    fn malformed_escapes_are_kept_literally() {
-        assert_eq!(percent_decode("100%"), "100%");
-        assert_eq!(percent_decode("%zz%4"), "%zz%4");
-        assert_eq!(percent_decode("a%2Fb"), "a/b");
+    fn a_file_url_naming_another_host_is_rejected() {
+        assert_eq!(ArtSource::parse("file://otherhost/x"), None);
     }
 
     #[test]
@@ -268,6 +233,14 @@ mod tests {
         let mut cache = ArtCache::default();
         assert!(cache.request("a"));
         assert!(cache.request("b"));
+    }
+
+    #[test]
+    fn an_older_pending_url_is_not_requested_again() {
+        let mut cache = ArtCache::default();
+        assert!(cache.request("a"));
+        assert!(cache.request("b"));
+        assert!(!cache.request("a"));
     }
 
     #[test]
