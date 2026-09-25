@@ -1,7 +1,6 @@
 mod bar;
 mod config;
 mod control;
-mod file_uri;
 mod media;
 mod notifications;
 mod panel;

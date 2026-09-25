@@ -13,7 +13,8 @@ use url::Url;
 /// local path and returns `None`.
 #[must_use]
 pub fn local_path(uri_or_path: &str) -> Option<PathBuf> {
-    match Url::parse(uri_or_path) {
+    let escaped = uri_or_path.replace('#', "%23").replace('?', "%3F");
+    match Url::parse(&escaped) {
         Ok(url) if url.scheme() == "file" => url.to_file_path().ok(),
         Ok(_) => None,
         Err(_) => uri_or_path
@@ -57,5 +58,29 @@ mod tests {
     fn a_relative_path_or_icon_name_is_rejected() {
         assert_eq!(local_path("icons/pic.png"), None);
         assert_eq!(local_path("firefox"), None);
+    }
+
+    #[test]
+    fn a_hash_in_a_file_uri_stays_part_of_the_path() {
+        assert_eq!(
+            local_path("file:///home/me/track #1.png"),
+            Some(PathBuf::from("/home/me/track #1.png"))
+        );
+    }
+
+    #[test]
+    fn a_question_mark_in_a_file_uri_stays_part_of_the_path() {
+        assert_eq!(
+            local_path("file:///home/me/a?b.png"),
+            Some(PathBuf::from("/home/me/a?b.png"))
+        );
+    }
+
+    #[test]
+    fn an_encoded_hash_still_decodes() {
+        assert_eq!(
+            local_path("file:///x/a%23b.png"),
+            Some(PathBuf::from("/x/a#b.png"))
+        );
     }
 }

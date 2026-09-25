@@ -2,6 +2,7 @@
 //! players the service reported, which one is shown, their covers and the
 //! slider's wave.
 
+mod art_cache;
 pub mod controls;
 pub mod selection;
 
@@ -11,11 +12,12 @@ use std::time::{Duration, Instant};
 use iced::widget::image;
 use iced::Animation;
 
+use art_cache::ArtCache;
 pub use controls::Controls;
 use selection::Selection;
 
 use crate::services::media::{Command, Player};
-use crate::services::media_art::{Art, ArtCache};
+use crate::services::media_art::Art;
 
 /// Time for one crest of the elapsed wave to travel a wavelength while
 /// playing.

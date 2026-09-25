@@ -2,6 +2,7 @@ pub mod audio;
 pub mod battery;
 pub mod bluetooth;
 pub mod dbus_util;
+pub mod file_uri;
 pub mod gitlab;
 pub mod http;
 pub mod hyprland;

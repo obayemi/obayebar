@@ -1,22 +1,17 @@
 //! Album art for the media panel: fetched from the `mpris:artUrl` of the
-//! active track, decoded off the UI thread, and cached by URL.
+//! active track, decoded off the UI thread.
 
-use std::collections::HashSet;
-use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::Duration;
 
 use iced::widget::image;
-use lru::LruCache;
 
 use crate::services::http;
 
 /// Longest side of a decoded cover. The panel is a few hundred pixels wide,
 /// so anything larger only costs memory.
 const ART_SIZE: u32 = 512;
-/// Covers kept decoded, so skipping back and forth does not refetch.
-const CACHE_CAPACITY: NonZeroUsize = NonZeroUsize::MIN.saturating_add(7);
 const MAX_DOWNLOAD_BYTES: usize = 8 * 1024 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -35,53 +30,11 @@ enum ArtSource {
 
 impl ArtSource {
     fn parse(url: &str) -> Option<Self> {
-        if let Some(path) = crate::file_uri::local_path(url) {
+        if let Some(path) = super::file_uri::local_path(url) {
             return Some(Self::File(path));
         }
         let url = reqwest::Url::parse(url).ok()?;
         matches!(url.scheme(), "http" | "https").then_some(Self::Http(url))
-    }
-}
-
-#[derive(Debug)]
-pub struct ArtCache {
-    entries: LruCache<String, Art>,
-    pending: HashSet<String>,
-}
-
-impl Default for ArtCache {
-    fn default() -> Self {
-        Self {
-            entries: LruCache::new(CACHE_CAPACITY),
-            pending: HashSet::new(),
-        }
-    }
-}
-
-impl ArtCache {
-    /// The cover to show, without counting the look as a use: a view holds
-    /// only `&self` and must not reorder the cache while composing a frame.
-    #[must_use]
-    pub fn peek(&self, url: &str) -> Option<&Art> {
-        self.entries.peek(url)
-    }
-
-    /// Whether `url` has to be fetched: neither cached nor already on its
-    /// way. A `true` marks it as on its way. A cache hit counts as a use,
-    /// promoting it so a track that stays in view survives eviction.
-    pub fn request(&mut self, url: &str) -> bool {
-        if self.entries.get(url).is_some() || self.pending.contains(url) {
-            return false;
-        }
-        self.pending.insert(url.to_string());
-        true
-    }
-
-    /// Store a finished fetch, evicting the least recently used cover past
-    /// the capacity.
-    pub fn insert(&mut self, url: String, art: Art) {
-        self.pending.remove(&url);
-        self.entries.put(url, art);
     }
 }
 
@@ -174,10 +127,6 @@ async fn fetch(url: reqwest::Url) -> Option<Vec<u8>> {
 mod tests {
     use super::*;
 
-    fn handle() -> Art {
-        Art::Loaded(image::Handle::from_rgba(1, 1, vec![0; 4]))
-    }
-
     fn png(width: u32, height: u32) -> Vec<u8> {
         let mut bytes = std::io::Cursor::new(Vec::new());
         ::image::RgbaImage::new(width, height)
@@ -212,73 +161,8 @@ mod tests {
     }
 
     #[test]
-    fn a_bare_absolute_path_is_treated_as_a_file() {
-        assert_eq!(
-            ArtSource::parse("/no/scheme.png"),
-            Some(ArtSource::File(PathBuf::from("/no/scheme.png")))
-        );
-    }
-
-    #[test]
     fn a_file_url_naming_another_host_is_rejected() {
         assert_eq!(ArtSource::parse("file://otherhost/x"), None);
-    }
-
-    #[test]
-    fn a_url_is_requested_once_until_it_lands() {
-        let mut cache = ArtCache::default();
-        assert!(cache.request("a"));
-        assert!(!cache.request("a"));
-        cache.insert("a".to_string(), handle());
-        assert!(!cache.request("a"));
-        assert!(matches!(cache.peek("a"), Some(Art::Loaded(_))));
-    }
-
-    #[test]
-    fn a_failed_fetch_is_not_retried() {
-        let mut cache = ArtCache::default();
-        assert!(cache.request("a"));
-        cache.insert("a".to_string(), Art::Failed);
-        assert!(!cache.request("a"));
-        assert!(matches!(cache.peek("a"), Some(Art::Failed)));
-    }
-
-    #[test]
-    fn a_new_track_can_be_requested_while_another_is_pending() {
-        let mut cache = ArtCache::default();
-        assert!(cache.request("a"));
-        assert!(cache.request("b"));
-    }
-
-    #[test]
-    fn an_older_pending_url_is_not_requested_again() {
-        let mut cache = ArtCache::default();
-        assert!(cache.request("a"));
-        assert!(cache.request("b"));
-        assert!(!cache.request("a"));
-    }
-
-    #[test]
-    fn the_oldest_cover_is_evicted_past_capacity() {
-        let mut cache = ArtCache::default();
-        for i in 0..=CACHE_CAPACITY.get() {
-            cache.insert(i.to_string(), handle());
-        }
-        assert!(cache.peek("0").is_none());
-        assert!(cache.peek("1").is_some());
-        assert!(cache.peek(&CACHE_CAPACITY.get().to_string()).is_some());
-    }
-
-    #[test]
-    fn touching_the_oldest_cover_saves_it_from_eviction() {
-        let mut cache = ArtCache::default();
-        for i in 0..CACHE_CAPACITY.get() {
-            cache.insert(i.to_string(), handle());
-        }
-        assert!(!cache.request("0"));
-        cache.insert(CACHE_CAPACITY.get().to_string(), handle());
-        assert!(cache.peek("0").is_some());
-        assert!(cache.peek("1").is_none());
     }
 
     #[test]
