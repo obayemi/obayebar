@@ -195,11 +195,6 @@ impl MediaState {
         self.active().map(Controls::for_player).unwrap_or_default()
     }
 
-    #[must_use]
-    pub const fn players(&self) -> &[Player] {
-        self.players.as_slice()
-    }
-
     /// The active track's cover, once it has loaded.
     #[must_use]
     pub fn art(&self) -> Option<&image::Handle> {
