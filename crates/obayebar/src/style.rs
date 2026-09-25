@@ -166,8 +166,14 @@ pub const MEDIA_PANEL_HEIGHT: u16 = 184;
 /// Maximum number of todos rendered in the popup before the user must use
 /// "Show all" on gitlab.com.
 pub const GITLAB_PANEL_VISIBLE: usize = 10;
-/// Visual gap between the bar and popup panels, rendered as transparent padding
-/// inside the panel window so the `mouse_area` covers the gap.
+/// Visual gap between the bar and popup panels, doing two jobs.
+///
+/// As padding inside the panel surface (`PANEL_GAP`, a float for iced's
+/// layout), it is transparent space on the side adjacent to the bar, so the
+/// panel's `mouse_area` also covers the strip between bar and panel. As
+/// layer-shell margin outside the surface (`PANEL_GAP_PX`, the same value as
+/// a whole number of surface pixels), `TriggerSpot::margin` keeps this much
+/// clear between the panel and the output's top and bottom edges.
 pub const PANEL_GAP: f32 = 8.0;
 pub const PANEL_GAP_PX: u32 = 8;
 
