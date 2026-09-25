@@ -69,15 +69,12 @@ impl State {
     /// Follow the pointer onto or off the trigger. `press` is a press on the
     /// trigger that its content did not capture.
     const fn react(&mut self, hovered: bool, press: bool) -> Option<Reaction> {
-        let entered = hovered && !self.hovered;
-        let left = !hovered && self.hovered;
-        self.hovered = hovered;
-        if entered || (hovered && press) {
-            Some(Reaction::Open)
-        } else if left {
-            Some(Reaction::Leave)
-        } else {
-            None
+        let was_hovered = std::mem::replace(&mut self.hovered, hovered);
+        match (was_hovered, hovered) {
+            (false, true) => Some(Reaction::Open),
+            (true, true) if press => Some(Reaction::Open),
+            (true, false) => Some(Reaction::Leave),
+            _ => None,
         }
     }
 }
