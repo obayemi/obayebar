@@ -123,13 +123,13 @@ fn play_button(state: PlayPause) -> Element<'static, Message> {
     .into()
 }
 
-fn header<'a>(media: &'a MediaState, player: &'a Player, over_art: bool) -> Element<'a, Message> {
+fn clock<'a>(media: &MediaState, player: &Player) -> Element<'a, Message> {
     let elapsed = player.position_at(media.now());
     let times = player.track.length.map_or_else(
         || format_time(elapsed),
         |length| format!("{} / {}", format_time(elapsed), format_time(length)),
     );
-    let clock = row![
+    row![
         icon_text(
             style::ICON_MUSIC_NOTE,
             style::FONT_SIZE_NORMAL,
@@ -140,9 +140,13 @@ fn header<'a>(media: &'a MediaState, player: &'a Player, over_art: bool) -> Elem
             .color(style::M3_ON_SURFACE_VARIANT),
     ]
     .spacing(style::SPACING_SMALL)
-    .align_y(Alignment::Center);
+    .align_y(Alignment::Center)
+    .into()
+}
+
+fn header<'a>(media: &'a MediaState, player: &'a Player, over_art: bool) -> Element<'a, Message> {
     row![
-        legible(clock, over_art),
+        legible(clock(media, player), over_art),
         Space::new().width(Length::Fill),
         player_chip(&player.identity, media.rotation()),
     ]
@@ -150,12 +154,8 @@ fn header<'a>(media: &'a MediaState, player: &'a Player, over_art: bool) -> Elem
     .into()
 }
 
-fn now_playing(
-    player: &Player,
-    play_pause: Option<PlayPause>,
-    over_art: bool,
-) -> Element<'_, Message> {
-    let labels = column![
+fn track_labels(player: &Player) -> Element<'_, Message> {
+    column![
         text(truncate_with_ellipsis(player.title(), MAX_TITLE_CHARS))
             .size(style::FONT_SIZE_LARGE)
             .color(style::M3_ON_SURFACE),
@@ -165,9 +165,17 @@ fn now_playing(
                 .color(style::M3_ON_SURFACE_VARIANT)
         }),
     ]
-    .spacing(2.0);
+    .spacing(2.0)
+    .into()
+}
+
+fn now_playing(
+    player: &Player,
+    play_pause: Option<PlayPause>,
+    over_art: bool,
+) -> Element<'_, Message> {
     row![
-        legible(labels, over_art),
+        legible(track_labels(player), over_art),
         Space::new().width(Length::Fill),
         play_pause.map(play_button),
     ]
