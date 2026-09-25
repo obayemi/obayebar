@@ -1,15 +1,24 @@
 //! Which player the bar and the panel show.
 
 use std::collections::HashMap;
+use std::fmt;
 
 use crate::services::media::{PlaybackStatus, Player};
 
 /// Where the active player sits among several, in cycling order: the
-/// `index`th, counted from one, of `total`.
+/// `index`th, counted from one, of `total`. Only [`Selection::rotation`]
+/// builds one, so there are always at least two players and the index is in
+/// range. Displays as `index/total`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rotation {
-    pub index: usize,
-    pub total: usize,
+    index: usize,
+    total: usize,
+}
+
+impl fmt::Display for Rotation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}/{}", self.index, self.total)
+    }
 }
 
 /// The player that most recently started playing wins; before any player has
@@ -214,6 +223,10 @@ mod tests {
         assert_eq!(
             selection.rotation(&players),
             Some(Rotation { index: 2, total: 3 })
+        );
+        assert_eq!(
+            selection.rotation(&players).map(|r| r.to_string()),
+            Some("2/3".to_string())
         );
     }
 

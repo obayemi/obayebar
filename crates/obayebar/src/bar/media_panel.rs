@@ -66,7 +66,7 @@ const fn loop_icon(status: LoopStatus) -> &'static str {
 fn chip_label(identity: &str, rotation: Option<Rotation>) -> String {
     rotation.map_or_else(
         || identity.to_string(),
-        |Rotation { index, total }| format!("{identity} · {index}/{total}"),
+        |rotation| format!("{identity} · {rotation}"),
     )
 }
 
@@ -290,6 +290,8 @@ pub fn view(media: &MediaState) -> Element<'_, Message> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::media::selection::Selection;
+    use crate::services::media::PlaybackStatus;
 
     #[test]
     fn times_are_formatted_like_a_player_does() {
@@ -300,10 +302,13 @@ mod tests {
 
     #[test]
     fn the_chip_counts_players_only_when_there_are_others() {
+        let players = ["a", "b", "c"].map(|bus| Player::test_player(bus, PlaybackStatus::Paused));
+        let mut selection = Selection::default();
+        selection.observe(&players);
         assert_eq!(chip_label("Spotify", None), "Spotify");
         assert_eq!(
-            chip_label("Spotify", Some(Rotation { index: 1, total: 3 })),
-            "Spotify · 1/3"
+            chip_label("Spotify", selection.rotation(&players)),
+            "Spotify · 3/3"
         );
     }
 }
