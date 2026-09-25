@@ -8,7 +8,7 @@ use crate::services::network::NetworkInfo;
 use crate::services::sysinfo::SysInfo;
 use crate::Message;
 use iced::widget::canvas::{self, Frame, Geometry, Path, Stroke};
-use iced::widget::{column, container, mouse_area, text};
+use iced::widget::{column, container, mouse_area};
 use iced::{mouse, Alignment, Color, Element, Length, Pixels, Point, Rectangle, Renderer, Theme};
 use obayebar::style;
 
@@ -181,54 +181,38 @@ pub fn view(
         .spacing(style::SPACING_SMALLER / 2.0)
         .align_x(Alignment::Center);
 
-    let audio_icon = mouse_area(
-        text(audio.icon_name)
-            .font(style::ICON_FONT)
-            .size(style::FONT_SIZE_LARGE)
-            .color(style::M3_SECONDARY)
-            .align_x(Alignment::Center),
-    )
-    .on_press(Message::AudioOpenPavucontrol)
-    // Emit a *relative* nudge rather than an absolute target. This subtree is
-    // built inside `lazy(status_cache_key(..))`, and that key deliberately
-    // tracks only `audio.icon_name` — which buckets at 1/33/66% — so a closure
-    // capturing the current volume would keep serving a stale base after the
-    // first scroll step and the volume would stop moving. Resolving the base in
-    // `update()` keeps this closure state-free, so caching it stays correct.
-    .on_scroll(|delta| {
-        let dy = match delta {
-            mouse::ScrollDelta::Lines { y, .. } => y,
-            mouse::ScrollDelta::Pixels { y, .. } => y / 120.0,
-        };
-        Message::AudioNudgeVolume(dy * VOLUME_SCROLL_STEP)
-    });
-    let audio_icon = PanelTrigger::new(PanelKind::Audio, monitor.map(String::from), audio_icon);
+    let trigger = |kind, content: Element<'static, Message>| {
+        PanelTrigger::new(kind, monitor.map(String::from), content)
+    };
 
-    let network_icon = PanelTrigger::new(
+    let audio_icon = mouse_area(single_icon(audio.icon_name, style::M3_SECONDARY))
+        .on_press(Message::AudioOpenPavucontrol)
+        // Emit a *relative* nudge rather than an absolute target. This subtree is
+        // built inside `lazy(status_cache_key(..))`, and that key deliberately
+        // tracks only `audio.icon_name` — which buckets at 1/33/66% — so a closure
+        // capturing the current volume would keep serving a stale base after the
+        // first scroll step and the volume would stop moving. Resolving the base in
+        // `update()` keeps this closure state-free, so caching it stays correct.
+        .on_scroll(|delta| {
+            let dy = match delta {
+                mouse::ScrollDelta::Lines { y, .. } => y,
+                mouse::ScrollDelta::Pixels { y, .. } => y / 120.0,
+            };
+            Message::AudioNudgeVolume(dy * VOLUME_SCROLL_STEP)
+        });
+    let audio_icon = trigger(PanelKind::Audio, audio_icon.into());
+
+    let network_icon = trigger(
         PanelKind::Network,
-        monitor.map(String::from),
-        text(network.icon_name)
-            .font(style::ICON_FONT)
-            .size(style::FONT_SIZE_LARGE)
-            .color(style::M3_SECONDARY)
-            .align_x(Alignment::Center),
+        single_icon(network.icon_name, style::M3_SECONDARY),
     );
 
-    let bluetooth_icon = PanelTrigger::new(
+    let bluetooth_icon = trigger(
         PanelKind::Bluetooth,
-        monitor.map(String::from),
-        text(bluetooth.icon_name)
-            .font(style::ICON_FONT)
-            .size(style::FONT_SIZE_LARGE)
-            .color(style::M3_SECONDARY)
-            .align_x(Alignment::Center),
+        single_icon(bluetooth.icon_name, style::M3_SECONDARY),
     );
 
-    let sysinfo_icon = PanelTrigger::new(
-        PanelKind::Sysinfo,
-        monitor.map(String::from),
-        sysinfo_icon_view(sysinfo),
-    );
+    let sysinfo_icon = trigger(PanelKind::Sysinfo, sysinfo_icon_view(sysinfo));
 
     icons = icons.push(audio_icon);
     icons = icons.push(bluetooth_icon);
@@ -241,14 +225,9 @@ pub fn view(
         } else {
             style::M3_SECONDARY
         };
-        let battery_icon = PanelTrigger::new(
+        let battery_icon = trigger(
             PanelKind::Battery,
-            monitor.map(String::from),
-            text(battery.icon_name)
-                .font(style::ICON_FONT)
-                .size(style::FONT_SIZE_LARGE)
-                .color(battery_color)
-                .align_x(Alignment::Center),
+            single_icon(battery.icon_name, battery_color),
         );
         icons = icons.push(battery_icon);
     }
