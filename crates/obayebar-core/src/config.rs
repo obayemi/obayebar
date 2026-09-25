@@ -32,6 +32,7 @@ const DEFAULT_HYPRLOCK_CONF: &str = "~/.config/hypr/hyprlock.conf";
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub gitlab: GitlabConfig,
+    pub media: MediaConfig,
     pub wallpaper: WallpaperConfig,
     pub lock: LockConfig,
     pub spawn: SpawnConfig,
@@ -53,6 +54,26 @@ pub struct SpawnConfig {
 pub struct GitlabConfig {
     pub enable: bool,
     pub url: Option<String>,
+}
+
+/// The MPRIS media module. Unlike GitLab it needs no account and costs
+/// nothing without a player, so it is on unless turned off.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct MediaConfig {
+    pub enable: bool,
+    /// Keep the bar entry while nothing plays. When false it shows only while
+    /// some player is playing.
+    pub show_when_idle: bool,
+}
+
+impl Default for MediaConfig {
+    fn default() -> Self {
+        Self {
+            enable: true,
+            show_when_idle: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -158,6 +179,24 @@ mod tests {
         assert!(cfg.gitlab.url.is_none());
         assert!(!cfg.wallpaper.enable);
         assert!(!cfg.lock.enable);
+    }
+
+    #[test]
+    fn media_is_on_and_shown_when_idle_by_default() {
+        let cfg = parse("");
+        assert!(cfg.media.enable);
+        assert!(cfg.media.show_when_idle);
+    }
+
+    #[test]
+    fn media_can_be_turned_off_or_hidden_when_idle() {
+        let cfg = parse("[media]\nenable = false\n");
+        assert!(!cfg.media.enable);
+        assert!(cfg.media.show_when_idle);
+        let cfg = parse("[media]\nshow_when_idle = false\n");
+        assert!(cfg.media.enable);
+        assert!(!cfg.media.show_when_idle);
+        assert!(toml::from_str::<Config>("[media]\nshow_idle = false\n").is_err());
     }
 
     #[test]

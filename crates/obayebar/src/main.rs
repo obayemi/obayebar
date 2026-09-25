@@ -1,6 +1,7 @@
 mod bar;
 mod config;
 mod control;
+mod media;
 mod notifications;
 mod panel;
 mod services;
@@ -123,6 +124,9 @@ struct CliArgs {
     gitlab_enable: Option<bool>,
     /// `--gitlab-url <URL>`; `None` means "use env or config".
     gitlab_url: Option<String>,
+    /// `Some(true)` for `--media`, `Some(false)` for `--no-media`; `None`
+    /// means "use config".
+    media_enable: Option<bool>,
 }
 
 fn print_usage() {
@@ -134,11 +138,13 @@ fn print_usage() {
          Options:\n  \
            --gitlab              Show the GitLab todos module on the bar\n  \
            --gitlab-url <URL>    Base URL of the GitLab instance (overrides config / env)\n  \
+           --media               Show the media (MPRIS) module (overrides config)\n  \
+           --no-media            Leave the media module out entirely\n  \
            -h, --help            Print this help\n  \
            -V, --version         Print version\n\
          \n\
          Persistent settings can also be placed in $XDG_CONFIG_HOME/obayebar/config.toml\n\
-         (see [gitlab].enable / [gitlab].url).\n"
+         (see [gitlab].enable / [gitlab].url / [media].enable).\n"
     );
 }
 
@@ -149,6 +155,10 @@ fn parse_cli() -> CliArgs {
         let url_value = match arg.as_str() {
             "--gitlab" => {
                 args.gitlab_enable = Some(true);
+                continue;
+            }
+            "--media" | "--no-media" => {
+                args.media_enable = Some(arg == "--media");
                 continue;
             }
             "--gitlab-url" => iter.next().unwrap_or_else(|| {
@@ -186,6 +196,7 @@ fn main() {
     let cli = config::CliOverrides {
         gitlab_enable: args.gitlab_enable,
         gitlab_url: args.gitlab_url,
+        media_enable: args.media_enable,
     };
     let file = config::Config::load();
     config::install(&file, &cli);
@@ -333,6 +344,8 @@ pub struct App {
     pub bluetooth: Arc<BluetoothInfo>,
     pub sysinfo: Arc<SysInfo>,
     pub tray_items: Arc<Vec<TrayItemInfo>>,
+    /// `None` when `[media].enable` is off: no service, no entry, no panel.
+    pub media: Option<media::MediaState>,
     pub popup_notifications: Vec<NotificationData>,
     pub hovered_notif_id: Option<u32>,
 
@@ -412,6 +425,14 @@ pub enum Message {
     AudioSetDefaultSink(u32),
     AudioOpenPavucontrol,
     SetPowerProfile(String),
+    /// A fresh snapshot of every MPRIS player, from the media service.
+    Media(Vec<services::media::Player>),
+    /// A cover fetch for this URL finished.
+    MediaArt(String, services::media_art::Art),
+    /// An animation frame for the media panel's slider.
+    MediaFrame,
+    MediaControl(media::Action),
+    MediaCyclePlayer,
     WindowClosed(window::Id),
     /// A line arrived on the control socket, from `obayebar-launcher`.
     Control(obayebar_core::control::BarCommand),
@@ -460,6 +481,12 @@ impl App {
                 bluetooth: Arc::new(BluetoothInfo::default()),
                 sysinfo: Arc::new(SysInfo::default()),
                 tray_items: Arc::new(Vec::new()),
+                media: config::resolved().media_enable().then(|| {
+                    media::MediaState::new(
+                        std::time::Instant::now(),
+                        config::resolved().media_show_when_idle(),
+                    )
+                }),
                 popup_notifications: Vec::new(),
                 hovered_notif_id: None,
                 launcher: Launcher::new(),
@@ -500,6 +527,9 @@ impl App {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
+        if let Some(media) = self.media.as_mut() {
+            media.tick(std::time::Instant::now());
+        }
         let task = self.handle_message(message);
         self.sync_panel_signals();
         // Any message can change what a panel renders, so refit here rather
@@ -844,6 +874,10 @@ impl App {
                 services::battery::set_power_profile(&profile);
                 Task::none()
             }
+            Message::Media(_)
+            | Message::MediaArt(..)
+            | Message::MediaControl(_)
+            | Message::MediaCyclePlayer => self.update_media(message),
             Message::AudioOpenPavucontrol => {
                 // A mixer the user opened from the bar has no business dying
                 // when the bar restarts, so it goes out through the spawner
@@ -1451,6 +1485,16 @@ impl App {
             );
         }
 
+        if let Some(media) = &self.media {
+            subs.push(Subscription::run(services::media::stream).map(Message::Media));
+            if self.media_panel_open() && media.animating() {
+                subs.push(
+                    iced::time::every(std::time::Duration::from_millis(16))
+                        .map(|_| Message::MediaFrame),
+                );
+            }
+        }
+
         if is_animating {
             subs.push(
                 iced::time::every(std::time::Duration::from_millis(16)).map(|_| Message::AnimTick),
@@ -1547,6 +1591,7 @@ impl App {
             }
             PanelKind::Sysinfo => style::sysinfo_panel_height(),
             PanelKind::Gitlab => style::GITLAB_PANEL_HEIGHT,
+            PanelKind::Media => u32::from(style::MEDIA_PANEL_HEIGHT),
         };
         (kind.width(), height)
     }
@@ -1562,7 +1607,60 @@ impl App {
             PanelKind::Bluetooth => bar::bluetooth_panel::view(&self.bluetooth),
             PanelKind::Sysinfo => bar::sysinfo_panel::view(&self.sysinfo),
             PanelKind::Gitlab => bar::gitlab_panel::view(&self.gitlab, &self.gitlab_token_input),
+            PanelKind::Media => self
+                .media
+                .as_ref()
+                .map_or_else(|| iced::widget::Space::new().into(), bar::media_panel::view),
         }
+    }
+
+    /// Handle a media message. Only a running media module receives any.
+    fn update_media(&mut self, message: Message) -> Task<Message> {
+        let Some(media) = self.media.as_mut() else {
+            return Task::none();
+        };
+        let now = media.now();
+        match message {
+            Message::Media(players) => {
+                let art = Self::fetch_media_art(media.update(players, now));
+                if media.trigger() == media::Trigger::Hidden && self.media_panel_open() {
+                    return Task::batch([art, self.close_all_panels()]);
+                }
+                art
+            }
+            Message::MediaArt(url, art) => {
+                media.art_loaded(url, art);
+                Task::none()
+            }
+            Message::MediaControl(action) => {
+                if let Some((bus_name, command)) = media.command(action) {
+                    services::media::send(bus_name, command);
+                    if let media::Action::Seek(position) = action {
+                        media.seek(position, now);
+                    }
+                }
+                Task::none()
+            }
+            Message::MediaCyclePlayer => Self::fetch_media_art(media.cycle_player(now)),
+            _ => Task::none(),
+        }
+    }
+
+    /// Whether the media panel is up. It is closed when its bar entry goes
+    /// away, since that entry's pointer leave would then never arrive.
+    fn media_panel_open(&self) -> bool {
+        self.panels
+            .get(&PanelKind::Media)
+            .is_some_and(panel::Panel::is_open)
+    }
+
+    /// Fetch the cover the media state asked for, off the UI thread.
+    fn fetch_media_art(url: Option<String>) -> Task<Message> {
+        url.map_or_else(Task::none, |url| {
+            Task::perform(services::media_art::load(url.clone()), move |art| {
+                Message::MediaArt(url, art)
+            })
+        })
     }
 
     /// Schedule a dismissal check after `PANEL_GRACE`.

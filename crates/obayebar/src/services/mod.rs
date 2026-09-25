@@ -5,6 +5,8 @@ pub mod dbus_util;
 pub mod gitlab;
 pub mod http;
 pub mod hyprland;
+pub mod media;
+pub mod media_art;
 pub mod network;
 pub mod notifications;
 pub mod sysinfo;

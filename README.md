@@ -107,7 +107,7 @@ If home-manager starts the bar and the wallpaper daemon, remove the two
 
 **Each surface has its own layer-shell namespace.** The namespaces are
 `obayebar-bar-N` (one for each bar), `obayebar-panel-<kind>` (audio, network,
-bluetooth, battery, sysinfo, gitlab), `obayebar-notifications` and
+bluetooth, battery, sysinfo, gitlab, media), `obayebar-notifications` and
 `obayebar-launcher`. Thus a rule must match a prefix, as in the example above.
 A rule that matches the exact name `obayebar` matches no surface. A rule can
 also match one kind of surface, and not the other kinds.
@@ -123,6 +123,10 @@ default values for the full file.
 [gitlab]
 enable = true                               # show the GitLab todos module
 url = "https://gitlab.example.com"          # default: https://gitlab.com
+
+[media]
+enable = true                               # default; false leaves MPRIS alone
+show_when_idle = true                       # default; false shows it only while playing
 
 [wallpaper]
 enable = true                               # for the home-manager module only
@@ -149,10 +153,14 @@ limits.
 The precedence for each field is: command-line flag, then environment
 variable, then configuration file, then the default value.
 
-`[gitlab].enable` controls the module on the bar. `[wallpaper].enable` and
-`[lock].enable` control the systemd units of the home-manager module. The
-`obayebar-wallpaper` and `obayebar-lock` programs do not read the two `enable`
-keys: a program that you start manually always operates.
+`[gitlab].enable` and `[media].enable` control their modules on the bar. The
+media module is on by default; `--no-media` or `--media` overrides the file.
+With `[media].show_when_idle = false` the media entry shows only while a
+player plays; otherwise it stays, as an icon alone when there is no player.
+`[wallpaper].enable` and `[lock].enable` control the systemd units of the
+home-manager module. The `obayebar-wallpaper` and `obayebar-lock` programs do
+not read the two `enable` keys: a program that you start manually always
+operates.
 
 The GitLab token does not go in this file. The bar reads the token from the
 `OBAYEBAR_GITLAB_TOKEN` environment variable, then from Secret Service, then
@@ -268,6 +276,8 @@ the XDG directories. The `~` form works only in a hand-written
 | `gitlab.enable`                    | bool    | `false`                        | Show the GitLab todos panel.                                 |
 | `gitlab.url`                       | str     | `null`                         | The GitLab instance. `null` gives `https://gitlab.com`.      |
 | `gitlab.tokenFile`                 | path    | `null`                         | A file that contains the personal access token.              |
+| `media.enable`                     | bool    | `true`                         | Show the MPRIS media module.                                 |
+| `media.showWhenIdle`               | bool    | `true`                         | Keep the media entry while nothing plays.                    |
 | `wallpaper.enable`                 | bool    | `false`                        | Start the wallpaper daemon.                                  |
 | `wallpaper.directory`              | path    | `null`                         | `null` gives `~/Images/wallpapers/enabled`.                  |
 | `wallpaper.interval`               | str     | `null`                         | `null` gives `30m`. Use `off` to select one time.            |
@@ -290,6 +300,7 @@ An overlay is also available. The overlay adds `obayebar` to `pkgs`.
 | Workspaces      | Hyprland IPC (`j/workspaces`, socket2)   | One set per monitor. A click focuses one. A spring moves the indicator.  |
 | Active window   | Hyprland IPC (`activewindow` event)      | Shows the class and the title. The bar draws the text vertically.       |
 | System tray     | StatusNotifierItem (dbus)                | A click activates the item. The bar keeps the icons in a cache.         |
+| Media           | MPRIS (dbus)                             | Shows the track. The panel plays, seeks, loops. `--no-media` hides it.  |
 | GitLab todos    | GitLab REST API + Secret Service keyring | Off by default. Use `--gitlab`, the config file, or the Nix option.     |
 | Clock           | local time tick                          | Shows the local time.                                                   |
 | Audio           | PipeWire (native, with `pipewire-rs`)    | Shows the volume. The panel has sliders, mute, and sink selection.      |
@@ -306,6 +317,8 @@ obayebar [OPTIONS]
 
   --gitlab              Show the GitLab todos module on the bar
   --gitlab-url <URL>    Base URL of the GitLab instance
+  --media               Show the media (MPRIS) module (overrides config)
+  --no-media            Leave the media module out entirely
   -h, --help            Print this help
   -V, --version         Print version
 ```
@@ -543,7 +556,9 @@ decisions come from that goal:
   of the state. The clock, the status and the tray sections are in an
   `iced::widget::lazy` with a manual cache key. Thus a CPU or RAM value with a
   change of 0.1 % does not make a new widget tree. The spring animation runs
-  at 60 Hz only *while the animation moves*. When nothing moves, the bar is
+  at 60 Hz only *while the animation moves*. The wave of the media slider runs
+  only while the media panel is open and a track plays, and for the moment
+  it takes to flatten after a pause. When nothing moves, the bar is
   fully idle: no wake-ups, and no draws.
 - **All the event sources push, and the bar does not poll.**
   - Hyprland: one permanent `socket2` connection. The bar reads the connection
@@ -551,8 +566,9 @@ decisions come from that goal:
     or a monitor) makes a refresh. The bar discards the high-frequency events
     `activewindowv2` and `windowtitle` before the UI thread wakes.
   - The dbus services (network, bluetooth, notifications, battery,
-    power-profiles, upower, gitlab, tray) all use signal subscriptions
-    through `zbus`.
+    power-profiles, upower, gitlab, tray, mpris) all use signal subscriptions
+    through `zbus`. MPRIS does not signal the playback position, so the bar
+    extrapolates it, and reads it again only while the media panel is open.
   - The audio data comes directly from the native PipeWire protocol
     (`pipewire-rs`), not from `pactl`, and not from a poll of `pavucontrol`.
 - **The clock wakes at the minute, not at each frame.** The clock uses a special
@@ -677,11 +693,11 @@ operates.
 | `chrono`                     | Time and minute-aligned wakeups                           |
 | `nvml-wrapper`               | NVIDIA GPU usage and temperature                          |
 | `fuzzy-matcher` (Skim)       | Launcher fuzzy ranking                                    |
-| `resvg` + `image`            | Tray and launcher icon decoding                           |
+| `resvg` + `image`            | Tray, launcher icon and album art decoding                |
 | `freedesktop-desktop-entry`  | Reading of a `.desktop` file to the specification         |
 | `freedesktop-icons`          | Icon lookup, with the inheritance of a theme              |
 | `inotify`                    | Watch of the application directories                      |
-| `reqwest` (rustls + ring)    | GitLab REST API                                           |
+| `reqwest` (rustls + ring)    | GitLab REST API, album art of the media panel             |
 | `secret-service`             | Storage of the GitLab PAT in the kernel keyring           |
 | `serde` + `toml`             | Config file parsing                                       |
 | `ab_glyph` + `fontdb`        | Vector text on the workspace canvas                       |

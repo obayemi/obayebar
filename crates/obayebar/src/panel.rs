@@ -17,6 +17,7 @@ pub enum PanelKind {
     Bluetooth,
     Sysinfo,
     Gitlab,
+    Media,
 }
 
 impl PanelKind {
@@ -30,6 +31,7 @@ impl PanelKind {
             Self::Bluetooth => style::BLUETOOTH_PANEL_WIDTH,
             Self::Sysinfo => style::SYSINFO_PANEL_WIDTH,
             Self::Gitlab => style::GITLAB_PANEL_WIDTH,
+            Self::Media => style::MEDIA_PANEL_WIDTH,
         }
     }
 
@@ -42,6 +44,7 @@ impl PanelKind {
             Self::Bluetooth => "bluetooth",
             Self::Sysinfo => "sysinfo",
             Self::Gitlab => "gitlab",
+            Self::Media => "media",
         };
         format!("obayebar-panel-{suffix}")
     }
@@ -49,13 +52,15 @@ impl PanelKind {
     /// `Some` when this kind drives a service-side `PanelSignal` that should
     /// flip on open/close so the backing service can switch refresh cadence
     /// (network rescan, bluetooth discovery hint, sysinfo polling, gitlab
-    /// rate). `None` for kinds whose service runs at a single cadence.
+    /// rate, media position resampling). `None` for kinds whose service runs
+    /// at a single cadence.
     pub fn signal_setter(self) -> Option<fn(bool)> {
         match self {
             Self::Network => Some(services::network::set_panel_open),
             Self::Bluetooth => Some(services::bluetooth::set_panel_open),
             Self::Sysinfo => Some(services::sysinfo::set_panel_open),
             Self::Gitlab => Some(services::gitlab::set_panel_open),
+            Self::Media => Some(services::media::set_panel_open),
             Self::Audio | Self::Battery => None,
         }
     }

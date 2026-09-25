@@ -20,6 +20,7 @@ const ENV_GITLAB_URL: &str = "OBAYEBAR_GITLAB_URL";
 pub struct CliOverrides {
     pub gitlab_enable: Option<bool>,
     pub gitlab_url: Option<String>,
+    pub media_enable: Option<bool>,
 }
 
 /// File + CLI + env, with each field's precedence resolved at construction.
@@ -28,6 +29,8 @@ pub struct CliOverrides {
 pub struct Resolved {
     gitlab_enable: bool,
     gitlab_host: String,
+    media_enable: bool,
+    media_show_when_idle: bool,
 }
 
 impl Resolved {
@@ -36,6 +39,8 @@ impl Resolved {
         Self {
             gitlab_enable: cli.gitlab_enable.unwrap_or(file.gitlab.enable),
             gitlab_host: resolve_gitlab_host(file, cli),
+            media_enable: cli.media_enable.unwrap_or(file.media.enable),
+            media_show_when_idle: file.media.show_when_idle,
         }
     }
 
@@ -47,6 +52,16 @@ impl Resolved {
     #[must_use]
     pub fn gitlab_host(&self) -> &str {
         &self.gitlab_host
+    }
+
+    #[must_use]
+    pub const fn media_enable(&self) -> bool {
+        self.media_enable
+    }
+
+    #[must_use]
+    pub const fn media_show_when_idle(&self) -> bool {
+        self.media_show_when_idle
     }
 }
 
@@ -103,6 +118,47 @@ mod tests {
             },
         );
         assert!(r.gitlab_enable());
+    }
+
+    #[test]
+    fn media_follows_the_file_without_a_flag() {
+        let r = Resolved::from_parts(
+            &parse("[media]\nenable = false\n"),
+            &CliOverrides::default(),
+        );
+        assert!(!r.media_enable());
+        let r = Resolved::from_parts(&Config::default(), &CliOverrides::default());
+        assert!(r.media_enable());
+        assert!(r.media_show_when_idle());
+    }
+
+    #[test]
+    fn cli_media_flag_beats_file() {
+        let r = Resolved::from_parts(
+            &parse("[media]\nenable = false\n"),
+            &CliOverrides {
+                media_enable: Some(true),
+                ..CliOverrides::default()
+            },
+        );
+        assert!(r.media_enable());
+        let r = Resolved::from_parts(
+            &Config::default(),
+            &CliOverrides {
+                media_enable: Some(false),
+                ..CliOverrides::default()
+            },
+        );
+        assert!(!r.media_enable());
+    }
+
+    #[test]
+    fn show_when_idle_comes_from_the_file() {
+        let r = Resolved::from_parts(
+            &parse("[media]\nshow_when_idle = false\n"),
+            &CliOverrides::default(),
+        );
+        assert!(!r.media_show_when_idle());
     }
 
     #[test]

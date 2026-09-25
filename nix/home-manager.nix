@@ -15,6 +15,11 @@ let
     lib.optionalAttrs cfg.gitlab.enable { enable = true; }
     // lib.optionalAttrs (cfg.gitlab.url != null) { inherit (cfg.gitlab) url; };
 
+  # Written only when turned off: the binaries already default both to on.
+  mediaAttrs =
+    lib.optionalAttrs (!cfg.media.enable) { enable = false; }
+    // lib.optionalAttrs (!cfg.media.showWhenIdle) { show_when_idle = false; };
+
   wallpaperAttrs =
     lib.optionalAttrs cfg.wallpaper.enable { enable = true; }
     // lib.optionalAttrs (cfg.wallpaper.directory != null)
@@ -42,6 +47,7 @@ let
   # with no warning — the file simply was not written.
   settings =
     lib.optionalAttrs (gitlabAttrs != { }) { gitlab = gitlabAttrs; }
+    // lib.optionalAttrs (mediaAttrs != { }) { media = mediaAttrs; }
     // lib.optionalAttrs (wallpaperAttrs != { }) { wallpaper = wallpaperAttrs; }
     // lib.optionalAttrs (lockAttrs != { }) { lock = lockAttrs; }
     // lib.optionalAttrs (spawnAttrs != { }) { spawn = spawnAttrs; };
@@ -181,6 +187,27 @@ in {
           read at runtime, so the secret never enters the Nix store.
           Leave null to keep the default keyring / on-disk
           ~/.config/obayebar/gitlab_token resolution.
+        '';
+      };
+    };
+
+    media = {
+      enable = mkOption {
+        type = types.bool;
+        default = true;
+        description = ''
+          Show the MPRIS media module: the playing track on the bar and a
+          media card panel. When false the bar never watches for players.
+        '';
+      };
+
+      showWhenIdle = mkOption {
+        type = types.bool;
+        default = true;
+        description = ''
+          Keep the media entry on the bar while nothing plays, as an icon
+          alone when there is no player. When false the entry shows only
+          while some player is playing.
         '';
       };
     };
