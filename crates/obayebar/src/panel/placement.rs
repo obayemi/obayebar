@@ -24,11 +24,12 @@ impl TriggerSpot {
     /// Layer-shell margin placing a panel of content `height` beside the bar,
     /// centred on the trigger and kept `PANEL_GAP_PX` clear of the output's
     /// top and bottom edges. A panel taller than the room sticks to the top.
+    /// Returned as layer-shell (top, right, bottom, left).
     pub(super) fn margin(self, height: u32) -> (i32, i32, i32, i32) {
         let height = f64::from(height);
-        let gap = f64::from(style::PANEL_GAP_PX);
-        let lowest = (f64::from(self.output_height) - height - gap).max(gap);
-        let top = (f64::from(self.centre_y) - height / 2.0).clamp(gap, lowest);
+        let min_top = f64::from(style::PANEL_GAP_PX);
+        let max_top = (f64::from(self.output_height) - height - min_top).max(min_top);
+        let top = (f64::from(self.centre_y) - height / 2.0).clamp(min_top, max_top);
         (
             top.round().to_i32().unwrap_or_default(),
             0,

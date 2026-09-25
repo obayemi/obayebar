@@ -185,7 +185,7 @@ pub fn view(
         PanelTrigger::new(kind, monitor.map(String::from), content)
     };
 
-    let audio_icon = mouse_area(single_icon(audio.icon_name, style::M3_SECONDARY))
+    let audio_controls = mouse_area(single_icon(audio.icon_name, style::M3_SECONDARY))
         .on_press(Message::AudioOpenPavucontrol)
         // Emit a *relative* nudge rather than an absolute target. This subtree is
         // built inside `lazy(status_cache_key(..))`, and that key deliberately
@@ -200,7 +200,7 @@ pub fn view(
             };
             Message::AudioNudgeVolume(dy * VOLUME_SCROLL_STEP)
         });
-    let audio_icon = trigger(PanelKind::Audio, audio_icon.into());
+    let audio_icon = trigger(PanelKind::Audio, audio_controls.into());
 
     let network_icon = trigger(
         PanelKind::Network,

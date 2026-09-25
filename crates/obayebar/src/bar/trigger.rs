@@ -66,8 +66,9 @@ enum Reaction {
 }
 
 impl State {
-    /// Follow the pointer onto or off the trigger. `press` is a press on the
-    /// trigger that its content did not capture.
+    /// Follow the pointer onto or off the trigger. `press` is an uncaptured
+    /// left press or touch, which reopens the panel only while the pointer
+    /// is over the trigger.
     const fn react(&mut self, hovered: bool, press: bool) -> Option<Reaction> {
         let was_hovered = std::mem::replace(&mut self.hovered, hovered);
         match (was_hovered, hovered) {
