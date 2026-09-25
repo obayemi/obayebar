@@ -70,7 +70,8 @@ fn chip_label(identity: &str, rotation: Option<Rotation>) -> String {
     )
 }
 
-/// The player's name; a button cycling to the next player when there is one.
+/// The player's name, with a swap icon and its place among the others when
+/// there are several; a button cycling to the next player then.
 fn player_chip(identity: &str, rotation: Option<Rotation>) -> Element<'_, Message> {
     let label = row![
         rotation.map(|_| icon_text(
