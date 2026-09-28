@@ -1,4 +1,4 @@
-use super::widgets::{hover_button_style, panel_header, panel_with_exit, separator};
+use super::widgets::{hover_button_style, panel_body, panel_header, separator};
 use crate::panel::PanelKind;
 use crate::services::audio::AudioInfo;
 use crate::Message;
@@ -126,11 +126,5 @@ pub fn view(audio: &AudioInfo) -> Element<'_, Message> {
         .spacing(style::SPACING_NORMAL)
         .width(Length::Fill);
 
-    let panel = container(content)
-        .padding(style::PADDING_LARGE)
-        .width(Length::Fill)
-        .height(Length::Shrink)
-        .style(style::panel_container);
-
-    panel_with_exit(PanelKind::Audio, panel.into())
+    panel_body(PanelKind::Audio, content)
 }

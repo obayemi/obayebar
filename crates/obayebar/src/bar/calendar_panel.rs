@@ -1,4 +1,4 @@
-use super::widgets::{icon_button, panel_with_exit, scroll_lines, separator};
+use super::widgets::{icon_button, panel_body, scroll_lines, separator};
 use crate::panel::PanelKind;
 use crate::Message;
 use chrono::{DateTime, Datelike, Local, NaiveDate, WeekdaySet};
@@ -20,13 +20,7 @@ pub fn view(now: &DateTime<Local>, pager: Pager) -> Element<'static, Message> {
     .spacing(style::SPACING_NORMAL)
     .width(Length::Fill);
 
-    let panel = container(content)
-        .padding(style::PADDING_LARGE)
-        .width(Length::Fill)
-        .height(Length::Shrink)
-        .style(style::panel_container);
-
-    panel_with_exit(PanelKind::Calendar, panel.into())
+    panel_body(PanelKind::Calendar, content)
 }
 
 /// The current time and the long date, centered above the grid.

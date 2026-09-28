@@ -1,4 +1,4 @@
-use super::widgets::{hover_button_style, panel_header, panel_with_exit, separator, GaugeProgram};
+use super::widgets::{hover_button_style, panel_body, panel_header, separator, GaugeProgram};
 use crate::panel::PanelKind;
 use crate::services::battery::BatteryInfo;
 use crate::Message;
@@ -178,11 +178,5 @@ pub fn view(battery: &BatteryInfo) -> Element<'_, Message> {
         content = content.push(profile_row);
     }
 
-    let panel = container(content)
-        .padding(style::PADDING_LARGE)
-        .width(Length::Fill)
-        .height(Length::Shrink)
-        .style(style::panel_container);
-
-    panel_with_exit(PanelKind::Battery, panel.into())
+    panel_body(PanelKind::Battery, content)
 }

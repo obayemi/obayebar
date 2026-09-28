@@ -1,4 +1,4 @@
-use super::widgets::{panel_header, panel_with_exit, GaugeProgram};
+use super::widgets::{panel_body, panel_header, GaugeProgram};
 use crate::panel::PanelKind;
 use crate::services::sysinfo::{self, SysInfo};
 use crate::Message;
@@ -178,11 +178,5 @@ pub fn view(sysinfo: &SysInfo) -> Element<'_, Message> {
         .width(Length::Fill)
         .align_x(Alignment::Center);
 
-    let panel = container(content)
-        .padding(style::PADDING_LARGE)
-        .width(Length::Fill)
-        .height(Length::Shrink)
-        .style(style::panel_container);
-
-    panel_with_exit(PanelKind::Sysinfo, panel.into())
+    panel_body(PanelKind::Sysinfo, content)
 }

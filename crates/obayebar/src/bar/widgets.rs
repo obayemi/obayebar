@@ -155,6 +155,24 @@ pub fn panel_with_exit(kind: PanelKind, content: Element<'_, Message>) -> Elemen
     .into()
 }
 
+/// Wrap a panel's content in the standard body chrome — fill width, shrink
+/// height, large padding, `panel_container` style — then hand it to
+/// [`panel_with_exit`]. Shared by every panel whose body height tracks its
+/// content instead of filling the popup (all but GitLab and media, which use
+/// their own layouts).
+pub fn panel_body<'a>(
+    kind: PanelKind,
+    content: impl Into<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    let body = container(content)
+        .padding(style::PADDING_LARGE)
+        .width(Length::Fill)
+        .height(Length::Shrink)
+        .style(style::panel_container);
+
+    panel_with_exit(kind, body.into())
+}
+
 /// Panel flavour of `style::hover_button`, pinned to the panels' corner
 /// radius so the six call sites do not each repeat it.
 pub fn hover_button_style(

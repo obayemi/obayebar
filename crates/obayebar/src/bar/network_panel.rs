@@ -1,4 +1,4 @@
-use super::widgets::{icon_button, panel_header, panel_with_exit, separator, styled_toggler};
+use super::widgets::{icon_button, panel_body, panel_header, separator, styled_toggler};
 use crate::panel::PanelKind;
 use crate::services::network::NetworkInfo;
 use crate::Message;
@@ -245,11 +245,5 @@ pub fn view<'a>(
         );
     }
 
-    let panel = container(content)
-        .padding(style::PADDING_LARGE)
-        .width(Length::Fill)
-        .height(Length::Shrink)
-        .style(style::panel_container);
-
-    panel_with_exit(PanelKind::Network, panel.into())
+    panel_body(PanelKind::Network, content)
 }
