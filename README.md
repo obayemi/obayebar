@@ -107,10 +107,10 @@ If home-manager starts the bar and the wallpaper daemon, remove the two
 
 **Each surface has its own layer-shell namespace.** The namespaces are
 `obayebar-bar-N` (one for each bar), `obayebar-panel-<kind>` (audio, network,
-bluetooth, battery, sysinfo, gitlab, media), `obayebar-notifications` and
-`obayebar-launcher`. Thus a rule must match a prefix, as in the example above.
-A rule that matches the exact name `obayebar` matches no surface. A rule can
-also match one kind of surface, and not the other kinds.
+bluetooth, battery, sysinfo, gitlab, media, calendar), `obayebar-notifications`
+and `obayebar-launcher`. Thus a rule must match a prefix, as in the example
+above. A rule that matches the exact name `obayebar` matches no surface. A rule
+can also match one kind of surface, and not the other kinds.
 
 ### 4. Configure obayebar
 
@@ -295,20 +295,20 @@ An overlay is also available. The overlay adds `obayebar` to `pkgs`.
 
 ## Modules on the bar
 
-| Module          | Source                                   | Notes                                                                                    |
-|-----------------|------------------------------------------|------------------------------------------------------------------------------------------|
-| Workspaces      | Hyprland IPC (`j/workspaces`, socket2)   | One set per monitor. A click focuses one. A spring moves the indicator.                  |
-| Active window   | Hyprland IPC (`activewindow` event)      | Shows the class and the title. The bar draws the text vertically.                        |
-| System tray     | StatusNotifierItem (dbus)                | A click activates the item. The bar keeps the icons in a cache.                          |
-| Media           | MPRIS (dbus)                             | Shows the track. The panel plays, seeks, loops, switches players. `--no-media` hides it. |
-| GitLab todos    | GitLab REST API + Secret Service keyring | Off by default. Use `--gitlab`, the config file, or the Nix option.                      |
-| Clock           | local time tick                          | Shows the local time.                                                                    |
-| Audio           | PipeWire (native, with `pipewire-rs`)    | Shows the volume. The panel has sliders, mute, and sink selection.                       |
-| Network         | NetworkManager (dbus)                    | The panel shows the Wi-Fi list, and connects or disconnects.                             |
-| Bluetooth       | BlueZ (dbus)                             | The panel starts the adapter, finds devices, and forgets devices.                        |
-| Battery / power | UPower + `power-profiles-daemon` (dbus)  | Shows the percentage. The panel changes the power profile.                               |
-| Sysinfo         | `/proc`, NVML                            | Shows CPU, GPU, RAM, and network rates. The color changes at a limit.                    |
-| Notifications   | `org.freedesktop.Notifications` (dbus)   | Replaces `mako` and `dunst`. Maximum height is 2/5 of the monitor.                       |
+| Module          | Source                                   | Notes                                                                                                                                                       |
+|-----------------|------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Workspaces      | Hyprland IPC (`j/workspaces`, socket2)   | One set per monitor. A click focuses one. A spring moves the indicator.                                                                                     |
+| Active window   | Hyprland IPC (`activewindow` event)      | Shows the class and the title. The bar draws the text vertically.                                                                                           |
+| System tray     | StatusNotifierItem (dbus)                | A click activates the item. The bar keeps the icons in a cache.                                                                                             |
+| Media           | MPRIS (dbus)                             | Shows the track. The panel plays, seeks, loops, switches players. `--no-media` hides it.                                                                    |
+| GitLab todos    | GitLab REST API + Secret Service keyring | Off by default. Use `--gitlab`, the config file, or the Nix option.                                                                                         |
+| Clock           | local time tick                          | Shows the local time. The panel shows the time, the date and a Monday-first month with ISO week numbers. The chevrons or the scroll wheel change the month. |
+| Audio           | PipeWire (native, with `pipewire-rs`)    | Shows the volume. The panel has sliders, mute, and sink selection.                                                                                          |
+| Network         | NetworkManager (dbus)                    | The panel shows the Wi-Fi list, and connects or disconnects.                                                                                                |
+| Bluetooth       | BlueZ (dbus)                             | The panel starts the adapter, finds devices, and forgets devices.                                                                                           |
+| Battery / power | UPower + `power-profiles-daemon` (dbus)  | Shows the percentage. The panel changes the power profile.                                                                                                  |
+| Sysinfo         | `/proc`, NVML                            | Shows CPU, GPU, RAM, and network rates. The color changes at a limit.                                                                                       |
+| Notifications   | `org.freedesktop.Notifications` (dbus)   | Replaces `mako` and `dunst`. Maximum height is 2/5 of the monitor.                                                                                          |
 
 ## Command-line reference
 
@@ -681,30 +681,30 @@ operates.
 
 ## Libraries
 
-| Crate                        | Used for                                                  |
-|------------------------------|-----------------------------------------------------------|
-| `iced` 0.14                  | Reactive UI runtime, wgpu renderer, canvas, lazy widgets  |
-| `iced_layershell` 0.19       | wlr-layer-shell integration on top of iced                |
-| `smithay-client-toolkit` 0.20| Raw wlr-layer-shell + wl_shm for the wallpaper renderer   |
-| `fast_image_resize` 6        | SIMD wallpaper scaling                                    |
-| `zbus` 5                     | Async dbus for NetworkManager / BlueZ / UPower / SNI / …  |
-| `pipewire` 0.10              | Native PipeWire client for audio                          |
-| `tokio` 1.x                  | Async runtime, signal and timer plumbing                  |
-| `chrono`                     | Time and minute-aligned wakeups                           |
-| `nvml-wrapper`               | NVIDIA GPU usage and temperature                          |
-| `fuzzy-matcher` (Skim)       | Launcher fuzzy ranking                                    |
-| `resvg` + `image`            | Tray, launcher icon and album art decoding                |
-| `freedesktop-desktop-entry`  | Reading of a `.desktop` file to the specification         |
-| `freedesktop-icons`          | Icon lookup, with the inheritance of a theme              |
-| `inotify`                    | Watch of the application directories                      |
-| `reqwest` (rustls + ring)    | GitLab REST API, album art of the media panel             |
-| `url`                        | Parsing `file:` URIs from notifications and album art     |
-| `lru`                        | Least-recently-used eviction of the album art cache       |
-| `secret-service`             | Storage of the GitLab PAT in the kernel keyring           |
-| `serde` + `toml`             | Config file parsing                                       |
-| `ab_glyph` + `fontdb`        | Vector text on the workspace canvas                       |
-| `thiserror`                  | Typed errors on the IPC and rendering paths               |
-| `wayland-protocols-hyprland` | `hyprland_lock_notifier_v1`, whether the session is locked |
+| Crate                         | Used for                                                             |
+|-------------------------------|----------------------------------------------------------------------|
+| `iced` 0.14                   | Reactive UI runtime, wgpu renderer, canvas, lazy widgets             |
+| `iced_layershell` 0.19        | wlr-layer-shell integration on top of iced                           |
+| `smithay-client-toolkit` 0.20 | Raw wlr-layer-shell + wl_shm for the wallpaper renderer              |
+| `fast_image_resize` 6         | SIMD wallpaper scaling                                               |
+| `zbus` 5                      | Async dbus for NetworkManager / BlueZ / UPower / SNI / …             |
+| `pipewire` 0.10               | Native PipeWire client for audio                                     |
+| `tokio` 1.x                   | Async runtime, signal and timer plumbing                             |
+| `chrono`                      | Time, minute-aligned wakeups, calendar month and ISO week arithmetic |
+| `nvml-wrapper`                | NVIDIA GPU usage and temperature                                     |
+| `fuzzy-matcher` (Skim)        | Launcher fuzzy ranking                                               |
+| `resvg` + `image`             | Tray, launcher icon and album art decoding                           |
+| `freedesktop-desktop-entry`   | Reading of a `.desktop` file to the specification                    |
+| `freedesktop-icons`           | Icon lookup, with the inheritance of a theme                         |
+| `inotify`                     | Watch of the application directories                                 |
+| `reqwest` (rustls + ring)     | GitLab REST API, album art of the media panel                        |
+| `url`                         | Parsing `file:` URIs from notifications and album art                |
+| `lru`                         | Least-recently-used eviction of the album art cache                  |
+| `secret-service`              | Storage of the GitLab PAT in the kernel keyring                      |
+| `serde` + `toml`              | Config file parsing                                                  |
+| `ab_glyph` + `fontdb`         | Vector text on the workspace canvas                                  |
+| `thiserror`                   | Typed errors on the IPC and rendering paths                          |
+| `wayland-protocols-hyprland`  | `hyprland_lock_notifier_v1`, whether the session is locked           |
 
 ## Build from source
 
