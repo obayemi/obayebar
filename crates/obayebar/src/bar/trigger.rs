@@ -43,14 +43,6 @@ impl<'a> PanelTrigger<'a> {
             content: content.into(),
         }
     }
-
-    fn open(&self, bounds: Rectangle, viewport: Rectangle) -> Message {
-        Message::PanelOpen(
-            self.kind,
-            self.monitor.clone(),
-            TriggerSpot::new(bounds, viewport),
-        )
-    }
 }
 
 #[derive(Default)]
@@ -162,7 +154,11 @@ impl Widget<Message, Theme, Renderer> for PanelTrigger<'_> {
             .react(cursor.is_over(bounds), press)
         {
             Some(Reaction::Open) => {
-                shell.publish(self.open(bounds, *viewport));
+                shell.publish(Message::PanelOpen(
+                    self.kind,
+                    self.monitor.clone(),
+                    TriggerSpot::new(bounds, *viewport),
+                ));
                 if press {
                     shell.capture_event();
                 }
