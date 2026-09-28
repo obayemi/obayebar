@@ -1,10 +1,13 @@
+use super::widgets::panel_trigger;
+use crate::panel::PanelKind;
 use crate::Message;
 use chrono::{DateTime, Local, Timelike};
 use iced::widget::{column, container, text, Space};
 use iced::{Alignment, Background, Element, Length};
 use obayebar::style;
 
-pub fn view(time: &DateTime<Local>) -> Element<'static, Message> {
+/// Render the bar clock, which opens the calendar panel.
+pub fn view(time: &DateTime<Local>, monitor: Option<String>) -> Element<'static, Message> {
     let day_abbr = time.format("%a").to_string();
     let day_num = time.format("%-d").to_string();
     let hour = format!("{:02}", time.hour());
@@ -40,10 +43,5 @@ pub fn view(time: &DateTime<Local>) -> Element<'static, Message> {
     .spacing(style::SPACING_SMALL)
     .align_x(Alignment::Center);
 
-    container(clock_col)
-        .padding(style::PADDING_NORMAL)
-        .width(Length::Fill)
-        .align_x(Alignment::Center)
-        .style(style::pill_container)
-        .into()
+    panel_trigger(PanelKind::Calendar, monitor, clock_col)
 }

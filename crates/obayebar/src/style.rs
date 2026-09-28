@@ -156,6 +156,8 @@ pub const ICON_REPEAT: &str = "\u{E040}";
 pub const ICON_REPEAT_ONE: &str = "\u{E041}";
 pub const ICON_SHUFFLE: &str = "\u{E043}";
 pub const ICON_SWAP_HORIZ: &str = "\u{E8D4}";
+pub const ICON_CHEVRON_LEFT: &str = "\u{E5CB}";
+pub const ICON_CHEVRON_RIGHT: &str = "\u{E5CC}";
 
 pub const AUDIO_PANEL_WIDTH: u32 = 320;
 pub const NETWORK_PANEL_WIDTH: u32 = 300;
@@ -168,6 +170,11 @@ pub const MEDIA_PANEL_WIDTH: u32 = 360;
 /// The media card is a fixed size, like a phone's media notification: its
 /// content never grows, it only hides controls.
 pub const MEDIA_PANEL_HEIGHT: u16 = 184;
+pub const CALENDAR_PANEL_WIDTH: u32 = 300;
+/// Height of one calendar grid row, and of its weekday header row.
+pub const CALENDAR_CELL: f32 = 30.0;
+/// Size of the time readout at the top of the calendar panel.
+pub const CALENDAR_TIME_SIZE: f32 = 40.0;
 /// Maximum number of todos rendered in the popup before the user must use
 /// "Show all" on gitlab.com.
 pub const GITLAB_PANEL_VISIBLE: usize = 10;
@@ -543,6 +550,19 @@ pub fn sysinfo_panel_height() -> u32 {
     let safety = 15.0;
     let rows = per_row * 2.0;
     (container_padding + header + rows + outer_spacing + safety).ceil() as u32
+}
+
+/// Height of the calendar panel: time and date, a separator, the month
+/// navigation row, then the weekday header and the fixed six-week grid.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+pub fn calendar_panel_height() -> u32 {
+    let container_padding = PANEL_OUTLINE_WIDTH.mul_add(2.0, PADDING_LARGE * 2.0);
+    let clock = CALENDAR_TIME_SIZE.mul_add(LINE_HEIGHT, FONT_SIZE_SMALLER * LINE_HEIGHT);
+    let separator = 1.0;
+    let grid = CALENDAR_CELL * f32::from(crate::calendar::WEEKS + 1);
+    // Outer column: clock, separator, navigation, grid → 3 gaps
+    let outer_spacing = SPACING_NORMAL * 3.0;
+    (container_padding + clock + separator + ENTRY_TEXT_ROW + grid + outer_spacing).ceil() as u32
 }
 
 /// Scan `dir` (and one level of subdirectories — font packages nest fonts

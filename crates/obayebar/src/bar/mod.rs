@@ -2,6 +2,7 @@ mod active_window;
 pub mod audio_panel;
 pub mod battery_panel;
 pub mod bluetooth_panel;
+pub mod calendar_panel;
 mod clock;
 mod gitlab;
 pub mod gitlab_panel;
@@ -90,7 +91,13 @@ pub fn view<'a>(app: &'a App, monitor: Option<&'a str>) -> Element<'a, Message> 
     let tray_items = Arc::clone(&app.tray_items);
 
     let time = app.time;
-    let clock_key = (time.hour(), time.minute(), time.day());
+    let clock_monitor = monitor.map(String::from);
+    let clock_key = (
+        time.hour(),
+        time.minute(),
+        time.day(),
+        clock_monitor.clone(),
+    );
 
     let status_key = status_cache_key(app, monitor);
     let battery = app.battery.clone();
@@ -133,7 +140,9 @@ pub fn view<'a>(app: &'a App, monitor: Option<&'a str>) -> Element<'a, Message> 
     }
 
     let bar_content = bar_col
-        .push(lazy(clock_key, move |_| clock::view(&time)))
+        .push(lazy(clock_key, move |_| {
+            clock::view(&time, clock_monitor.clone())
+        }))
         .push(lazy(status_key, move |_| {
             let monitor_ref = monitor_owned.as_deref();
             status::view(

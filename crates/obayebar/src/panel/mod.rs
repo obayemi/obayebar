@@ -22,6 +22,7 @@ pub enum PanelKind {
     Sysinfo,
     Gitlab,
     Media,
+    Calendar,
 }
 
 impl PanelKind {
@@ -36,6 +37,7 @@ impl PanelKind {
             Self::Sysinfo => style::SYSINFO_PANEL_WIDTH,
             Self::Gitlab => style::GITLAB_PANEL_WIDTH,
             Self::Media => style::MEDIA_PANEL_WIDTH,
+            Self::Calendar => style::CALENDAR_PANEL_WIDTH,
         }
     }
 
@@ -49,6 +51,7 @@ impl PanelKind {
             Self::Sysinfo => "sysinfo",
             Self::Gitlab => "gitlab",
             Self::Media => "media",
+            Self::Calendar => "calendar",
         };
         format!("obayebar-panel-{suffix}")
     }
@@ -65,7 +68,7 @@ impl PanelKind {
             Self::Sysinfo => Some(services::sysinfo::set_panel_open),
             Self::Gitlab => Some(services::gitlab::set_panel_open),
             Self::Media => Some(services::media::set_panel_open),
-            Self::Audio | Self::Battery => None,
+            Self::Audio | Self::Battery | Self::Calendar => None,
         }
     }
 }

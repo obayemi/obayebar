@@ -333,6 +333,7 @@ pub struct App {
     pub focused_monitor: Option<String>,
     pub active_window: Option<WindowInfo>,
     pub time: chrono::DateTime<chrono::Local>,
+    pub calendar: obayebar::calendar::Pager,
     pub battery: BatteryInfo,
     /// Behind an `Arc` because `bar::view` clones it on every frame — and the
     /// workspace spring drives 60 frames a second per monitor while animating,
@@ -387,6 +388,8 @@ pub enum Message {
     NotifHoverEnter(u32),
     NotifHoverExit(u32),
     PanelOpen(PanelKind, Option<String>, panel::TriggerSpot),
+    CalendarPage(i32),
+    CalendarScroll(f32),
     Bluetooth(BluetoothInfo),
     BluetoothToggleDevice {
         path: String,
@@ -468,6 +471,7 @@ impl App {
                 focused_monitor: None,
                 active_window: None,
                 time: chrono::Local::now(),
+                calendar: obayebar::calendar::Pager::default(),
                 battery: BatteryInfo::default(),
                 network: Arc::new(NetworkInfo::default()),
                 connecting_ssid: None,
@@ -691,6 +695,14 @@ impl App {
                 self.maybe_close_popup_window()
             }
             Message::PanelOpen(kind, monitor, spot) => self.open_panel(kind, monitor, spot),
+            Message::CalendarPage(months) => {
+                self.calendar.page(months);
+                Task::none()
+            }
+            Message::CalendarScroll(lines) => {
+                self.calendar.scroll(lines);
+                Task::none()
+            }
             Message::Gitlab(info) => {
                 if self.gitlab != info {
                     self.gitlab = info;
@@ -1581,6 +1593,7 @@ impl App {
             PanelKind::Sysinfo => style::sysinfo_panel_height(),
             PanelKind::Gitlab => style::GITLAB_PANEL_HEIGHT,
             PanelKind::Media => u32::from(style::MEDIA_PANEL_HEIGHT),
+            PanelKind::Calendar => style::calendar_panel_height(),
         };
         (kind.width(), height)
     }
@@ -1600,6 +1613,7 @@ impl App {
                 .media
                 .as_ref()
                 .map_or_else(|| iced::widget::Space::new().into(), bar::media_panel::view),
+            PanelKind::Calendar => bar::calendar_panel::view(&self.time, self.calendar),
         }
     }
 
@@ -1698,6 +1712,9 @@ impl App {
         }
 
         let close = self.close_all_panels();
+        if kind == PanelKind::Calendar {
+            self.calendar = obayebar::calendar::Pager::default();
+        }
         // `close_all_panels` clears the pointer state, but the pointer really
         // is on this trigger, so restore it.
         self.panel_pointer.entered_trigger(kind);
