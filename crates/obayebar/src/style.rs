@@ -77,6 +77,10 @@ pub const PANEL_OUTLINE_WIDTH: f32 = 1.0;
 /// Opacity of the primary outline around every panel.
 pub const PANEL_OUTLINE_ALPHA: f32 = 0.5;
 
+/// Height of the horizontal line `widgets::separator` draws between panel
+/// sections, and the amount every panel height calculation reserves for it.
+pub const SEPARATOR_HEIGHT: f32 = 1.0;
+
 // Font sizes (from AppearanceConfig)
 pub const FONT_SIZE_SMALL: f32 = 11.0;
 pub const FONT_SIZE_SMALLER: f32 = 12.0;
@@ -171,7 +175,8 @@ pub const MEDIA_PANEL_WIDTH: u32 = 360;
 /// content never grows, it only hides controls.
 pub const MEDIA_PANEL_HEIGHT: u16 = 184;
 pub const CALENDAR_PANEL_WIDTH: u32 = 300;
-/// Height of one calendar grid row, and of its weekday header row.
+/// Side of the square day cell, including the disc that highlights today.
+/// This also sets the height of every grid row and of the weekday header row.
 pub const CALENDAR_CELL: f32 = 30.0;
 /// Size of the time readout at the top of the calendar panel.
 pub const CALENDAR_TIME_SIZE: f32 = 40.0;
@@ -448,7 +453,7 @@ pub fn battery_panel_height(has_power_profiles: bool) -> u32 {
     let outer_spacing = SPACING_NORMAL * 2.0;
 
     let profiles_section = if has_power_profiles {
-        let separator = 1.0;
+        let separator = SEPARATOR_HEIGHT;
         let label = FONT_SIZE_SMALLER * LINE_HEIGHT;
         // Profile buttons: icon (FONT_SIZE_NORMAL) + label (FONT_SIZE_SMALL) + spacing + padding
         let button_height = PADDING_SMALL.mul_add(
@@ -481,7 +486,7 @@ pub fn bluetooth_panel_height(
 ) -> u32 {
     let container_padding = PADDING_LARGE * 2.0;
     let header = FONT_SIZE_LARGE * LINE_HEIGHT;
-    let separator = 1.0;
+    let separator = SEPARATOR_HEIGHT;
 
     if !powered {
         // Just header + separator + "Bluetooth is off" text
@@ -556,13 +561,13 @@ pub fn sysinfo_panel_height() -> u32 {
 /// navigation row, then the weekday header and the fixed six-week grid.
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 pub fn calendar_panel_height() -> u32 {
-    let container_padding = PANEL_OUTLINE_WIDTH.mul_add(2.0, PADDING_LARGE * 2.0);
-    let clock = CALENDAR_TIME_SIZE.mul_add(LINE_HEIGHT, FONT_SIZE_SMALLER * LINE_HEIGHT);
-    let separator = 1.0;
+    let container_padding = (PADDING_LARGE + PANEL_OUTLINE_WIDTH) * 2.0;
+    let clock = (CALENDAR_TIME_SIZE + FONT_SIZE_SMALLER) * LINE_HEIGHT;
+    let separator = SEPARATOR_HEIGHT;
+    let navigation = ENTRY_TEXT_ROW;
     let grid = CALENDAR_CELL * f32::from(crate::calendar::WEEKS + 1);
-    // Outer column: clock, separator, navigation, grid → 3 gaps
     let outer_spacing = SPACING_NORMAL * 3.0;
-    (container_padding + clock + separator + ENTRY_TEXT_ROW + grid + outer_spacing).ceil() as u32
+    (container_padding + clock + separator + navigation + grid + outer_spacing).ceil() as u32
 }
 
 /// Scan `dir` (and one level of subdirectories — font packages nest fonts
@@ -1016,6 +1021,18 @@ mod tests {
             height > rows_only,
             "height {height} must exceed the {rows_only} its rows alone need"
         );
+    }
+
+    #[test]
+    fn calendar_panel_height_is_pinned() {
+        assert_eq!(super::calendar_panel_height(), 374);
+    }
+
+    #[test]
+    fn battery_panel_height_grows_with_power_profiles() {
+        let without = super::battery_panel_height(false);
+        let with = super::battery_panel_height(true);
+        assert!(with > without);
     }
 
     #[test]

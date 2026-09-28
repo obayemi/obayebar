@@ -115,15 +115,19 @@ pub fn panel_header<'a>(
 
 /// 1px horizontal line used between panel sections.
 pub fn separator<'a>() -> Element<'a, Message> {
-    container(Space::new().width(Length::Fill).height(1.0))
-        .style(|_theme| container::Style {
-            background: Some(iced::Background::Color(style::with_alpha(
-                style::M3_OUTLINE_VARIANT,
-                0.5,
-            ))),
-            ..container::Style::default()
-        })
-        .into()
+    container(
+        Space::new()
+            .width(Length::Fill)
+            .height(style::SEPARATOR_HEIGHT),
+    )
+    .style(|_theme| container::Style {
+        background: Some(iced::Background::Color(style::with_alpha(
+            style::M3_OUTLINE_VARIANT,
+            0.5,
+        ))),
+        ..container::Style::default()
+    })
+    .into()
 }
 
 /// Wrap a rendered panel with the standard popup scaffolding:
