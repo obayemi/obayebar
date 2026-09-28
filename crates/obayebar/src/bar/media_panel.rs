@@ -226,6 +226,12 @@ fn shade(alpha: f32, radius: f32) -> impl Fn(&Theme) -> container::Style {
     }
 }
 
+/// The panel outline over a darkening of the cover, so the text above it
+/// stays legible.
+fn scrim(theme: &Theme) -> container::Style {
+    style::panel_frame(theme).background(style::with_alpha(Color::BLACK, SCRIM_ALPHA))
+}
+
 /// The cover filling the card under a scrim and the panel outline, or the
 /// plain panel background.
 fn background(art: Option<&image::Handle>) -> Element<'_, Message> {
@@ -240,10 +246,7 @@ fn background(art: Option<&image::Handle>) -> Element<'_, Message> {
                     .height(Length::Fill)
                     .border_radius(style::ROUNDING_NORMAL)
                     .into(),
-                container(fill())
-                    .style(shade(SCRIM_ALPHA, style::ROUNDING_NORMAL))
-                    .into(),
-                container(fill()).style(style::panel_frame).into(),
+                container(fill()).style(scrim).into(),
             ])
             .into()
         },
@@ -314,16 +317,16 @@ mod tests {
     }
 
     #[test]
-    fn the_scrim_darkens_the_cover_within_the_card_corners() {
-        let shaded = shade(SCRIM_ALPHA, style::ROUNDING_NORMAL)(&Theme::Dark);
+    fn the_scrim_darkens_the_cover_inside_the_panel_outline() {
+        let scrim = scrim(&Theme::Dark);
         assert_eq!(
-            shaded.background,
+            scrim.background,
             Some(iced::Background::Color(style::with_alpha(
                 Color::BLACK,
                 SCRIM_ALPHA
             )))
         );
-        assert_eq!(shaded.border, iced::border::rounded(style::ROUNDING_NORMAL));
+        assert_eq!(scrim.border, style::panel_frame(&Theme::Dark).border);
     }
 
     #[test]
