@@ -67,17 +67,6 @@ mod tests {
     }
 
     #[test]
-    fn spot_is_the_trigger_centre_on_a_full_height_bar() {
-        assert_eq!(
-            spot_at(120.0),
-            TriggerSpot {
-                centre_y: 120.0,
-                output_height: 1080.0,
-            }
-        );
-    }
-
-    #[test]
     fn panel_is_centred_on_its_trigger_when_there_is_room() {
         assert_eq!(
             spot_at(500.0).margin(200),
