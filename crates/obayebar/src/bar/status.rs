@@ -1,5 +1,5 @@
 use super::trigger::PanelTrigger;
-use super::widgets::icon_text;
+use super::widgets::{icon_text, scroll_lines};
 use crate::panel::PanelKind;
 use crate::services::audio::AudioInfo;
 use crate::services::battery::BatteryInfo;
@@ -9,7 +9,7 @@ use crate::services::sysinfo::SysInfo;
 use crate::Message;
 use iced::widget::canvas::{self, Frame, Geometry, Path, Stroke};
 use iced::widget::{column, container, mouse_area};
-use iced::{mouse, Alignment, Color, Element, Length, Pixels, Point, Rectangle, Renderer, Theme};
+use iced::{Alignment, Color, Element, Length, Pixels, Point, Rectangle, Renderer, Theme};
 use obayebar::style;
 
 /// Threshold above which usage is considered elevated.
@@ -193,13 +193,7 @@ pub fn view(
         // capturing the current volume would keep serving a stale base after the
         // first scroll step and the volume would stop moving. Resolving the base in
         // `update()` keeps this closure state-free, so caching it stays correct.
-        .on_scroll(|delta| {
-            let dy = match delta {
-                mouse::ScrollDelta::Lines { y, .. } => y,
-                mouse::ScrollDelta::Pixels { y, .. } => y / 120.0,
-            };
-            Message::AudioNudgeVolume(dy * VOLUME_SCROLL_STEP)
-        });
+        .on_scroll(|delta| Message::AudioNudgeVolume(scroll_lines(delta) * VOLUME_SCROLL_STEP));
     let audio_icon = trigger(PanelKind::Audio, audio_controls.into());
 
     let network_icon = trigger(

@@ -13,20 +13,10 @@ const DAYS_PER_WEEK: usize = 7;
 /// The weekday the grid, and the panel's header, both start on.
 ///
 /// The single source of the Monday-first decision: `Month::weeks` reads it
-/// to find each row's first day, and [`WEEKDAYS`] reads it to label the
-/// columns, so the two can never drift apart.
+/// to find each row's first day, and the panel's header reads it, via
+/// `WeekdaySet::ALL.iter(WEEK_START)`, to label the columns in the same
+/// order, so the two can never drift apart.
 pub const WEEK_START: Weekday = Weekday::Mon;
-
-/// The week's days in column order, for labelling the grid header.
-pub const WEEKDAYS: [Weekday; DAYS_PER_WEEK] = [
-    WEEK_START,
-    Weekday::Tue,
-    Weekday::Wed,
-    Weekday::Thu,
-    Weekday::Fri,
-    Weekday::Sat,
-    Weekday::Sun,
-];
 
 /// A calendar month, identified by its first day.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -196,7 +186,7 @@ impl Pager {
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod tests {
-    use super::{Day, DayKind, Month, Pager, Paging, Step, WEEKDAYS, WEEKS, WEEK_START};
+    use super::{Day, DayKind, Month, Pager, Paging, Step, WEEKS, WEEK_START};
     use chrono::{Datelike, NaiveDate, Weekday};
 
     fn date(year: i32, month: u32, day: u32) -> NaiveDate {
@@ -351,15 +341,26 @@ mod tests {
     }
 
     #[test]
-    fn weekdays_start_at_week_start_and_match_the_grid_columns() {
-        assert_eq!(WEEKDAYS[0], WEEK_START);
+    fn the_grid_columns_start_at_week_start_and_run_monday_first() {
         let week = Month::containing(date(2026, 9, 1))
             .weeks()
             .into_iter()
             .next()
             .expect("a week");
         let columns: Vec<_> = week.days.iter().map(|d| d.date.weekday()).collect();
-        assert_eq!(columns, WEEKDAYS);
+        assert_eq!(columns.first(), Some(&WEEK_START));
+        assert_eq!(
+            columns,
+            [
+                Weekday::Mon,
+                Weekday::Tue,
+                Weekday::Wed,
+                Weekday::Thu,
+                Weekday::Fri,
+                Weekday::Sat,
+                Weekday::Sun,
+            ]
+        );
     }
 
     #[test]

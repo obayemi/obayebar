@@ -6,9 +6,21 @@ use crate::Message;
 use iced::widget::canvas::{self, path::Arc, Frame, Geometry, LineCap, Path, Stroke};
 use iced::widget::{button, container, mouse_area, text, toggler, Space};
 use iced::{
-    Alignment, Color, Element, Length, Padding, Point, Radians, Rectangle, Renderer, Theme,
+    mouse, Alignment, Color, Element, Length, Padding, Point, Radians, Rectangle, Renderer, Theme,
 };
 use obayebar::style;
+
+/// Pixels of touchpad scroll a compositor reports per wheel notch.
+const PIXELS_PER_LINE: f32 = 120.0;
+
+/// A pointer scroll delta, in lines: a wheel notch is one line already, and
+/// touchpad pixels are scaled down by [`PIXELS_PER_LINE`] to match.
+pub fn scroll_lines(delta: mouse::ScrollDelta) -> f32 {
+    match delta {
+        mouse::ScrollDelta::Lines { y, .. } => y,
+        mouse::ScrollDelta::Pixels { y, .. } => y / PIXELS_PER_LINE,
+    }
+}
 
 /// Start angle of the 3/4-circle gauge arc (bottom-left, at 135 degrees).
 pub const GAUGE_ARC_START: f32 = std::f32::consts::PI * 0.75;
@@ -230,4 +242,21 @@ where
             }
         })
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::scroll_lines;
+    use iced::mouse::ScrollDelta;
+
+    #[test]
+    fn a_wheel_notch_is_one_line() {
+        assert_eq!(scroll_lines(ScrollDelta::Lines { x: 0.0, y: 2.5 }), 2.5);
+    }
+
+    #[test]
+    fn touchpad_pixels_scale_down_to_lines() {
+        assert_eq!(scroll_lines(ScrollDelta::Pixels { x: 0.0, y: 120.0 }), 1.0);
+        assert_eq!(scroll_lines(ScrollDelta::Pixels { x: 0.0, y: 60.0 }), 0.5);
+    }
 }
