@@ -709,7 +709,7 @@ pub fn panel_frame(_theme: &iced::Theme) -> container::Style {
     }
 }
 
-/// Background, rounding and outline for every settings panel.
+/// Background, rounding and outline for every panel.
 pub fn panel_container(theme: &iced::Theme) -> container::Style {
     panel_frame(theme).background(with_alpha(M3_SURFACE_CONTAINER_LOW, 0.92))
 }
