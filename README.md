@@ -128,6 +128,9 @@ url = "https://gitlab.example.com"          # default: https://gitlab.com
 enable = true                               # default; false leaves MPRIS alone
 show_when_idle = true                       # default; false shows it only while playing
 
+[panel]
+open_delay_ms = 200                         # default; hover time before a panel opens
+
 [wallpaper]
 enable = true                               # for the home-manager module only
 directory = "~/Images/wallpapers/enabled"   # default
@@ -157,6 +160,10 @@ variable, then configuration file, then the default value.
 media module is on by default; `--no-media` or `--media` overrides the file.
 With `[media].show_when_idle = false` the media entry shows only while a
 player plays; otherwise it stays, as an icon alone when there is no player.
+`[panel].open_delay_ms` is how long the pointer must rest on a bar entry
+before its panel opens, so a pointer that crosses the bar to go to another
+monitor opens nothing. A click opens the panel immediately. When a panel is
+open, a hover on another entry changes the panel immediately.
 `[wallpaper].enable` and `[lock].enable` control the systemd units of the
 home-manager module. The `obayebar-wallpaper` and `obayebar-lock` programs do
 not read the two `enable` keys: a program that you start manually always
@@ -278,6 +285,7 @@ the XDG directories. The `~` form works only in a hand-written
 | `gitlab.tokenFile`                 | path    | `null`                         | A file that contains the personal access token.              |
 | `media.enable`                     | bool    | `true`                         | Show the MPRIS media module.                                 |
 | `media.showWhenIdle`               | bool    | `true`                         | Keep the media entry while nothing plays.                    |
+| `panel.openDelay`                  | int     | `200`                          | Milliseconds of hover before a panel opens.                  |
 | `wallpaper.enable`                 | bool    | `false`                        | Start the wallpaper daemon.                                  |
 | `wallpaper.directory`              | path    | `null`                         | `null` gives `~/Images/wallpapers/enabled`.                  |
 | `wallpaper.interval`               | str     | `null`                         | `null` gives `30m`. Use `off` to select one time.            |

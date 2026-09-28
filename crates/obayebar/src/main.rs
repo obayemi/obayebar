@@ -317,6 +317,7 @@ pub struct App {
     /// Where the pointer is relative to the panels, which is what decides
     /// dismissal.
     panel_pointer: PanelPointer,
+    open_intent: panel::OpenIntent,
     pub gitlab_enabled: bool,
     pub gitlab: GitlabInfo,
     /// Working buffer for the token input field in the GitLab popup. Persists
@@ -387,7 +388,13 @@ pub enum Message {
     NotifActivate(u32),
     NotifHoverEnter(u32),
     NotifHoverExit(u32),
-    PanelOpen(PanelKind, Option<String>, panel::TriggerSpot),
+    /// A press on a bar trigger: open its panel at once.
+    PanelOpen(panel::OpenRequest),
+    /// The pointer arrived on a bar trigger. Opens its panel once the pointer
+    /// has rested there for the open delay, or at once if a panel is up.
+    PanelHovered(panel::OpenRequest),
+    /// The open delay of this hover elapsed.
+    PanelOpenDelayElapsed(panel::Ticket),
     Calendar(obayebar::calendar::Paging),
     Bluetooth(BluetoothInfo),
     BluetoothToggleDevice {
@@ -461,6 +468,7 @@ impl App {
                 notif_popup_monitor: None,
                 panels: HashMap::new(),
                 panel_pointer: PanelPointer::default(),
+                open_intent: panel::OpenIntent::default(),
                 gitlab_enabled: config::resolved().gitlab_enable(),
                 gitlab: GitlabInfo::default(),
                 gitlab_token_input: String::new(),
@@ -693,7 +701,18 @@ impl App {
                 }
                 self.maybe_close_popup_window()
             }
-            Message::PanelOpen(kind, monitor, spot) => self.open_panel(kind, monitor, spot),
+            Message::PanelOpen(request) => self.open_panel(request),
+            Message::PanelHovered(request) => {
+                let a_panel_is_open = self.panels.values().any(panel::Panel::is_open);
+                match self.open_intent.hover(request, a_panel_is_open) {
+                    panel::Hovered::OpenNow(request) => self.open_panel(request),
+                    panel::Hovered::Wait(ticket) => Self::arm_open_delay(ticket),
+                }
+            }
+            Message::PanelOpenDelayElapsed(ticket) => self
+                .open_intent
+                .settle(ticket)
+                .map_or_else(Task::none, |request| self.open_panel(request)),
             Message::Calendar(paging) => {
                 self.calendar.apply(paging);
                 Task::none()
@@ -829,6 +848,7 @@ impl App {
             }
             Message::PanelPointerLeftTrigger(kind) => {
                 self.panel_pointer.left_trigger(kind);
+                self.open_intent.left(kind);
                 Self::arm_panel_grace()
             }
             Message::PanelPointerLeftPanel(kind) => {
@@ -1627,7 +1647,11 @@ impl App {
         match message {
             media::Message::Players(players) => {
                 let art = Self::fetch_media_art(media.update(players));
-                if media.trigger().is_none() && self.media_panel_open() {
+                if media.trigger().is_some() {
+                    return art;
+                }
+                self.open_intent.left(PanelKind::Media);
+                if self.media_panel_open() {
                     self.panel_pointer.left_trigger(PanelKind::Media);
                     return Task::batch([art, Self::arm_panel_grace()]);
                 }
@@ -1675,13 +1699,25 @@ impl App {
         })
     }
 
+    /// Wake up with `ticket` once the pointer has rested on a trigger for the
+    /// configured open delay.
+    fn arm_open_delay(ticket: panel::Ticket) -> Task<Message> {
+        Task::perform(
+            tokio::time::sleep(config::resolved().panel_open_delay()),
+            move |()| Message::PanelOpenDelayElapsed(ticket),
+        )
+    }
+
     /// Open `kind`'s popup, replacing whichever panel is currently shown.
     fn open_panel(
         &mut self,
-        kind: PanelKind,
-        monitor: Option<String>,
-        spot: panel::TriggerSpot,
+        panel::OpenRequest {
+            kind,
+            monitor,
+            spot,
+        }: panel::OpenRequest,
     ) -> Task<Message> {
+        self.open_intent.cancel();
         // A bar with no monitor is not a state we can place a panel from, and
         // guessing an output is what the `LastOutput` fallback used to do.
         // Every bar surface is now tracked with its monitor, so this only fires

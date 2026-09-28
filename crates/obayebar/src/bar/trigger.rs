@@ -4,11 +4,12 @@ use iced::advanced::widget::{tree, Operation, Tree};
 use iced::advanced::{layout, overlay, renderer, Clipboard, Layout, Shell, Widget};
 use iced::{mouse, touch, Element, Event, Length, Rectangle, Renderer, Size, Theme, Vector};
 
-use crate::panel::{PanelKind, TriggerSpot};
+use crate::panel::{OpenRequest, PanelKind, TriggerSpot};
 use crate::Message;
 
-/// Wraps `content` so that hovering or pressing it opens `kind`'s panel
-/// centred on it, and leaving it arms the grace close.
+/// Wraps `content` so that pressing it opens `kind`'s panel centred on it,
+/// hovering it asks for the same once the open delay elapses, and leaving it
+/// arms the grace close.
 ///
 /// `mouse_area::on_enter` publishes a fixed message, blind to where the
 /// widget was laid out, so it cannot tell the panel where to open. This
@@ -53,19 +54,20 @@ struct State {
 /// What a trigger publishes in answer to one event.
 #[derive(Debug, PartialEq, Eq)]
 enum Reaction {
-    Open,
+    Hover,
+    Press,
     Leave,
 }
 
 impl State {
     /// Follow the pointer onto or off the trigger. `press` is an uncaptured
-    /// left press or touch, which reopens the panel only while the pointer
-    /// is over the trigger.
+    /// left press or touch, which counts only while the pointer is over the
+    /// trigger.
     const fn react(&mut self, hovered: bool, press: bool) -> Option<Reaction> {
         let was_hovered = std::mem::replace(&mut self.hovered, hovered);
         match (was_hovered, hovered) {
-            (false, true) => Some(Reaction::Open),
-            (true, true) if press => Some(Reaction::Open),
+            (_, true) if press => Some(Reaction::Press),
+            (false, true) => Some(Reaction::Hover),
             (true, false) => Some(Reaction::Leave),
             _ => None,
         }
@@ -148,20 +150,20 @@ impl Widget<Message, Theme, Renderer> for PanelTrigger<'_> {
 
         let bounds = layout.bounds();
         let press = is_press(event) && !shell.is_event_captured();
+        let request = || OpenRequest {
+            kind: self.kind,
+            monitor: self.monitor.clone(),
+            spot: TriggerSpot::new(bounds, *viewport),
+        };
         match tree
             .state
             .downcast_mut::<State>()
             .react(cursor.is_over(bounds), press)
         {
-            Some(Reaction::Open) => {
-                shell.publish(Message::PanelOpen(
-                    self.kind,
-                    self.monitor.clone(),
-                    TriggerSpot::new(bounds, *viewport),
-                ));
-                if press {
-                    shell.capture_event();
-                }
+            Some(Reaction::Hover) => shell.publish(Message::PanelHovered(request())),
+            Some(Reaction::Press) => {
+                shell.publish(Message::PanelOpen(request()));
+                shell.capture_event();
             }
             Some(Reaction::Leave) => shell.publish(Message::PanelPointerLeftTrigger(self.kind)),
             None => {}
@@ -233,8 +235,13 @@ mod tests {
     }
 
     #[test]
-    fn entering_opens() {
-        assert_eq!(State::default().react(true, false), Some(Reaction::Open));
+    fn entering_hovers() {
+        assert_eq!(State::default().react(true, false), Some(Reaction::Hover));
+    }
+
+    #[test]
+    fn a_press_on_arrival_opens_at_once() {
+        assert_eq!(State::default().react(true, true), Some(Reaction::Press));
     }
 
     #[test]
@@ -248,8 +255,8 @@ mod tests {
     }
 
     #[test]
-    fn a_press_reopens() {
-        assert_eq!(hovering().react(true, true), Some(Reaction::Open));
+    fn a_press_opens_at_once() {
+        assert_eq!(hovering().react(true, true), Some(Reaction::Press));
     }
 
     #[test]

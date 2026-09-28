@@ -9,6 +9,7 @@
 //! Per-field precedence: CLI flag > env var (where applicable) > config file > default.
 
 use std::sync::OnceLock;
+use std::time::Duration;
 
 pub use obayebar_core::config::Config;
 
@@ -31,6 +32,7 @@ pub struct Resolved {
     gitlab_host: String,
     media_enable: bool,
     media_show_when_idle: bool,
+    panel_open_delay: Duration,
 }
 
 impl Resolved {
@@ -41,6 +43,7 @@ impl Resolved {
             gitlab_host: resolve_gitlab_host(file, cli),
             media_enable: cli.media_enable.unwrap_or(file.media.enable),
             media_show_when_idle: file.media.show_when_idle,
+            panel_open_delay: Duration::from_millis(file.panel.open_delay_ms),
         }
     }
 
@@ -62,6 +65,11 @@ impl Resolved {
     #[must_use]
     pub const fn media_show_when_idle(&self) -> bool {
         self.media_show_when_idle
+    }
+
+    #[must_use]
+    pub const fn panel_open_delay(&self) -> Duration {
+        self.panel_open_delay
     }
 }
 
@@ -159,6 +167,15 @@ mod tests {
             &CliOverrides::default(),
         );
         assert!(!r.media_show_when_idle());
+    }
+
+    #[test]
+    fn the_panel_open_delay_comes_from_the_file() {
+        let r = Resolved::from_parts(
+            &parse("[panel]\nopen_delay_ms = 350\n"),
+            &CliOverrides::default(),
+        );
+        assert_eq!(r.panel_open_delay(), std::time::Duration::from_millis(350));
     }
 
     #[test]

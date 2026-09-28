@@ -20,6 +20,10 @@ let
     lib.optionalAttrs (!cfg.media.enable) { enable = false; }
     // lib.optionalAttrs (!cfg.media.showWhenIdle) { show_when_idle = false; };
 
+  panelAttrs = lib.optionalAttrs (cfg.panel.openDelay != 200) {
+    open_delay_ms = cfg.panel.openDelay;
+  };
+
   wallpaperAttrs =
     lib.optionalAttrs cfg.wallpaper.enable { enable = true; }
     // lib.optionalAttrs (cfg.wallpaper.directory != null)
@@ -48,6 +52,7 @@ let
   settings =
     lib.optionalAttrs (gitlabAttrs != { }) { gitlab = gitlabAttrs; }
     // lib.optionalAttrs (mediaAttrs != { }) { media = mediaAttrs; }
+    // lib.optionalAttrs (panelAttrs != { }) { panel = panelAttrs; }
     // lib.optionalAttrs (wallpaperAttrs != { }) { wallpaper = wallpaperAttrs; }
     // lib.optionalAttrs (lockAttrs != { }) { lock = lockAttrs; }
     // lib.optionalAttrs (spawnAttrs != { }) { spawn = spawnAttrs; };
@@ -210,6 +215,16 @@ in {
           while some player is playing.
         '';
       };
+    };
+
+    panel.openDelay = mkOption {
+      type = types.ints.unsigned;
+      default = 200;
+      description = ''
+        Milliseconds the pointer rests on a bar entry before its panel
+        opens, so a pointer crossing the bar opens nothing. A click, or a
+        hover while another panel is open, opens at once.
+      '';
     };
 
     wallpaper = {

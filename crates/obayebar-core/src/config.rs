@@ -36,6 +36,7 @@ pub struct Config {
     pub wallpaper: WallpaperConfig,
     pub lock: LockConfig,
     pub spawn: SpawnConfig,
+    pub panel: PanelConfig,
 }
 
 /// How programs started on the user's behalf are isolated.
@@ -47,6 +48,22 @@ pub struct SpawnConfig {
     /// [`crate::spawn::DEFAULT_SLICE`]. Whether the name is one systemd would
     /// accept is [`crate::spawn::use_slice`]'s business, not this module's.
     pub slice: Option<String>,
+}
+
+/// The bar's settings panels.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PanelConfig {
+    /// How long the pointer rests on a bar entry before its panel opens, so
+    /// a pointer merely crossing the bar opens nothing. A click, or a hover
+    /// while another panel is up, opens at once regardless.
+    pub open_delay_ms: u64,
+}
+
+impl Default for PanelConfig {
+    fn default() -> Self {
+        Self { open_delay_ms: 200 }
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -197,6 +214,17 @@ mod tests {
         assert!(cfg.media.enable);
         assert!(!cfg.media.show_when_idle);
         assert!(toml::from_str::<Config>("[media]\nshow_idle = false\n").is_err());
+    }
+
+    #[test]
+    fn panels_open_after_200ms_of_hover_by_default() {
+        assert_eq!(parse("").panel.open_delay_ms, 200);
+    }
+
+    #[test]
+    fn the_panel_open_delay_is_configurable() {
+        assert_eq!(parse("[panel]\nopen_delay_ms = 0\n").panel.open_delay_ms, 0);
+        assert!(toml::from_str::<Config>("[panel]\nopen_delay = 5\n").is_err());
     }
 
     #[test]

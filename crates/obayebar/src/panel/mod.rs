@@ -7,7 +7,10 @@ use crate::services;
 use crate::Message;
 use obayebar::style;
 
+mod intent;
 mod placement;
+
+pub use intent::{Hovered, OpenIntent, OpenRequest, Ticket};
 
 pub use placement::TriggerSpot;
 
