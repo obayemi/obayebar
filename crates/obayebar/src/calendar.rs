@@ -77,6 +77,22 @@ impl Month {
     }
 }
 
+/// A single navigation step: one chevron press, or the whole of one scroll
+/// event once its fractions accumulate to a full line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Step {
+    Previous,
+    Next,
+}
+
+/// Calendar panel input that moves the pager: a chevron press or a scroll
+/// event.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Paging {
+    Page(Step),
+    Scroll(f32),
+}
+
 /// Which month the panel shows, as an offset from the current month, paged
 /// by buttons and by scrolling.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -86,7 +102,11 @@ pub struct Pager {
 }
 
 impl Pager {
-    pub const fn page(&mut self, months: i32) {
+    pub const fn page(&mut self, step: Step) {
+        let months = match step {
+            Step::Previous => -1,
+            Step::Next => 1,
+        };
         self.offset = self.offset.saturating_add(months);
     }
 
@@ -95,15 +115,22 @@ impl Pager {
     /// steadily and a fast flick never skips months.
     pub fn scroll(&mut self, lines: f32) {
         self.scroll -= lines;
-        let months = if self.scroll >= 1.0 {
-            1
+        let step = if self.scroll >= 1.0 {
+            Step::Next
         } else if self.scroll <= -1.0 {
-            -1
+            Step::Previous
         } else {
             return;
         };
-        self.page(months);
+        self.page(step);
         self.scroll = 0.0;
+    }
+
+    pub fn apply(&mut self, paging: Paging) {
+        match paging {
+            Paging::Page(step) => self.page(step),
+            Paging::Scroll(lines) => self.scroll(lines),
+        }
     }
 
     #[must_use]
@@ -115,7 +142,7 @@ impl Pager {
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod tests {
-    use super::{Month, Pager, WEEKS};
+    use super::{Month, Pager, Paging, Step, WEEKS};
     use chrono::{Datelike, NaiveDate, Weekday};
 
     fn date(year: i32, month: u32, day: u32) -> NaiveDate {
@@ -212,9 +239,11 @@ mod tests {
     #[test]
     fn paging_moves_by_whole_months() {
         let mut pager = Pager::default();
-        pager.page(1);
-        pager.page(1);
-        pager.page(-3);
+        pager.page(Step::Next);
+        pager.page(Step::Next);
+        pager.page(Step::Previous);
+        pager.page(Step::Previous);
+        pager.page(Step::Previous);
         assert_eq!(pager.month(date(2026, 9, 28)).first_day(), date(2026, 8, 1));
     }
 
@@ -252,6 +281,21 @@ mod tests {
         assert_eq!(
             pager.month(date(2026, 9, 28)).first_day(),
             date(2026, 10, 1)
+        );
+    }
+
+    #[test]
+    fn apply_dispatches_paging_to_page_and_scroll() {
+        let mut pager = Pager::default();
+        pager.apply(Paging::Page(Step::Next));
+        assert_eq!(
+            pager.month(date(2026, 9, 28)).first_day(),
+            date(2026, 10, 1)
+        );
+        pager.apply(Paging::Scroll(-1.0));
+        assert_eq!(
+            pager.month(date(2026, 9, 28)).first_day(),
+            date(2026, 11, 1)
         );
     }
 }

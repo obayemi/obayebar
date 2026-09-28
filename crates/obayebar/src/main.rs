@@ -388,8 +388,7 @@ pub enum Message {
     NotifHoverEnter(u32),
     NotifHoverExit(u32),
     PanelOpen(PanelKind, Option<String>, panel::TriggerSpot),
-    CalendarPage(i32),
-    CalendarScroll(f32),
+    Calendar(obayebar::calendar::Paging),
     Bluetooth(BluetoothInfo),
     BluetoothToggleDevice {
         path: String,
@@ -695,12 +694,8 @@ impl App {
                 self.maybe_close_popup_window()
             }
             Message::PanelOpen(kind, monitor, spot) => self.open_panel(kind, monitor, spot),
-            Message::CalendarPage(months) => {
-                self.calendar.page(months);
-                Task::none()
-            }
-            Message::CalendarScroll(lines) => {
-                self.calendar.scroll(lines);
+            Message::Calendar(paging) => {
+                self.calendar.apply(paging);
                 Task::none()
             }
             Message::Gitlab(info) => {
@@ -1712,13 +1707,11 @@ impl App {
         }
 
         let close = self.close_all_panels();
-        if kind == PanelKind::Calendar {
-            self.calendar = obayebar::calendar::Pager::default();
-        }
         // `close_all_panels` clears the pointer state, but the pointer really
         // is on this trigger, so restore it.
         self.panel_pointer.entered_trigger(kind);
         let (width, height) = self.panel_dimensions(kind);
+        reset_panel_view(&mut self.calendar, kind);
         if let Some(setter) = kind.signal_setter() {
             setter(true);
         }
@@ -1922,6 +1915,15 @@ impl App {
         }
         // Resize to fit remaining notifications
         self.ensure_popup_window()
+    }
+}
+
+/// View state to drop back to when a panel opens fresh, per kind. Only the
+/// calendar carries any: it always opens on the current month, never on
+/// wherever a previous visit paged it to.
+fn reset_panel_view(calendar: &mut obayebar::calendar::Pager, kind: PanelKind) {
+    if kind == PanelKind::Calendar {
+        *calendar = obayebar::calendar::Pager::default();
     }
 }
 
@@ -2765,5 +2767,28 @@ mod panel_pointer_tests {
         p.entered_panel(PanelKind::Audio);
         p.clear();
         assert!(p.is_away());
+    }
+}
+
+#[cfg(test)]
+mod reset_panel_view_tests {
+    use super::{reset_panel_view, PanelKind};
+    use obayebar::calendar::{Pager, Step};
+
+    #[test]
+    fn opening_the_calendar_resets_its_pager() {
+        let mut pager = Pager::default();
+        pager.page(Step::Next);
+        reset_panel_view(&mut pager, PanelKind::Calendar);
+        assert_eq!(pager, Pager::default());
+    }
+
+    #[test]
+    fn opening_another_panel_leaves_the_pager_alone() {
+        let mut pager = Pager::default();
+        pager.page(Step::Next);
+        let before = pager;
+        reset_panel_view(&mut pager, PanelKind::Audio);
+        assert_eq!(pager, before);
     }
 }

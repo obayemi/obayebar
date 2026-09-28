@@ -4,7 +4,7 @@ use crate::Message;
 use chrono::{DateTime, Datelike, Local, NaiveDate, Weekday};
 use iced::widget::{column, container, mouse_area, row, text, Row};
 use iced::{mouse, Alignment, Background, Color, Element, Length};
-use obayebar::calendar::{Day, Month, Pager, Week};
+use obayebar::calendar::{Day, Month, Pager, Paging, Step, Week};
 use obayebar::style;
 
 const WEEKDAYS: [Weekday; 7] = [
@@ -41,10 +41,10 @@ pub fn view(now: &DateTime<Local>, pager: Pager) -> Element<'static, Message> {
         .width(Length::Fill),
     )
     .on_scroll(|delta| {
-        Message::CalendarScroll(match delta {
+        Message::Calendar(Paging::Scroll(match delta {
             mouse::ScrollDelta::Lines { y, .. } => y,
             mouse::ScrollDelta::Pixels { y, .. } => y / 120.0,
-        })
+        }))
     });
 
     let content = column![clock, separator(), navigation(month), grid]
@@ -65,7 +65,7 @@ fn navigation(month: Month) -> Element<'static, Message> {
         icon_button(
             style::ICON_CHEVRON_LEFT,
             style::M3_ON_SURFACE_VARIANT,
-            Message::CalendarPage(-1),
+            Message::Calendar(Paging::Page(Step::Previous)),
         ),
         text(month.first_day().format("%B %Y").to_string())
             .size(style::FONT_SIZE_NORMAL)
@@ -75,7 +75,7 @@ fn navigation(month: Month) -> Element<'static, Message> {
         icon_button(
             style::ICON_CHEVRON_RIGHT,
             style::M3_ON_SURFACE_VARIANT,
-            Message::CalendarPage(1),
+            Message::Calendar(Paging::Page(Step::Next)),
         ),
     ]
     .align_y(Alignment::Center)
