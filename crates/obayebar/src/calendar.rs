@@ -1,11 +1,32 @@
 //! Month arithmetic behind the calendar panel: which month is shown, and the
 //! Monday-first grid of weeks it lays out.
 
-use chrono::{Datelike, Days, Months, NaiveDate};
+use chrono::{Datelike, Months, NaiveDate, Weekday};
 
 /// Rows in every month grid. Six weeks fit any month whatever weekday it
 /// starts on, and a fixed count keeps the panel height constant.
 pub const WEEKS: u8 = 6;
+
+/// Days in a grid row.
+const DAYS_PER_WEEK: usize = 7;
+
+/// The weekday the grid, and the panel's header, both start on.
+///
+/// The single source of the Monday-first decision: `Month::weeks` reads it
+/// to find each row's first day, and [`WEEKDAYS`] reads it to label the
+/// columns, so the two can never drift apart.
+pub const WEEK_START: Weekday = Weekday::Mon;
+
+/// The week's days in column order, for labelling the grid header.
+pub const WEEKDAYS: [Weekday; DAYS_PER_WEEK] = [
+    WEEK_START,
+    Weekday::Tue,
+    Weekday::Wed,
+    Weekday::Thu,
+    Weekday::Fri,
+    Weekday::Sat,
+    Weekday::Sun,
+];
 
 /// A calendar month, identified by its first day.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,6 +47,29 @@ pub struct Week {
 pub struct Day {
     pub date: NaiveDate,
     pub in_month: bool,
+}
+
+/// What a grid cell represents to the viewer, in the order the panel checks
+/// them: today outranks month membership, even for a day spilling over from
+/// a neighbouring month.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DayKind {
+    Today,
+    InMonth,
+    Spill,
+}
+
+impl Day {
+    #[must_use]
+    pub fn kind(self, today: NaiveDate) -> DayKind {
+        if self.date == today {
+            DayKind::Today
+        } else if self.in_month {
+            DayKind::InMonth
+        } else {
+            DayKind::Spill
+        }
+    }
 }
 
 impl Month {
@@ -56,22 +100,28 @@ impl Month {
         }
     }
 
+    /// The [`WEEKS`] rows of the grid, from the [`WEEK_START`] on or before
+    /// the first of the month, each carrying its ISO week number.
     #[must_use]
     pub fn weeks(self) -> Vec<Week> {
-        let lead = Days::new(u64::from(self.first.weekday().num_days_from_monday()));
-        let start = self.first.checked_sub_days(lead).unwrap_or(self.first);
-        let days: Vec<Day> = start
-            .iter_days()
-            .take(usize::from(WEEKS) * 7)
-            .map(|date| Day {
-                date,
-                in_month: Self::containing(date) == self,
-            })
-            .collect();
-        days.chunks(7)
-            .map(|days| Week {
-                number: days.first().map_or(0, |d| d.date.iso_week().week()),
-                days: days.to_vec(),
+        let start = self
+            .first
+            .week(WEEK_START)
+            .checked_first_day()
+            .unwrap_or(self.first);
+        start
+            .iter_weeks()
+            .take(usize::from(WEEKS))
+            .map(|monday| Week {
+                number: monday.iso_week().week(),
+                days: monday
+                    .iter_days()
+                    .take(DAYS_PER_WEEK)
+                    .map(|date| Day {
+                        date,
+                        in_month: Self::containing(date) == self,
+                    })
+                    .collect(),
             })
             .collect()
     }
@@ -98,7 +148,10 @@ pub enum Paging {
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Pager {
     offset: i32,
-    scroll: f32,
+    /// Scroll collected toward the next page, in months. Positive goes
+    /// forward, negative goes back; a whole line pages one month and resets
+    /// this to zero.
+    pending: f32,
 }
 
 impl Pager {
@@ -114,16 +167,16 @@ impl Pager {
     /// accumulate until a whole line pages one month, so a touchpad pages
     /// steadily and a fast flick never skips months.
     pub fn scroll(&mut self, lines: f32) {
-        self.scroll -= lines;
-        let step = if self.scroll >= 1.0 {
-            Step::Next
-        } else if self.scroll <= -1.0 {
-            Step::Previous
-        } else {
+        self.pending -= lines;
+        if self.pending.abs() < 1.0 {
             return;
-        };
-        self.page(step);
-        self.scroll = 0.0;
+        }
+        self.page(if self.pending > 0.0 {
+            Step::Next
+        } else {
+            Step::Previous
+        });
+        self.pending = 0.0;
     }
 
     pub fn apply(&mut self, paging: Paging) {
@@ -133,6 +186,7 @@ impl Pager {
         }
     }
 
+    /// The month shown, counted from the month containing `today`.
     #[must_use]
     pub fn month(self, today: NaiveDate) -> Month {
         Month::containing(today).shifted(self.offset)
@@ -142,11 +196,28 @@ impl Pager {
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod tests {
-    use super::{Month, Pager, Paging, Step, WEEKS};
+    use super::{Day, DayKind, Month, Pager, Paging, Step, WEEKDAYS, WEEKS, WEEK_START};
     use chrono::{Datelike, NaiveDate, Weekday};
 
     fn date(year: i32, month: u32, day: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(year, month, day).expect("valid date")
+    }
+
+    fn today() -> NaiveDate {
+        date(2026, 9, 28)
+    }
+
+    fn shown(pager: Pager) -> NaiveDate {
+        pager.month(today()).first_day()
+    }
+
+    fn first_cell(month: Month) -> Day {
+        month
+            .weeks()
+            .first()
+            .and_then(|w| w.days.first())
+            .copied()
+            .expect("a day")
     }
 
     #[test]
@@ -186,16 +257,14 @@ mod tests {
 
     #[test]
     fn the_grid_opens_on_the_monday_before_the_first() {
-        let weeks = Month::containing(date(2026, 9, 1)).weeks();
-        let first = weeks.first().and_then(|w| w.days.first()).expect("a day");
+        let first = first_cell(Month::containing(date(2026, 9, 1)));
         assert_eq!(first.date, date(2026, 8, 31));
         assert!(!first.in_month);
     }
 
     #[test]
     fn a_month_starting_on_monday_opens_on_its_first() {
-        let weeks = Month::containing(date(2026, 6, 10)).weeks();
-        let first = weeks.first().and_then(|w| w.days.first()).expect("a day");
+        let first = first_cell(Month::containing(date(2026, 6, 10)));
         assert_eq!(first.date, date(2026, 6, 1));
         assert!(first.in_month);
     }
@@ -230,10 +299,7 @@ mod tests {
 
     #[test]
     fn a_fresh_pager_shows_the_current_month() {
-        assert_eq!(
-            Pager::default().month(date(2026, 9, 28)).first_day(),
-            date(2026, 9, 1)
-        );
+        assert_eq!(shown(Pager::default()), date(2026, 9, 1));
     }
 
     #[test]
@@ -244,31 +310,25 @@ mod tests {
         pager.page(Step::Previous);
         pager.page(Step::Previous);
         pager.page(Step::Previous);
-        assert_eq!(pager.month(date(2026, 9, 28)).first_day(), date(2026, 8, 1));
+        assert_eq!(shown(pager), date(2026, 8, 1));
     }
 
     #[test]
     fn scrolling_up_goes_back_in_time() {
         let mut pager = Pager::default();
         pager.scroll(1.0);
-        assert_eq!(pager.month(date(2026, 9, 28)).first_day(), date(2026, 8, 1));
+        assert_eq!(shown(pager), date(2026, 8, 1));
         pager.scroll(-1.0);
-        assert_eq!(pager.month(date(2026, 9, 28)).first_day(), date(2026, 9, 1));
+        assert_eq!(shown(pager), date(2026, 9, 1));
     }
 
     #[test]
     fn one_scroll_event_pages_at_most_one_month() {
         let mut pager = Pager::default();
         pager.scroll(-3.0);
-        assert_eq!(
-            pager.month(date(2026, 9, 28)).first_day(),
-            date(2026, 10, 1)
-        );
+        assert_eq!(shown(pager), date(2026, 10, 1));
         pager.scroll(-0.5);
-        assert_eq!(
-            pager.month(date(2026, 9, 28)).first_day(),
-            date(2026, 10, 1)
-        );
+        assert_eq!(shown(pager), date(2026, 10, 1));
     }
 
     #[test]
@@ -276,26 +336,65 @@ mod tests {
         let mut pager = Pager::default();
         pager.scroll(-0.4);
         pager.scroll(-0.4);
-        assert_eq!(pager.month(date(2026, 9, 28)).first_day(), date(2026, 9, 1));
+        assert_eq!(shown(pager), date(2026, 9, 1));
         pager.scroll(-0.4);
-        assert_eq!(
-            pager.month(date(2026, 9, 28)).first_day(),
-            date(2026, 10, 1)
-        );
+        assert_eq!(shown(pager), date(2026, 10, 1));
     }
 
     #[test]
     fn apply_dispatches_paging_to_page_and_scroll() {
         let mut pager = Pager::default();
         pager.apply(Paging::Page(Step::Next));
-        assert_eq!(
-            pager.month(date(2026, 9, 28)).first_day(),
-            date(2026, 10, 1)
-        );
+        assert_eq!(shown(pager), date(2026, 10, 1));
         pager.apply(Paging::Scroll(-1.0));
-        assert_eq!(
-            pager.month(date(2026, 9, 28)).first_day(),
-            date(2026, 11, 1)
-        );
+        assert_eq!(shown(pager), date(2026, 11, 1));
+    }
+
+    #[test]
+    fn weekdays_start_at_week_start_and_match_the_grid_columns() {
+        assert_eq!(WEEKDAYS[0], WEEK_START);
+        let week = Month::containing(date(2026, 9, 1))
+            .weeks()
+            .into_iter()
+            .next()
+            .expect("a week");
+        let columns: Vec<_> = week.days.iter().map(|d| d.date.weekday()).collect();
+        assert_eq!(columns, WEEKDAYS);
+    }
+
+    #[test]
+    fn today_is_flagged_today_even_in_month() {
+        let day = Day {
+            date: today(),
+            in_month: true,
+        };
+        assert_eq!(day.kind(today()), DayKind::Today);
+    }
+
+    #[test]
+    fn today_outranks_spilling_over_from_a_neighbouring_month() {
+        let day = Day {
+            date: today(),
+            in_month: false,
+        };
+        assert_eq!(day.kind(today()), DayKind::Today);
+    }
+
+    #[test]
+    fn a_month_day_that_is_not_today_is_in_month() {
+        let day = Day {
+            date: date(2026, 9, 1),
+            in_month: true,
+        };
+        assert_eq!(day.kind(today()), DayKind::InMonth);
+    }
+
+    #[test]
+    fn a_spill_day_that_is_not_today_is_spill() {
+        let day = Day {
+            date: date(2026, 8, 31),
+            in_month: false,
+        };
+        assert_eq!(day.kind(today()), DayKind::Spill);
     }
 }

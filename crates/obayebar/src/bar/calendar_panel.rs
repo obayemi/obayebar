@@ -1,21 +1,11 @@
 use super::widgets::{icon_button, panel_with_exit, separator};
 use crate::panel::PanelKind;
 use crate::Message;
-use chrono::{DateTime, Datelike, Local, NaiveDate, Weekday};
+use chrono::{DateTime, Datelike, Local, NaiveDate};
 use iced::widget::{column, container, mouse_area, row, text, Row};
 use iced::{mouse, Alignment, Background, Color, Element, Length};
-use obayebar::calendar::{Day, Month, Pager, Paging, Step, Week};
+use obayebar::calendar::{Day, DayKind, Month, Pager, Paging, Step, Week, WEEKDAYS};
 use obayebar::style;
-
-const WEEKDAYS: [Weekday; 7] = [
-    Weekday::Mon,
-    Weekday::Tue,
-    Weekday::Wed,
-    Weekday::Thu,
-    Weekday::Fri,
-    Weekday::Sat,
-    Weekday::Sun,
-];
 
 pub fn view(now: &DateTime<Local>, pager: Pager) -> Element<'static, Message> {
     let today = now.date_naive();
@@ -96,16 +86,14 @@ fn week_row(week: &Week, today: NaiveDate) -> Element<'static, Message> {
 
 fn day_cell(day: Day, today: NaiveDate) -> Element<'static, Message> {
     let label = day.date.day().to_string();
-    if day.date == today {
-        cell(label, style::M3_ON_PRIMARY, Some(style::M3_PRIMARY))
-    } else if day.in_month {
-        cell(label, style::M3_ON_SURFACE, None)
-    } else {
-        cell(
+    match day.kind(today) {
+        DayKind::Today => cell(label, style::M3_ON_PRIMARY, Some(style::M3_PRIMARY)),
+        DayKind::InMonth => cell(label, style::M3_ON_SURFACE, None),
+        DayKind::Spill => cell(
             label,
             style::with_alpha(style::M3_ON_SURFACE_VARIANT, 0.4),
             None,
-        )
+        ),
     }
 }
 
