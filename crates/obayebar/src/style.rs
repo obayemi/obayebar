@@ -711,13 +711,7 @@ pub fn panel_frame(_theme: &iced::Theme) -> container::Style {
 
 /// Background, rounding and outline for every settings panel.
 pub fn panel_container(theme: &iced::Theme) -> container::Style {
-    container::Style {
-        background: Some(Background::Color(with_alpha(
-            M3_SURFACE_CONTAINER_LOW,
-            0.92,
-        ))),
-        ..panel_frame(theme)
-    }
+    panel_frame(theme).background(with_alpha(M3_SURFACE_CONTAINER_LOW, 0.92))
 }
 
 /// Transparent button style (no background, no border)
@@ -1038,5 +1032,16 @@ mod tests {
     fn the_panel_background_carries_the_frame() {
         let theme = iced::Theme::Dark;
         assert_eq!(panel_container(&theme).border, panel_frame(&theme).border);
+    }
+
+    #[test]
+    fn the_panel_background_is_translucent_surface_container_low() {
+        assert_eq!(
+            panel_container(&iced::Theme::Dark).background,
+            Some(Background::Color(with_alpha(
+                M3_SURFACE_CONTAINER_LOW,
+                0.92
+            )))
+        );
     }
 }
