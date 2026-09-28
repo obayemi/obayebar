@@ -72,6 +72,10 @@ pub const ROUNDING_NORMAL: f32 = 17.0;
 pub const ROUNDING_LARGE: f32 = 25.0;
 pub const ROUNDING_FULL: f32 = 1000.0;
 
+/// Width and opacity of the primary outline around every panel.
+pub const PANEL_OUTLINE_WIDTH: f32 = 1.0;
+pub const PANEL_OUTLINE_ALPHA: f32 = 0.5;
+
 // Font sizes (from AppearanceConfig)
 pub const FONT_SIZE_SMALL: f32 = 11.0;
 pub const FONT_SIZE_SMALLER: f32 = 12.0;
@@ -691,21 +695,27 @@ pub fn panel_wrapper_container(theme: &iced::Theme) -> container::Style {
     }
 }
 
-/// Audio panel overlay container
-/// Background and rounding for every settings panel. Not audio-specific
-/// despite its old name — all six panels use it.
+/// Outline alone, drawn over a panel so it never blends into what lies
+/// behind it, whether a window, the wallpaper or a cover.
+pub fn panel_frame(_theme: &iced::Theme) -> container::Style {
+    container::Style {
+        border: Border {
+            color: with_alpha(M3_PRIMARY, PANEL_OUTLINE_ALPHA),
+            width: PANEL_OUTLINE_WIDTH,
+            radius: ROUNDING_NORMAL.into(),
+        },
+        ..container::Style::default()
+    }
+}
+
+/// Background, rounding and outline for every settings panel.
 pub fn panel_container(theme: &iced::Theme) -> container::Style {
-    let _ = theme;
     container::Style {
         background: Some(Background::Color(with_alpha(
             M3_SURFACE_CONTAINER_LOW,
             0.92,
         ))),
-        border: Border {
-            radius: ROUNDING_NORMAL.into(),
-            ..Border::default()
-        },
-        ..container::Style::default()
+        ..panel_frame(theme)
     }
 }
 
@@ -1007,5 +1017,25 @@ mod tests {
         let over_cap =
             super::bluetooth_panel_height(1, super::PANEL_MAX_VISIBLE_ROWS + 40, true, true);
         assert_eq!(at_cap, over_cap);
+    }
+
+    #[test]
+    fn the_panel_frame_outlines_the_rounded_card_in_translucent_primary() {
+        let frame = panel_frame(&iced::Theme::Dark);
+        assert_eq!(frame.background, None);
+        assert_eq!(
+            frame.border,
+            Border {
+                color: with_alpha(M3_PRIMARY, PANEL_OUTLINE_ALPHA),
+                width: PANEL_OUTLINE_WIDTH,
+                radius: ROUNDING_NORMAL.into(),
+            }
+        );
+    }
+
+    #[test]
+    fn the_panel_background_carries_the_frame() {
+        let theme = iced::Theme::Dark;
+        assert_eq!(panel_container(&theme).border, panel_frame(&theme).border);
     }
 }

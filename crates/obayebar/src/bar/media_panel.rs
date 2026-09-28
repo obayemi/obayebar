@@ -226,7 +226,8 @@ fn shade(alpha: f32, radius: f32) -> impl Fn(&Theme) -> container::Style {
     }
 }
 
-/// The cover filling the card under a scrim, or the plain panel background.
+/// The cover filling the card under a scrim and the panel outline, or the
+/// plain panel background.
 fn background(art: Option<&image::Handle>) -> Element<'_, Message> {
     let fill = || Space::new().width(Length::Fill).height(Length::Fill);
     art.map_or_else(
@@ -242,6 +243,7 @@ fn background(art: Option<&image::Handle>) -> Element<'_, Message> {
                 container(fill())
                     .style(shade(SCRIM_ALPHA, style::ROUNDING_NORMAL))
                     .into(),
+                container(fill()).style(style::panel_frame).into(),
             ])
             .into()
         },
