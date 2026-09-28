@@ -11,7 +11,7 @@ mod placement;
 
 pub use placement::TriggerSpot;
 
-/// One enum variant per settings panel surface, used as the key into
+/// One enum variant per popup panel surface, used as the key into
 /// `App::panels` and as the discriminator for `Message::PanelOpen`.
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
 pub enum PanelKind {
@@ -59,8 +59,8 @@ impl PanelKind {
     /// `Some` when this kind drives a service-side `PanelSignal` that should
     /// flip on open/close so the backing service can switch refresh cadence
     /// (network rescan, bluetooth discovery hint, sysinfo polling, gitlab
-    /// rate, media position resampling). `None` for kinds whose service runs
-    /// at a single cadence.
+    /// rate, media position resampling). `None` for kinds with no backing
+    /// service, or whose service runs at a single cadence.
     pub fn signal_setter(self) -> Option<fn(bool)> {
         match self {
             Self::Network => Some(services::network::set_panel_open),
