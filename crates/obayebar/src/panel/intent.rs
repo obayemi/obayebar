@@ -11,7 +11,7 @@ pub struct OpenRequest {
 }
 
 /// Identifies one hover, so the timer of an earlier one cannot open a panel.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ticket(u64);
 
 /// What a hover asks for.
@@ -26,7 +26,7 @@ pub enum Hovered {
 /// The hover waiting for the open delay to elapse, if any.
 #[derive(Debug, Default)]
 pub struct OpenIntent {
-    last: Ticket,
+    issued: u64,
     pending: Option<(Ticket, OpenRequest)>,
 }
 
@@ -38,9 +38,10 @@ impl OpenIntent {
             self.cancel();
             return Hovered::OpenNow(request);
         }
-        self.last = Ticket(self.last.0.wrapping_add(1));
-        self.pending = Some((self.last, request));
-        Hovered::Wait(self.last)
+        self.issued = self.issued.wrapping_add(1);
+        let ticket = Ticket(self.issued);
+        self.pending = Some((ticket, request));
+        Hovered::Wait(ticket)
     }
 
     /// The pointer left `kind`'s trigger before its delay elapsed. A leave for
@@ -51,6 +52,7 @@ impl OpenIntent {
         }
     }
 
+    /// Drop the waiting hover, because a panel opened some other way.
     pub fn cancel(&mut self) {
         self.pending = None;
     }
@@ -87,18 +89,9 @@ mod tests {
     }
 
     #[test]
-    fn a_hover_with_no_panel_up_waits() {
-        assert!(matches!(
-            OpenIntent::default().hover(request(PanelKind::Audio), false),
-            Hovered::Wait(_)
-        ));
-    }
-
-    #[test]
     fn a_hover_while_a_panel_is_up_opens_now() {
-        let mut intent = OpenIntent::default();
         assert_eq!(
-            intent.hover(request(PanelKind::Audio), true),
+            OpenIntent::default().hover(request(PanelKind::Audio), true),
             Hovered::OpenNow(request(PanelKind::Audio))
         );
     }

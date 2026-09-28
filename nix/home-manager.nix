@@ -20,7 +20,7 @@ let
     lib.optionalAttrs (!cfg.media.enable) { enable = false; }
     // lib.optionalAttrs (!cfg.media.showWhenIdle) { show_when_idle = false; };
 
-  panelAttrs = lib.optionalAttrs (cfg.panel.openDelay != 200) {
+  panelAttrs = lib.optionalAttrs (cfg.panel.openDelay != null) {
     open_delay_ms = cfg.panel.openDelay;
   };
 
@@ -218,12 +218,13 @@ in {
     };
 
     panel.openDelay = mkOption {
-      type = types.ints.unsigned;
-      default = 200;
+      type = types.nullOr types.ints.unsigned;
+      default = null;
       description = ''
         Milliseconds the pointer rests on a bar entry before its panel
         opens, so a pointer crossing the bar opens nothing. A click, or a
-        hover while another panel is open, opens at once.
+        hover while another panel is open, opens at once. Null keeps
+        obayebar's default of 200 ms.
       '';
     };
 

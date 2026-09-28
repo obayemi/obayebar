@@ -193,7 +193,8 @@ pub fn icon_text(glyph: &str, size: f32, color: Color) -> iced::widget::Text<'_>
 }
 
 /// A bar entry that opens `kind`'s panel: `content` wrapped in the standard
-/// pill container, wired through [`PanelTrigger`] to open on press or hover
+/// pill container, wired through [`PanelTrigger`] to open at once on press,
+/// on hover once the open delay elapses (at once if another panel is up),
 /// and to arm the grace timer when the pointer leaves.
 pub fn panel_trigger<'a>(
     kind: PanelKind,

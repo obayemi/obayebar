@@ -702,17 +702,8 @@ impl App {
                 self.maybe_close_popup_window()
             }
             Message::PanelOpen(request) => self.open_panel(request),
-            Message::PanelHovered(request) => {
-                let a_panel_is_open = self.panels.values().any(panel::Panel::is_open);
-                match self.open_intent.hover(request, a_panel_is_open) {
-                    panel::Hovered::OpenNow(request) => self.open_panel(request),
-                    panel::Hovered::Wait(ticket) => Self::arm_open_delay(ticket),
-                }
-            }
-            Message::PanelOpenDelayElapsed(ticket) => self
-                .open_intent
-                .settle(ticket)
-                .map_or_else(Task::none, |request| self.open_panel(request)),
+            Message::PanelHovered(request) => self.hover_panel(request),
+            Message::PanelOpenDelayElapsed(ticket) => self.settle_open_delay(ticket),
             Message::Calendar(paging) => {
                 self.calendar.apply(paging);
                 Task::none()
@@ -1640,6 +1631,9 @@ impl App {
     /// trigger half of the pointer state and arms the grace timer, and
     /// [`Message::PanelGraceElapsed`] closes the panel once the pointer is
     /// confirmed to be on neither the trigger nor the panel.
+    ///
+    /// A hidden entry also drops a hover-open still waiting on it, because
+    /// its leave will never arrive.
     fn update_media(&mut self, message: media::Message) -> Task<Message> {
         let Some(media) = self.media.as_mut() else {
             return Task::none();
@@ -1647,13 +1641,12 @@ impl App {
         match message {
             media::Message::Players(players) => {
                 let art = Self::fetch_media_art(media.update(players));
-                if media.trigger().is_some() {
-                    return art;
-                }
-                self.open_intent.left(PanelKind::Media);
-                if self.media_panel_open() {
-                    self.panel_pointer.left_trigger(PanelKind::Media);
-                    return Task::batch([art, Self::arm_panel_grace()]);
+                if media.trigger().is_none() {
+                    self.open_intent.left(PanelKind::Media);
+                    if self.media_panel_open() {
+                        self.panel_pointer.left_trigger(PanelKind::Media);
+                        return Task::batch([art, Self::arm_panel_grace()]);
+                    }
                 }
                 art
             }
@@ -1706,6 +1699,24 @@ impl App {
             tokio::time::sleep(config::resolved().panel_open_delay()),
             move |()| Message::PanelOpenDelayElapsed(ticket),
         )
+    }
+
+    /// A hover asked to open `request`'s panel: at once if another panel is
+    /// already up, otherwise once the open delay elapses.
+    fn hover_panel(&mut self, request: panel::OpenRequest) -> Task<Message> {
+        let a_panel_is_open = self.panels.values().any(panel::Panel::is_open);
+        match self.open_intent.hover(request, a_panel_is_open) {
+            panel::Hovered::OpenNow(request) => self.open_panel(request),
+            panel::Hovered::Wait(ticket) => Self::arm_open_delay(ticket),
+        }
+    }
+
+    /// `ticket`'s open delay elapsed: open its panel if that hover is still
+    /// the pending one.
+    fn settle_open_delay(&mut self, ticket: panel::Ticket) -> Task<Message> {
+        self.open_intent
+            .settle(ticket)
+            .map_or_else(Task::none, |request| self.open_panel(request))
     }
 
     /// Open `kind`'s popup, replacing whichever panel is currently shown.

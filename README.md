@@ -285,7 +285,7 @@ the XDG directories. The `~` form works only in a hand-written
 | `gitlab.tokenFile`                 | path    | `null`                         | A file that contains the personal access token.              |
 | `media.enable`                     | bool    | `true`                         | Show the MPRIS media module.                                 |
 | `media.showWhenIdle`               | bool    | `true`                         | Keep the media entry while nothing plays.                    |
-| `panel.openDelay`                  | int     | `200`                          | Milliseconds of hover before a panel opens.                  |
+| `panel.openDelay`                  | int     | `null`                         | `null` gives 200 ms of hover before a panel opens.           |
 | `wallpaper.enable`                 | bool    | `false`                        | Start the wallpaper daemon.                                  |
 | `wallpaper.directory`              | path    | `null`                         | `null` gives `~/Images/wallpapers/enabled`.                  |
 | `wallpaper.interval`               | str     | `null`                         | `null` gives `30m`. Use `off` to select one time.            |

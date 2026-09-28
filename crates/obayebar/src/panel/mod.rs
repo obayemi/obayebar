@@ -15,7 +15,7 @@ pub use intent::{Hovered, OpenIntent, OpenRequest, Ticket};
 pub use placement::TriggerSpot;
 
 /// One enum variant per popup panel surface, used as the key into
-/// `App::panels` and as the discriminator for `Message::PanelOpen`.
+/// `App::panels` and as the discriminator of an [`OpenRequest`].
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
 pub enum PanelKind {
     Audio,

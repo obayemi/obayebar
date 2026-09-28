@@ -175,7 +175,7 @@ mod tests {
             &parse("[panel]\nopen_delay_ms = 350\n"),
             &CliOverrides::default(),
         );
-        assert_eq!(r.panel_open_delay(), std::time::Duration::from_millis(350));
+        assert_eq!(r.panel_open_delay(), Duration::from_millis(350));
     }
 
     #[test]
