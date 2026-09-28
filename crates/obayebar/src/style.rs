@@ -72,8 +72,9 @@ pub const ROUNDING_NORMAL: f32 = 17.0;
 pub const ROUNDING_LARGE: f32 = 25.0;
 pub const ROUNDING_FULL: f32 = 1000.0;
 
-/// Width and opacity of the primary outline around every panel.
+/// Width of the primary outline around every panel.
 pub const PANEL_OUTLINE_WIDTH: f32 = 1.0;
+/// Opacity of the primary outline around every panel.
 pub const PANEL_OUTLINE_ALPHA: f32 = 0.5;
 
 // Font sizes (from AppearanceConfig)
