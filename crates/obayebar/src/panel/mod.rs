@@ -58,12 +58,12 @@ impl PanelKind {
     }
 }
 
-/// An open panel's layer-shell window, its last-sized content size, and the
+/// An open panel's layer-shell window, its last-sized content height, and the
 /// trigger it stays centred on.
 #[derive(Debug)]
 struct Surface {
     id: window::Id,
-    size: (u32, u32),
+    height: u32,
     spot: TriggerSpot,
 }
 
@@ -73,14 +73,18 @@ pub struct Panel {
 }
 
 impl Panel {
-    /// Layer-shell surface size for a panel with content size `(width, height)`.
+    /// Layer-shell surface size for a panel with content `height`, every panel
+    /// sharing [`style::PANEL_WIDTH`].
     ///
     /// The gap between bar and panel is part of the surface so the compositor
     /// includes it in the input region, and the pointer crossing it never
     /// leaves the panel. `open` and `resize` must agree on it, which is why it
     /// lives here rather than being spelled out at each site.
-    const fn surface_size(width: u32, height: u32) -> (u32, u32) {
-        (width.saturating_add(style::PANEL_GAP_PX), height)
+    const fn surface_size(height: u32) -> (u32, u32) {
+        (
+            style::PANEL_WIDTH.saturating_add(style::PANEL_GAP_PX),
+            height,
+        )
     }
 
     /// Whether this panel currently has a surface.
@@ -88,7 +92,7 @@ impl Panel {
         self.surface.is_some()
     }
 
-    /// Resize the open surface to fit content of `(width, height)`.
+    /// Resize the open surface to fit content of `height`.
     ///
     /// Panels used to be sized exactly once, at creation: `Message::SizeChange`
     /// had a single emitter (the notification popup), and every service-update
@@ -98,18 +102,18 @@ impl Panel {
     /// lifetime.
     ///
     /// The surface moves with its size so it stays centred on its trigger.
-    pub fn resize(&mut self, width: u32, height: u32) -> iced::Task<Message> {
+    pub fn resize(&mut self, height: u32) -> iced::Task<Message> {
         let Some(surface) = &mut self.surface else {
             return iced::Task::none();
         };
-        if surface.size == (width, height) {
+        if surface.height == height {
             return iced::Task::none();
         }
-        surface.size = (width, height);
+        surface.height = height;
         iced::Task::batch([
             iced::Task::done(Message::SizeChange {
                 id: surface.id,
-                size: Self::surface_size(width, height),
+                size: Self::surface_size(height),
             }),
             iced::Task::done(Message::MarginChange {
                 id: surface.id,
@@ -134,7 +138,6 @@ impl Panel {
     pub fn open(
         &mut self,
         kind: PanelKind,
-        width: u32,
         height: u32,
         monitor: &str,
         spot: TriggerSpot,
@@ -147,17 +150,13 @@ impl Panel {
             return iced::Task::none();
         }
         let id = window::Id::unique();
-        self.surface = Some(Surface {
-            id,
-            size: (width, height),
-            spot,
-        });
+        self.surface = Some(Surface { id, height, spot });
         iced::Task::done(Message::NewLayerShell {
             settings: NewLayerShellSettings {
                 anchor: Anchor::Left | Anchor::Top,
                 layer: Layer::Overlay,
                 exclusive_zone: Some(-1),
-                size: Some(Self::surface_size(width, height)),
+                size: Some(Self::surface_size(height)),
                 margin: Some(spot.margin(height)),
                 keyboard_interactivity: KeyboardInteractivity::None,
                 output_option: OutputOption::OutputName(monitor.to_string()),
@@ -198,7 +197,7 @@ mod tests {
 
     #[test]
     fn surface_adds_the_gap_on_the_bar_side_only() {
-        assert_eq!(Panel::surface_size(360, 184), (368, 184));
+        assert_eq!(Panel::surface_size(184), (368, 184));
     }
 
     fn open_id(panel: &Panel) -> window::Id {
@@ -235,7 +234,7 @@ mod tests {
     #[test]
     fn opening_marks_the_panel_open_and_tracks_its_window() {
         let mut panel = Panel::default();
-        let _ = panel.open(PanelKind::Audio, 100, 50, "DP-1", spot());
+        let _ = panel.open(PanelKind::Audio, 50, "DP-1", spot());
         assert!(panel.is_open());
         assert!(panel.is_window(open_id(&panel)));
     }
@@ -243,17 +242,17 @@ mod tests {
     #[test]
     fn opening_an_already_open_panel_is_a_noop() {
         let mut panel = Panel::default();
-        let _ = panel.open(PanelKind::Audio, 100, 50, "DP-1", spot());
+        let _ = panel.open(PanelKind::Audio, 50, "DP-1", spot());
         let id = open_id(&panel);
-        let _ = panel.open(PanelKind::Audio, 200, 60, "DP-2", spot());
+        let _ = panel.open(PanelKind::Audio, 60, "DP-2", spot());
         assert_eq!(panel.surface.as_ref().map(|s| s.id), Some(id));
-        assert_eq!(panel.surface.as_ref().map(|s| s.size), Some((100, 50)));
+        assert_eq!(panel.surface.as_ref().map(|s| s.height), Some(50));
     }
 
     #[test]
     fn closing_clears_the_panel() {
         let mut panel = Panel::default();
-        let _ = panel.open(PanelKind::Audio, 100, 50, "DP-1", spot());
+        let _ = panel.open(PanelKind::Audio, 50, "DP-1", spot());
         let id = open_id(&panel);
         let _ = panel.close();
         assert!(!panel.is_open());
@@ -263,7 +262,7 @@ mod tests {
     #[test]
     fn forget_if_matching_id_closes_the_panel() {
         let mut panel = Panel::default();
-        let _ = panel.open(PanelKind::Audio, 100, 50, "DP-1", spot());
+        let _ = panel.open(PanelKind::Audio, 50, "DP-1", spot());
         let id = open_id(&panel);
         assert!(panel.forget_if(id));
         assert!(!panel.is_open());
@@ -272,7 +271,7 @@ mod tests {
     #[test]
     fn forget_if_a_different_id_does_nothing() {
         let mut panel = Panel::default();
-        let _ = panel.open(PanelKind::Audio, 100, 50, "DP-1", spot());
+        let _ = panel.open(PanelKind::Audio, 50, "DP-1", spot());
         assert!(!panel.forget_if(window::Id::unique()));
         assert!(panel.is_open());
     }
@@ -280,15 +279,15 @@ mod tests {
     #[test]
     fn resize_before_open_is_a_noop() {
         let mut panel = Panel::default();
-        let _ = panel.resize(10, 10);
+        let _ = panel.resize(10);
         assert!(!panel.is_open());
     }
 
     #[test]
     fn resize_updates_the_tracked_size() {
         let mut panel = Panel::default();
-        let _ = panel.open(PanelKind::Audio, 100, 50, "DP-1", spot());
-        let _ = panel.resize(120, 60);
-        assert_eq!(panel.surface.as_ref().map(|s| s.size), Some((120, 60)));
+        let _ = panel.open(PanelKind::Audio, 50, "DP-1", spot());
+        let _ = panel.resize(60);
+        assert_eq!(panel.surface.as_ref().map(|s| s.height), Some(60));
     }
 }

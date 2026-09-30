@@ -545,10 +545,10 @@ impl App {
         else {
             return Task::none();
         };
-        let (width, height) = self.panel_dimensions(kind);
+        let height = self.panel_height(kind);
         self.panels
             .get_mut(&kind)
-            .map_or_else(Task::none, |panel| panel.resize(width, height))
+            .map_or_else(Task::none, |panel| panel.resize(height))
     }
 
     /// Derive each service's cadence signal from whether its panel is actually
@@ -1545,11 +1545,10 @@ impl App {
         Task::batch(tasks)
     }
 
-    /// Compute the layer-shell surface size for `kind` from current state.
-    /// Width is fixed; height adapts to dynamic content (sink count, AP count,
-    /// paired/nearby split, …).
-    fn panel_dimensions(&self, kind: PanelKind) -> (u32, u32) {
-        let height = match kind {
+    /// Compute the content height of `kind`'s panel from current state: it
+    /// adapts to dynamic content (sink count, AP count, paired/nearby split, …).
+    fn panel_height(&self, kind: PanelKind) -> u32 {
+        match kind {
             PanelKind::Audio => style::audio_panel_height(self.audio.sinks.len()),
             PanelKind::Network => {
                 let ap_count = self
@@ -1589,8 +1588,7 @@ impl App {
             PanelKind::Gitlab => style::GITLAB_PANEL_HEIGHT,
             PanelKind::Media => u32::from(style::MEDIA_PANEL_HEIGHT),
             PanelKind::Calendar => style::calendar_panel_height(),
-        };
-        (style::PANEL_WIDTH, height)
+        }
     }
 
     /// Render the body of `kind`'s popup. The dispatch table for `view()`.
@@ -1710,7 +1708,7 @@ impl App {
         // `close_all_panels` clears the pointer state, but the pointer really
         // is on this trigger, so restore it.
         self.panel_pointer.entered_trigger(kind);
-        let (width, height) = self.panel_dimensions(kind);
+        let height = self.panel_height(kind);
         reset_panel_view(&mut self.calendar, kind);
         if let Some(setter) = kind.signal_setter() {
             setter(true);
@@ -1719,7 +1717,7 @@ impl App {
             .panels
             .entry(kind)
             .or_default()
-            .open(kind, width, height, &monitor, spot);
+            .open(kind, height, &monitor, spot);
         Task::batch([close, open])
     }
 
