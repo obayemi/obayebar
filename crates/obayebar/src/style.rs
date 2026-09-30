@@ -163,21 +163,24 @@ pub const ICON_SWAP_HORIZ: &str = "\u{E8D4}";
 pub const ICON_CHEVRON_LEFT: &str = "\u{E5CB}";
 pub const ICON_CHEVRON_RIGHT: &str = "\u{E5CC}";
 
-pub const AUDIO_PANEL_WIDTH: u32 = 320;
-pub const NETWORK_PANEL_WIDTH: u32 = 300;
-pub const BATTERY_PANEL_WIDTH: u32 = 200;
-pub const BLUETOOTH_PANEL_WIDTH: u32 = 280;
-pub const SYSINFO_PANEL_WIDTH: u32 = 280;
-pub const GITLAB_PANEL_WIDTH: u32 = 360;
+/// Width of every popup panel, shared so they all read as one family.
+pub const PANEL_WIDTH: u32 = 360;
+/// Width a panel body leaves to its content once the large padding on both
+/// sides is taken out of [`PANEL_WIDTH`]. The bar gap lies outside it.
+pub const PANEL_CONTENT_WIDTH: f32 = 330.0;
 pub const GITLAB_PANEL_HEIGHT: u32 = 540;
-pub const MEDIA_PANEL_WIDTH: u32 = 360;
 /// The media card is a fixed size, like a phone's media notification: its
 /// content never grows, it only hides controls.
 pub const MEDIA_PANEL_HEIGHT: u16 = 184;
-pub const CALENDAR_PANEL_WIDTH: u32 = 300;
 /// Side of the square day cell, including the disc that highlights today.
-/// This also sets the height of every grid row and of the weekday header row.
-pub const CALENDAR_CELL: f32 = 30.0;
+///
+/// Eight cells, the week number and seven days, span the panel content, and
+/// this also sets the height of every grid row and of the weekday header row.
+pub const CALENDAR_CELL: f32 = PANEL_CONTENT_WIDTH / 8.0;
+/// Side of the battery panel's charge gauge, nearly the whole content width.
+pub const BATTERY_GAUGE_SIZE: f32 = PANEL_CONTENT_WIDTH * 0.875;
+/// Side of each sysinfo gauge, two of which share a row.
+pub const SYSINFO_GAUGE_SIZE: f32 = PANEL_CONTENT_WIDTH * 0.375;
 /// Size of the time readout at the top of the calendar panel.
 pub const CALENDAR_TIME_SIZE: f32 = 40.0;
 /// Maximum number of todos rendered in the popup before the user must use
@@ -447,7 +450,6 @@ pub fn network_panel_height(
 pub fn battery_panel_height(has_power_profiles: bool) -> u32 {
     let container_padding = PADDING_LARGE * 2.0;
     let header = FONT_SIZE_LARGE * LINE_HEIGHT;
-    let gauge = 140.0; // GAUGE_SIZE in battery_panel
     let time_label = FONT_SIZE_SMALLER * LINE_HEIGHT;
     // 2 gaps between header, gauge, time_label
     let outer_spacing = SPACING_NORMAL * 2.0;
@@ -467,7 +469,13 @@ pub fn battery_panel_height(has_power_profiles: bool) -> u32 {
     };
 
     let safety = 10.0;
-    (container_padding + header + gauge + time_label + outer_spacing + profiles_section + safety)
+    (container_padding
+        + header
+        + BATTERY_GAUGE_SIZE
+        + time_label
+        + outer_spacing
+        + profiles_section
+        + safety)
         .ceil() as u32
 }
 
@@ -545,11 +553,10 @@ pub fn bluetooth_panel_height(
 pub fn sysinfo_panel_height() -> u32 {
     let container_padding = PADDING_LARGE * 2.0;
     let header = FONT_SIZE_LARGE * LINE_HEIGHT;
-    // Each grid cell: 90px gauge + 2px gap + label + optional temp line
-    let gauge_size = 90.0;
+    // Each grid cell: gauge + 2px gap + label + optional temp line
     let gauge_label = FONT_SIZE_SMALL * LINE_HEIGHT;
     let temp_line = FONT_SIZE_SMALL * LINE_HEIGHT;
-    let per_row = gauge_size + 2.0 + gauge_label + temp_line;
+    let per_row = SYSINFO_GAUGE_SIZE + 2.0 + gauge_label + temp_line;
     // 2 rows + 2 gaps (header→row1, row1→row2)
     let outer_spacing = SPACING_NORMAL * 2.0;
     let safety = 15.0;
@@ -1025,7 +1032,15 @@ mod tests {
 
     #[test]
     fn calendar_panel_height_is_pinned() {
-        assert_eq!(super::calendar_panel_height(), 374);
+        assert_eq!(super::calendar_panel_height(), 453);
+    }
+
+    #[test]
+    fn panel_content_width_is_what_the_panel_width_leaves_inside_its_padding() {
+        assert_eq!(
+            f64::from(PANEL_CONTENT_WIDTH),
+            f64::from(PADDING_LARGE).mul_add(-2.0, f64::from(PANEL_WIDTH))
+        );
     }
 
     #[test]

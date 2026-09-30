@@ -26,21 +26,6 @@ pub enum PanelKind {
 }
 
 impl PanelKind {
-    /// Fixed surface width for this panel kind. Heights are state-dependent
-    /// and computed on the fly by the caller.
-    pub const fn width(self) -> u32 {
-        match self {
-            Self::Audio => style::AUDIO_PANEL_WIDTH,
-            Self::Network => style::NETWORK_PANEL_WIDTH,
-            Self::Battery => style::BATTERY_PANEL_WIDTH,
-            Self::Bluetooth => style::BLUETOOTH_PANEL_WIDTH,
-            Self::Sysinfo => style::SYSINFO_PANEL_WIDTH,
-            Self::Gitlab => style::GITLAB_PANEL_WIDTH,
-            Self::Media => style::MEDIA_PANEL_WIDTH,
-            Self::Calendar => style::CALENDAR_PANEL_WIDTH,
-        }
-    }
-
     /// Layer-shell namespace for this kind's surface.
     pub fn namespace(self) -> String {
         let suffix = match self {

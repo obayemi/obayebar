@@ -7,8 +7,8 @@ use iced::widget::{button, column, container, row, text, Stack};
 use iced::{Alignment, Element, Length};
 use obayebar::style;
 
-const GAUGE_SIZE: f32 = 140.0;
-const ARC_WIDTH: f32 = 10.0;
+const GAUGE_SIZE: f32 = style::BATTERY_GAUGE_SIZE;
+const ARC_WIDTH: f32 = GAUGE_SIZE / 14.0;
 
 fn battery_gauge_color(percentage: f64, charging: bool) -> iced::Color {
     if !charging && percentage <= 20.0 {

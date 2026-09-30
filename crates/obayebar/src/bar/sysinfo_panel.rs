@@ -7,8 +7,8 @@ use iced::widget::{column, container, row, text, Stack};
 use iced::{Alignment, Element, Length};
 use obayebar::style;
 
-const GAUGE_SIZE: f32 = 90.0;
-const ARC_WIDTH: f32 = 7.0;
+const GAUGE_SIZE: f32 = style::SYSINFO_GAUGE_SIZE;
+const ARC_WIDTH: f32 = GAUGE_SIZE / 13.0;
 
 fn usage_color(percent: f32) -> iced::Color {
     style::severity_color(percent, 70.0, 90.0, style::M3_PRIMARY)

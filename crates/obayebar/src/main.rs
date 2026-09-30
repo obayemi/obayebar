@@ -1590,7 +1590,7 @@ impl App {
             PanelKind::Media => u32::from(style::MEDIA_PANEL_HEIGHT),
             PanelKind::Calendar => style::calendar_panel_height(),
         };
-        (kind.width(), height)
+        (style::PANEL_WIDTH, height)
     }
 
     /// Render the body of `kind`'s popup. The dispatch table for `view()`.
