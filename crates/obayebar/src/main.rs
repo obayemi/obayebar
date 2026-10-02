@@ -100,23 +100,22 @@ struct CliArgs {
     media_enable: Option<bool>,
 }
 
+/// Printed for `-h`/`--help`, and pasted verbatim into the README.
+const USAGE: &str = "\
+obayebar [OPTIONS]
+
+  --gitlab              Show the GitLab todos module on the bar
+  --gitlab-url <URL>    Base URL of the GitLab instance (overrides config / env)
+  --media               Show the media (MPRIS) module (overrides config)
+  --no-media            Leave the media module out entirely
+  -h, --help            Print this help
+  -V, --version         Print version
+
+Persistent settings can also be placed in $XDG_CONFIG_HOME/obayebar/config.toml
+(see [gitlab].enable / [gitlab].url / [media].enable).";
+
 fn print_usage() {
-    println!(
-        "obayebar — wayland status bar\n\
-         \n\
-         Usage: obayebar [OPTIONS]\n\
-         \n\
-         Options:\n  \
-           --gitlab              Show the GitLab todos module on the bar\n  \
-           --gitlab-url <URL>    Base URL of the GitLab instance (overrides config / env)\n  \
-           --media               Show the media (MPRIS) module (overrides config)\n  \
-           --no-media            Leave the media module out entirely\n  \
-           -h, --help            Print this help\n  \
-           -V, --version         Print version\n\
-         \n\
-         Persistent settings can also be placed in $XDG_CONFIG_HOME/obayebar/config.toml\n\
-         (see [gitlab].enable / [gitlab].url / [media].enable).\n"
-    );
+    println!("{USAGE}");
 }
 
 fn parse_cli() -> CliArgs {
@@ -1949,6 +1948,20 @@ mod popup_height_cap_tests {
     fn a_non_positive_scale_is_treated_as_unscaled() {
         let g = geom(2560, 1440, 0.0, 0);
         assert_eq!(App::popup_height_cap(Some(&g)), 576);
+    }
+}
+
+#[cfg(test)]
+mod usage_tests {
+    use super::USAGE;
+
+    #[test]
+    fn matches_the_readme_verbatim() {
+        let readme = include_str!("../../../README.md");
+        assert!(
+            readme.contains(USAGE),
+            "USAGE is not pasted into the README verbatim"
+        );
     }
 }
 

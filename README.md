@@ -328,11 +328,14 @@ An overlay is also available. The overlay adds `obayebar` to `pkgs`.
 obayebar [OPTIONS]
 
   --gitlab              Show the GitLab todos module on the bar
-  --gitlab-url <URL>    Base URL of the GitLab instance
+  --gitlab-url <URL>    Base URL of the GitLab instance (overrides config / env)
   --media               Show the media (MPRIS) module (overrides config)
   --no-media            Leave the media module out entirely
   -h, --help            Print this help
   -V, --version         Print version
+
+Persistent settings can also be placed in $XDG_CONFIG_HOME/obayebar/config.toml
+(see [gitlab].enable / [gitlab].url / [media].enable).
 ```
 
 ```
