@@ -564,17 +564,28 @@ decisions come from that goal:
   change of 0.1 % does not make a new widget tree. The spring animation runs
   at 60 Hz only *while the animation moves*. The wave of the media slider runs
   only while the media panel is open and a track plays, and for the moment
-  it takes to flatten after a pause. When nothing moves, the bar is
-  fully idle: no wake-ups, and no draws.
-- **All the event sources push, and the bar does not poll.**
+  it takes to flatten after a pause. When nothing moves, the bar redraws
+  nothing: no cache miss, no frame.
+- **Most state pushes; a few services poll on a slow, adaptive timer.**
   - Hyprland: one permanent `socket2` connection. The bar reads the connection
     line by line. Only an event that changes the screen (a workspace, a window,
     or a monitor) makes a refresh. The bar discards the high-frequency events
     `activewindowv2` and `windowtitle` before the UI thread wakes.
   - The dbus services (network, bluetooth, notifications, battery,
-    power-profiles, upower, gitlab, tray, mpris) all use signal subscriptions
-    through `zbus`. MPRIS does not signal the playback position, so the bar
-    extrapolates it, and reads it again only while the media panel is open.
+    power-profiles, upower, tray, mpris) use signal subscriptions through
+    `zbus`. Network, bluetooth, tray and battery are each backed by a
+    long-interval fallback refresh in case a signal is missed: bluetooth and
+    tray every 2 minutes, battery every 5, and network every 2 minutes while
+    its panel is closed and every 10 s while it is open. Notifications and
+    MPRIS have no such fallback. MPRIS does not signal the playback
+    position, so the bar extrapolates it, and reads it again only while the
+    media panel is open.
+  - Sysinfo reads `/proc` and NVML on a timer, not a signal: every 10 s while
+    its panel is closed, every 2 s while it is open, since the bar icon only
+    reacts to slow bucket (70/90%) crossings.
+  - GitLab todos are an HTTP poll over `reqwest`, every 2 minutes while
+    closed and every 30 s while the panel is open — there is no dbus signal
+    a GitLab instance could push through.
   - The audio data comes directly from the native PipeWire protocol
     (`pipewire-rs`), not from `pactl`, and not from a poll of `pavucontrol`.
 - **The clock wakes at the minute, not at each frame.** The clock uses a special
