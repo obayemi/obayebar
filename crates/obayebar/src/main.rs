@@ -1267,7 +1267,12 @@ impl App {
                     .access_points
                     .len()
                     .clamp(1, style::PANEL_MAX_VISIBLE_ROWS);
-                let conn_groups = connection_type_groups(&self.network.active_connections);
+                let conn_groups: Vec<usize> = self
+                    .network
+                    .connections_by_type()
+                    .iter()
+                    .map(|(_, c)| c.len())
+                    .collect();
                 style::network_panel_height(ap_count, &conn_groups, self.network.wifi_enabled)
             }
             PanelKind::Battery => {
@@ -1648,19 +1653,6 @@ fn reset_panel_view(calendar: &mut calendar::Pager, kind: PanelKind) {
     }
 }
 
-/// Count connections per type group (preserving insertion order).
-fn connection_type_groups(conns: &[services::network::ActiveConnectionInfo]) -> Vec<usize> {
-    let mut groups: Vec<(&str, usize)> = Vec::new();
-    for ac in conns {
-        if let Some(g) = groups.iter_mut().find(|(t, _)| *t == ac.conn_type) {
-            g.1 = g.1.saturating_add(1);
-        } else {
-            groups.push((&ac.conn_type, 1));
-        }
-    }
-    groups.into_iter().map(|(_, c)| c).collect()
-}
-
 /// Keyboard and window events, tagged with the surface they happened on.
 ///
 /// A plain `fn` because `listen_with` takes a function pointer, not a closure:
@@ -1872,38 +1864,5 @@ mod usage_tests {
             readme.contains(USAGE),
             "USAGE is not pasted into the README verbatim"
         );
-    }
-}
-
-#[cfg(test)]
-mod connection_type_groups_tests {
-    use super::connection_type_groups;
-    use crate::services::network::ActiveConnectionInfo;
-
-    fn conn(conn_type: &str) -> ActiveConnectionInfo {
-        ActiveConnectionInfo {
-            name: conn_type.to_string(),
-            conn_type: conn_type.to_string(),
-            icon_name: "icon",
-        }
-    }
-
-    #[test]
-    fn empty_input_has_no_groups() {
-        assert_eq!(connection_type_groups(&[]), Vec::<usize>::new());
-    }
-
-    #[test]
-    fn counts_each_type_preserving_first_seen_order() {
-        let conns = [conn("vpn"), conn("ethernet"), conn("vpn")];
-        assert_eq!(connection_type_groups(&conns), vec![2, 1]);
-    }
-
-    #[test]
-    fn single_type_repeated_counts_all_of_them() {
-        let conns: Vec<_> = std::iter::repeat_with(|| conn("wireguard"))
-            .take(5)
-            .collect();
-        assert_eq!(connection_type_groups(&conns), vec![5]);
     }
 }

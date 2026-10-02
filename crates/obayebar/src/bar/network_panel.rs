@@ -202,17 +202,8 @@ pub fn view<'a>(
         .spacing(style::SPACING_NORMAL)
         .width(Length::Fill);
 
-    // Active wired / VPN / wireguard connections, grouped by type
     if !network.active_connections.is_empty() {
-        let mut groups: Vec<(&str, Vec<&crate::services::network::ActiveConnectionInfo>)> =
-            Vec::new();
-        for ac in &network.active_connections {
-            if let Some(group) = groups.iter_mut().find(|(t, _)| *t == ac.conn_type) {
-                group.1.push(ac);
-            } else {
-                groups.push((&ac.conn_type, vec![ac]));
-            }
-        }
+        let groups = network.connections_by_type();
 
         for (conn_type, conns) in &groups {
             let label = connection_type_label(conn_type);

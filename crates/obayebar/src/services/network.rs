@@ -54,6 +54,21 @@ pub struct NetworkInfo {
     pub active_connections: Vec<ActiveConnectionInfo>,
 }
 
+impl NetworkInfo {
+    /// Groups active connections by `conn_type`, in first-seen order.
+    pub fn connections_by_type(&self) -> Vec<(&str, Vec<&ActiveConnectionInfo>)> {
+        let mut groups: Vec<(&str, Vec<&ActiveConnectionInfo>)> = Vec::new();
+        for ac in &self.active_connections {
+            if let Some(group) = groups.iter_mut().find(|(t, _)| *t == ac.conn_type) {
+                group.1.push(ac);
+            } else {
+                groups.push((&ac.conn_type, vec![ac]));
+            }
+        }
+        groups
+    }
+}
+
 impl Default for NetworkInfo {
     fn default() -> Self {
         Self {
@@ -561,5 +576,51 @@ async fn run_network_loop(
 
         let info = read_network_dbus(conn).await;
         dbus_util::send_if_changed(tx, &mut last, info)?;
+    }
+}
+
+#[cfg(test)]
+mod connections_by_type_tests {
+    use super::{ActiveConnectionInfo, NetworkInfo};
+
+    fn conn(conn_type: &str) -> ActiveConnectionInfo {
+        ActiveConnectionInfo {
+            name: conn_type.to_string(),
+            conn_type: conn_type.to_string(),
+            icon_name: "icon",
+        }
+    }
+
+    fn counts(info: &NetworkInfo) -> Vec<usize> {
+        info.connections_by_type()
+            .iter()
+            .map(|(_, c)| c.len())
+            .collect()
+    }
+
+    #[test]
+    fn empty_input_has_no_groups() {
+        let info = NetworkInfo::default();
+        assert_eq!(counts(&info), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn counts_each_type_preserving_first_seen_order() {
+        let info = NetworkInfo {
+            active_connections: vec![conn("vpn"), conn("ethernet"), conn("vpn")],
+            ..NetworkInfo::default()
+        };
+        assert_eq!(counts(&info), vec![2, 1]);
+    }
+
+    #[test]
+    fn single_type_repeated_counts_all_of_them() {
+        let info = NetworkInfo {
+            active_connections: std::iter::repeat_with(|| conn("wireguard"))
+                .take(5)
+                .collect(),
+            ..NetworkInfo::default()
+        };
+        assert_eq!(counts(&info), vec![5]);
     }
 }
