@@ -792,9 +792,11 @@ crates/obayebar-lock        generates a hyprlock config and runs it
 ```
 
 One line divides the crates: a binary that needs a GUI stack, and a binary
-that does not. `obayebar-core` pulls 81 crates, and the bar pulls 1198. Thus
-the lock screen is a small and fast program, and the tests of the shared code
-run without a build of wgpu.
+that does not. By
+`cargo tree -e normal --prefix none --no-dedupe -p <crate> | sort -u | wc -l`,
+`obayebar-core` pulls 57 crates and the bar pulls 432. Thus the lock screen
+is a small and fast program, and the tests of the shared code run without a
+build of wgpu.
 
 Run cargo from the root of the workspace. `cargo test` covers each member. To
 run one program, use `cargo run -p obayebar-wallpaper`.
