@@ -657,6 +657,58 @@ mod fleet_tests {
     }
 
     #[test]
+    fn close_landed_returns_the_closing_record_and_removes_it() {
+        let id = window::Id::unique();
+        let mut fleet = fleet_closing(id, 2);
+        let record = fleet.close_landed(id);
+        assert_eq!(
+            record.map(|r| r.namespace),
+            Some("obayebar-bar-1".to_string())
+        );
+        assert!(!fleet.closing.contains_key(&id));
+    }
+
+    #[test]
+    fn close_landed_is_none_for_an_untracked_id() {
+        let mut fleet = BarFleet::new();
+        assert!(fleet.close_landed(window::Id::unique()).is_none());
+    }
+
+    #[test]
+    fn bar_closed_by_compositor_removes_the_record() {
+        let id = window::Id::unique();
+        let mut fleet = fleet_with(id, "DP-1", "obayebar-bar-1", BarState::Verified);
+        let record = fleet.bar_closed_by_compositor(id);
+        assert_eq!(record.map(|r| r.monitor), Some("DP-1".to_string()));
+        assert!(!fleet.tracked.contains_key(&id));
+    }
+
+    #[test]
+    fn has_bar_on_is_false_once_the_only_bar_on_a_monitor_closes() {
+        let id = window::Id::unique();
+        let mut fleet = fleet_with(id, "DP-1", "obayebar-bar-1", BarState::Verified);
+        fleet.bar_closed_by_compositor(id);
+        assert!(!fleet.has_bar_on("DP-1"));
+    }
+
+    #[test]
+    fn has_bar_on_stays_true_while_another_bar_covers_the_monitor() {
+        let id = window::Id::unique();
+        let mut fleet = fleet_with(id, "DP-1", "obayebar-bar-1", BarState::Verified);
+        let other = window::Id::unique();
+        fleet.tracked.insert(
+            other,
+            BarRecord {
+                monitor: "DP-1".to_string(),
+                namespace: "obayebar-bar-2".to_string(),
+                state: BarState::Verified,
+            },
+        );
+        fleet.bar_closed_by_compositor(id);
+        assert!(fleet.has_bar_on("DP-1"));
+    }
+
+    #[test]
     fn a_fully_verified_setup_needs_no_further_verification() {
         let id = window::Id::unique();
         let mut fleet = fleet_with(id, "DP-1", "obayebar-bar-1", BarState::Verified);
