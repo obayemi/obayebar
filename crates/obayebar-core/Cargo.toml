@@ -19,9 +19,11 @@ async = ["dep:tokio"]
 images = ["dep:image"]
 
 # Deliberately no iced, no wgpu, no GUI stack. That is the whole point of the
-# boundary: it lets obayebar-lock and the wallpaper renderer talk
-# wlr-layer-shell directly, with no async runtime and no compositor toolkit
-# of their own.
+# boundary: obayebar-lock stays a small binary with no GUI toolkit and no
+# async runtime, its only Wayland contact a blocking wayland-client roundtrip
+# for the Hyprland lock notifier, while the wallpaper renderer drives
+# wlr-layer-shell through smithay-client-toolkit, with no iced or wgpu of its
+# own.
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
