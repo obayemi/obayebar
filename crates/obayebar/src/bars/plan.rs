@@ -377,6 +377,17 @@ mod reconcile_tests {
             .collect()
     }
 
+    /// Two fresh ids, lowest first, for a test that asserts on sort order.
+    fn ordered_ids() -> (window::Id, window::Id) {
+        let a = window::Id::unique();
+        let b = window::Id::unique();
+        if a < b {
+            (a, b)
+        } else {
+            (b, a)
+        }
+    }
+
     /// The common case: nothing being closed, every grace window still open.
     fn plan(
         observation: Option<&obayebar_core::hypr::LayerMap>,
@@ -618,27 +629,9 @@ mod reconcile_tests {
         // Both fields come from walking a `HashMap` in an order this test
         // sorts first — with unsorted ids this is the only thing that would
         // catch a dropped `sort_by_key`.
-        let verified_1 = window::Id::unique();
-        let verified_2 = window::Id::unique();
-        let (v_lo, v_hi) = if verified_1 < verified_2 {
-            (verified_1, verified_2)
-        } else {
-            (verified_2, verified_1)
-        };
-        let observed_1 = window::Id::unique();
-        let observed_2 = window::Id::unique();
-        let (o_lo, o_hi) = if observed_1 < observed_2 {
-            (observed_1, observed_2)
-        } else {
-            (observed_2, observed_1)
-        };
-        let gone_1 = window::Id::unique();
-        let gone_2 = window::Id::unique();
-        let (g_lo, g_hi) = if gone_1 < gone_2 {
-            (gone_1, gone_2)
-        } else {
-            (gone_2, gone_1)
-        };
+        let (v_lo, v_hi) = ordered_ids();
+        let (o_lo, o_hi) = ordered_ids();
+        let (g_lo, g_hi) = ordered_ids();
 
         let plan = plan_from_observation(
             Some(&observed([
