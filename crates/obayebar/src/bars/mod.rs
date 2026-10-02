@@ -426,9 +426,8 @@ fn log_pending(tracked: &HashMap<window::Id, BarRecord>, pending: &[window::Id])
     }
 }
 
-/// Report bar namespaces on screen that belong to neither the tracked nor
-/// the closing set — nothing in this process can close one, so it is
-/// reported, not actioned.
+/// Orphaned bar surfaces are reported, not actioned: nothing in this process
+/// can close one.
 fn log_orphans(orphans: &[String]) {
     for namespace in orphans {
         log::error!("bar invariant: untracked bar surface {namespace} on screen");

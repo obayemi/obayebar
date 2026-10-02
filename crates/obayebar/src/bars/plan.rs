@@ -133,10 +133,6 @@ pub struct BarPlan {
 
 /// Decide what to do about the bars, given what the compositor reports.
 ///
-/// Pure, so the whole state machine is testable without a compositor: this is
-/// what the old belief-only planner could not offer, because the bugs it needed
-/// to catch all lived in the gap between the tracking map and reality.
-///
 /// `observed` maps monitor name to the layer namespaces mapped there. `None`
 /// means the query failed. `now` is the clock the grace window is measured
 /// against, passed in so this stays a pure function of its inputs.
@@ -151,8 +147,8 @@ pub fn plan_from_observation(
     let mut plan = BarPlan::default();
 
     // Two no-op guards, both load-bearing. Without an observation we know
-    // nothing, and acting on nothing is how a transient IPC failure used to
-    // close every bar. An empty `expected` is the same story from the other
+    // nothing, so acting on it would close every bar over a transient IPC
+    // failure. An empty `expected` is the same story from the other
     // direction: "we could not read the monitor list" must never be actioned
     // as "there are no monitors".
     let (Some(observed), false) = (observed, expected.is_empty()) else {
@@ -190,9 +186,6 @@ pub fn plan_from_observation(
         }
     }
 
-    // Anything of ours on screen that neither set claims. With both halves of
-    // the fix in place this should be unreachable, which is the point of
-    // reporting it: it is the signature of a surface escaping tracking.
     plan.orphans = orphans(&location, tracked, closing, prefix);
 
     // Per-monitor state belongs to monitors that no longer keep a bar.
@@ -266,21 +259,20 @@ fn classify_record<'a>(
             }
         }
         // Observed somewhere else: `OutputName` fell back to the focused
-        // output and nothing told us. This is the flagship bug, and the
-        // only reason it is fixable is that we can see it here.
+        // output and nothing told us, so seeing it here is the only way to
+        // catch it.
         Some(_) => Outcome::Close(CloseReason::WrongMonitor),
         // Not mapped anywhere.
         None if monitor_disconnected => Outcome::Forget(ForgetReason::MonitorDisconnected),
         None => match record.state {
             // It was there and is not any more: the surface died without a
-            // usable `Closed` event, which is precisely the lost-close case
-            // that used to strand a monitor forever.
+            // usable `Closed` event, so forgetting the record here is what
+            // keeps the monitor from staying masked.
             BarState::Verified => Outcome::Forget(ForgetReason::SurfaceVanished),
             // Out of patience — but *close* it rather than forget it. A
             // surface that has not mapped yet is not a surface that is gone:
-            // it is very much alive, still on its way, and dropping the
-            // record here is what produced bars nothing could ever reach.
-            // This is the flagship bug's second half.
+            // it is still alive, on its way, and dropping the record here
+            // would leave a bar nothing could ever reach.
             BarState::Mapping { spawned_at } if now.duration_since(spawned_at) >= VERIFY_GRACE => {
                 Outcome::Close(CloseReason::NeverAppeared)
             }
@@ -294,10 +286,7 @@ fn classify_record<'a>(
     }
 }
 
-/// Bar namespaces on screen that belong to neither the tracked nor the
-/// closing set. Nothing in this process can close one, so it is reported,
-/// not actioned — it means a surface escaped tracking and the bug is
-/// upstream of here.
+/// Our-prefix namespaces on screen that neither set claims.
 fn orphans(
     location: &HashMap<&str, &str>,
     tracked: &HashMap<window::Id, BarRecord>,
