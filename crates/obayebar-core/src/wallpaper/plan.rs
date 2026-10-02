@@ -125,16 +125,9 @@ pub fn plan_wallpapers<S: std::hash::BuildHasher>(
 }
 
 /// Why an interval string could not be understood.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{0}")]
 pub struct IntervalError(pub String);
-
-impl std::fmt::Display for IntervalError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl std::error::Error for IntervalError {}
 
 /// Parse a rotation interval such as `"30m"`.
 ///
