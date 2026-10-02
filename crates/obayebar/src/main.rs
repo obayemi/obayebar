@@ -1240,7 +1240,7 @@ impl App {
                     record.namespace,
                     record.monitor
                 );
-                if *reason == "never appeared" {
+                if *reason == CloseReason::NeverAppeared {
                     // The spawn did not take. Ask less often before trying the
                     // next one, so a compositor that will not place our
                     // surfaces is not driven in a tight spawn/close loop.
@@ -2099,15 +2099,51 @@ struct ClosingRecord {
     attempts: u32,
 }
 
+/// Why `plan_from_observation` is closing a bar surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum CloseReason {
+    MonitorDisconnected,
+    DuplicateOnMonitor,
+    WrongMonitor,
+    NeverAppeared,
+}
+
+impl std::fmt::Display for CloseReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::MonitorDisconnected => "monitor disconnected",
+            Self::DuplicateOnMonitor => "duplicate on monitor",
+            Self::WrongMonitor => "landed on the wrong monitor",
+            Self::NeverAppeared => "never appeared",
+        })
+    }
+}
+
+/// Why `plan_from_observation` is dropping a bar record without closing it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum ForgetReason {
+    MonitorDisconnected,
+    SurfaceVanished,
+}
+
+impl std::fmt::Display for ForgetReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::MonitorDisconnected => "monitor disconnected",
+            Self::SurfaceVanished => "surface vanished",
+        })
+    }
+}
+
 /// What `plan_from_observation` decided. Every field is sorted so the plan is
 /// deterministic and directly comparable in tests.
 #[derive(Debug, Default, PartialEq, Eq)]
 struct BarPlan {
     /// Surfaces to close, with the reason. The caller moves each into the
     /// closing set and keeps it there until an observation says it is gone.
-    close: Vec<(window::Id, &'static str)>,
+    close: Vec<(window::Id, CloseReason)>,
     /// Records to drop without closing: the surface is already gone.
-    forget: Vec<(window::Id, &'static str)>,
+    forget: Vec<(window::Id, ForgetReason)>,
     /// Records observed where we asked for them.
     verified: Vec<window::Id>,
     /// Records not observed yet but still inside their grace window.
@@ -2176,35 +2212,35 @@ fn plan_from_observation(
             // Observed exactly where we asked.
             Some(actual) if *actual == record.monitor => {
                 if wanted_gone {
-                    plan.close.push((*id, "monitor disconnected"));
+                    plan.close.push((*id, CloseReason::MonitorDisconnected));
                 } else if covered.insert(actual) {
                     plan.verified.push(*id);
                 } else {
                     // Another bar already holds this monitor. Duplicates are
                     // resolved by id order so the choice is stable.
-                    plan.close.push((*id, "duplicate on monitor"));
+                    plan.close.push((*id, CloseReason::DuplicateOnMonitor));
                 }
             }
             // Observed somewhere else: `OutputName` fell back to the focused
             // output and nothing told us. This is the flagship bug, and the
             // only reason it is fixable is that we can see it here.
-            Some(_) => plan.close.push((*id, "landed on the wrong monitor")),
+            Some(_) => plan.close.push((*id, CloseReason::WrongMonitor)),
             // Not mapped anywhere.
             None => {
                 if wanted_gone {
-                    plan.forget.push((*id, "monitor disconnected"));
+                    plan.forget.push((*id, ForgetReason::MonitorDisconnected));
                 } else if record.verified {
                     // It was there and is not any more: the surface died
                     // without a usable `Closed` event, which is precisely the
                     // lost-close case that used to strand a monitor forever.
-                    plan.forget.push((*id, "surface vanished"));
+                    plan.forget.push((*id, ForgetReason::SurfaceVanished));
                 } else if now.duration_since(record.spawned_at) >= VERIFY_GRACE {
                     // Out of patience — but *close* it rather than forget it.
                     // A surface that has not mapped yet is not a surface that
                     // is gone: it is very much alive, still on its way, and
                     // dropping the record here is what produced bars nothing
                     // could ever reach. This is the flagship bug's second half.
-                    plan.close.push((*id, "never appeared"));
+                    plan.close.push((*id, CloseReason::NeverAppeared));
                 } else {
                     // Still mapping. Hold its monitor so we do not spawn a
                     // second bar on top of a surface that is on its way.
@@ -2283,8 +2319,8 @@ const fn should_reissue_close(attempts: u32) -> bool {
 #[allow(clippy::expect_used)]
 mod reconcile_tests {
     use super::{
-        plan_from_observation, should_reissue_close, BarPlan, BarRecord, ClosingRecord,
-        VERIFY_GRACE,
+        plan_from_observation, should_reissue_close, BarPlan, BarRecord, CloseReason,
+        ClosingRecord, ForgetReason, VERIFY_GRACE,
     };
     use iced::window;
     use std::collections::{HashMap, HashSet};
@@ -2429,7 +2465,7 @@ mod reconcile_tests {
             &expected(["DP-1", "DP-2"]),
             &tracked([(a, "DP-2", "obayebar-bar-1", false)]),
         );
-        assert_eq!(plan.close, vec![(a, "landed on the wrong monitor")]);
+        assert_eq!(plan.close, vec![(a, CloseReason::WrongMonitor)]);
         // DP-1 has no bar of ours that we asked for, DP-2 lost its only
         // candidate — one of them gets this pass.
         assert!(plan.spawn.is_some());
@@ -2452,7 +2488,7 @@ mod reconcile_tests {
         );
         let (kept, dropped) = if a < b { (a, b) } else { (b, a) };
         assert_eq!(plan.verified, vec![kept]);
-        assert_eq!(plan.close, vec![(dropped, "duplicate on monitor")]);
+        assert_eq!(plan.close, vec![(dropped, CloseReason::DuplicateOnMonitor)]);
         assert_eq!(plan.spawn, None);
     }
 
@@ -2464,7 +2500,7 @@ mod reconcile_tests {
             &expected(["DP-1"]),
             &tracked([(a, "DP-2", "obayebar-bar-1", true)]),
         );
-        assert_eq!(plan.close, vec![(a, "monitor disconnected")]);
+        assert_eq!(plan.close, vec![(a, CloseReason::MonitorDisconnected)]);
         assert_eq!(plan.drop_state_for, vec!["DP-2".to_string()]);
         assert_eq!(plan.spawn.as_deref(), Some("DP-1"));
     }
@@ -2477,7 +2513,7 @@ mod reconcile_tests {
             &expected(["DP-1"]),
             &tracked([(a, "DP-2", "obayebar-bar-1", true)]),
         );
-        assert_eq!(plan.forget, vec![(a, "monitor disconnected")]);
+        assert_eq!(plan.forget, vec![(a, ForgetReason::MonitorDisconnected)]);
         assert!(plan.close.is_empty(), "{:?}", plan.close);
     }
 
@@ -2492,7 +2528,7 @@ mod reconcile_tests {
             &expected(["DP-1"]),
             &tracked([(a, "DP-1", "obayebar-bar-1", true)]),
         );
-        assert_eq!(plan.forget, vec![(a, "surface vanished")]);
+        assert_eq!(plan.forget, vec![(a, ForgetReason::SurfaceVanished)]);
         assert_eq!(plan.spawn.as_deref(), Some("DP-1"));
         assert_eq!(plan.drop_state_for, vec!["DP-1".to_string()]);
     }
@@ -2534,7 +2570,7 @@ mod reconcile_tests {
             PREFIX,
             now,
         );
-        assert_eq!(plan.close, vec![(a, "never appeared")]);
+        assert_eq!(plan.close, vec![(a, CloseReason::NeverAppeared)]);
         assert_eq!(plan.forget, vec![]);
         assert_eq!(plan.spawn.as_deref(), Some("DP-1"));
     }
@@ -2706,7 +2742,7 @@ mod reconcile_tests {
 
         // Gone: forget it, and DP-1 is the only monitor left to serve.
         let gone = plan(Some(&observed([])), &expected(["DP-1"]), &map);
-        assert_eq!(gone.forget, vec![(a, "monitor disconnected")]);
+        assert_eq!(gone.forget, vec![(a, ForgetReason::MonitorDisconnected)]);
 
         // Back, with nothing tracked: it gets a fresh spawn.
         let back = plan(
