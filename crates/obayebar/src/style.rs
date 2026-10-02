@@ -2,6 +2,7 @@
 
 use iced::widget::container;
 use iced::{Background, Border, Color, Font};
+use obayebar_core::hypr::MonitorGeom;
 use std::borrow::Cow;
 
 pub const M3_PRIMARY: Color = Color::from_rgb(0.816, 0.737, 1.0);
@@ -260,7 +261,23 @@ fn notif_overflow_card_height() -> f32 {
 }
 
 /// Fraction of screen height the notification popup may occupy.
-pub const NOTIF_POPUP_MAX_FRACTION: f32 = 0.4;
+const NOTIF_POPUP_MAX_FRACTION: f64 = 0.4;
+
+/// Height cap in logical pixels for a popup on `geom`, or the 1080p-based
+/// fallback when no monitor geometry is known yet. The cap is the
+/// `NOTIF_POPUP_MAX_FRACTION` fraction of the oriented logical height.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::as_conversions
+)]
+pub fn notif_popup_height_cap(geom: Option<&MonitorGeom>) -> u32 {
+    const FALLBACK_LOGICAL_H: f64 = 1080.0;
+
+    let logical_h = geom.map_or(FALLBACK_LOGICAL_H, |g| g.logical_size().1);
+
+    (logical_h * NOTIF_POPUP_MAX_FRACTION) as u32
+}
 
 /// Notification popup chrome (outer padding + layout safety margin). Added to
 /// the card stack to get the full window height.
@@ -896,6 +913,38 @@ mod tests {
         assert_eq!(find_outlined_font(&root), None);
 
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    fn geom(width: u32, height: u32, scale: f32, transform: i32) -> MonitorGeom {
+        MonitorGeom {
+            width,
+            height,
+            scale,
+            transform,
+        }
+    }
+
+    #[test]
+    fn height_cap_falls_back_to_a_1080p_based_cap_without_geometry() {
+        assert_eq!(notif_popup_height_cap(None), 432);
+    }
+
+    #[test]
+    fn height_cap_upright_caps_on_the_logical_height() {
+        let g = geom(2560, 1440, 1.0, 0);
+        assert_eq!(notif_popup_height_cap(Some(&g)), 576);
+    }
+
+    #[test]
+    fn height_cap_rotated_caps_on_the_logical_width() {
+        let g = geom(2560, 1440, 1.0, 1);
+        assert_eq!(notif_popup_height_cap(Some(&g)), 1024);
+    }
+
+    #[test]
+    fn height_cap_scale_shrinks_the_logical_size_before_capping() {
+        let g = geom(2560, 1440, 2.0, 0);
+        assert_eq!(notif_popup_height_cap(Some(&g)), 288);
     }
 
     #[test]

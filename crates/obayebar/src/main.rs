@@ -1503,23 +1503,6 @@ impl App {
         self.maybe_close_popup_window()
     }
 
-    /// Height cap in logical pixels for a popup on `geom`, or the
-    /// 1080p-based fallback when no monitor geometry is known yet. The cap
-    /// is the [`style::NOTIF_POPUP_MAX_FRACTION`] fraction of the oriented
-    /// logical height.
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        clippy::as_conversions
-    )]
-    fn popup_height_cap(geom: Option<&MonitorGeom>) -> u32 {
-        const FALLBACK_LOGICAL_H: f64 = 1080.0;
-
-        let logical_h = geom.map_or(FALLBACK_LOGICAL_H, |g| g.logical_size().1);
-
-        (logical_h * f64::from(style::NOTIF_POPUP_MAX_FRACTION)) as u32
-    }
-
     /// Maximum popup height in logical pixels for the monitor the popup is
     /// on, or the focused monitor before the popup has one. Measured there
     /// because a cap from another screen can exceed the host's height, and
@@ -1530,7 +1513,7 @@ impl App {
             .as_deref()
             .or(self.focused_monitor.as_deref())
             .and_then(|name| self.monitor_geoms.get(name));
-        Self::popup_height_cap(geom)
+        style::notif_popup_height_cap(geom)
     }
 
     /// Decide how many popup cards fit and how many spill into an overflow
@@ -1875,44 +1858,6 @@ mod reset_panel_view_tests {
         let before = pager;
         reset_panel_view(&mut pager, PanelKind::Audio);
         assert_eq!(pager, before);
-    }
-}
-
-#[cfg(test)]
-mod popup_height_cap_tests {
-    use super::App;
-    use obayebar_core::hypr::MonitorGeom;
-
-    fn geom(width: u32, height: u32, scale: f32, transform: i32) -> MonitorGeom {
-        MonitorGeom {
-            width,
-            height,
-            scale,
-            transform,
-        }
-    }
-
-    #[test]
-    fn falls_back_to_a_1080p_based_cap_without_geometry() {
-        assert_eq!(App::popup_height_cap(None), 432);
-    }
-
-    #[test]
-    fn upright_caps_on_the_logical_height() {
-        let g = geom(2560, 1440, 1.0, 0);
-        assert_eq!(App::popup_height_cap(Some(&g)), 576);
-    }
-
-    #[test]
-    fn rotated_caps_on_the_logical_width() {
-        let g = geom(2560, 1440, 1.0, 1);
-        assert_eq!(App::popup_height_cap(Some(&g)), 1024);
-    }
-
-    #[test]
-    fn scale_shrinks_the_logical_size_before_capping() {
-        let g = geom(2560, 1440, 2.0, 0);
-        assert_eq!(App::popup_height_cap(Some(&g)), 288);
     }
 }
 
