@@ -56,7 +56,8 @@ pub struct SpawnConfig {
 pub struct PanelConfig {
     /// How long the pointer rests on a bar entry before its panel opens, so
     /// a pointer merely crossing the bar opens nothing. A click, or a hover
-    /// while another panel is up, opens at once regardless.
+    /// while another panel is up, opens at once regardless — except on the
+    /// audio icon, whose click opens the mixer instead.
     pub open_delay_ms: u64,
 }
 

@@ -221,7 +221,8 @@ in {
       description = ''
         Milliseconds the pointer rests on a bar entry before its panel
         opens, so a pointer crossing the bar opens nothing. A click, or a
-        hover while another panel is open, opens at once. Null keeps
+        hover while another panel is open, opens at once — except on the
+        audio icon, whose click opens the mixer instead. Null keeps
         obayebar's default of 200 ms.
       '';
     };

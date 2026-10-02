@@ -164,8 +164,10 @@ With `[media].show_when_idle = false` the media entry shows only while a
 player plays; otherwise it stays, as an icon alone when there is no player.
 `[panel].open_delay_ms` is how long the pointer must rest on a bar entry
 before its panel opens, so a pointer that crosses the bar to go to another
-monitor opens nothing. A click opens the panel immediately. When a panel is
-open, a hover on another entry changes the panel immediately.
+monitor opens nothing. A click opens the panel immediately, except on the
+audio icon, whose click opens `pavucontrol` instead — scrolling on it
+changes the volume. When a panel is open, a hover on another entry changes
+the panel immediately.
 The home-manager option `programs.obayebar.wallpaper.enable` adds the
 `obayebar-wallpaper` service, and `programs.obayebar.lock.enable` wires
 `obayebar-lock` into hypridle; config.toml has no `enable` key for these
@@ -310,15 +312,15 @@ An overlay is also available. The overlay adds `obayebar` to `pkgs`.
 | Workspaces      | Hyprland IPC (`j/workspaces`, socket2)   | One set per monitor. A click focuses one. A spring moves the indicator.                                                                                     |
 | Active window   | Hyprland IPC (`activewindow` event)      | Shows the class and the title. The bar draws the text vertically.                                                                                           |
 | System tray     | StatusNotifierItem (dbus)                | A click activates the item. The bar keeps the icons in a cache.                                                                                             |
-| Media           | MPRIS (dbus)                             | Shows the track. The panel plays, seeks, loops, switches players. `--no-media` hides it.                                                                    |
+| Media           | MPRIS (dbus)                             | Shows the track. The panel plays, seeks, loops, shuffles, switches players. `--no-media` hides it.                                                          |
 | GitLab todos    | GitLab REST API + Secret Service keyring | Off by default. Use `--gitlab`, the config file, or the Nix option.                                                                                         |
 | Clock           | local time tick                          | Shows the local time. The panel shows the time, the date and a Monday-first month with ISO week numbers. The chevrons or the scroll wheel change the month. |
-| Audio           | PipeWire (native, with `pipewire-rs`)    | Shows the volume. The panel has sliders, mute, and sink selection.                                                                                          |
+| Audio           | PipeWire (native, with `pipewire-rs`)    | Click opens `pavucontrol`, scroll changes the volume, hover opens the panel. The panel has sliders, mute, and sink selection.                               |
 | Network         | NetworkManager (dbus)                    | The panel shows the Wi-Fi list, and connects or disconnects.                                                                                                |
 | Bluetooth       | BlueZ (dbus)                             | The panel starts the adapter, finds devices, and forgets devices.                                                                                           |
-| Battery / power | UPower + `power-profiles-daemon` (dbus)  | Shows the percentage. The panel changes the power profile.                                                                                                  |
+| Battery / power | UPower + `power-profiles-daemon` (dbus)  | Hidden when no battery is present. The panel changes the power profile.                                                                                     |
 | Sysinfo         | `/proc`, NVML                            | Shows CPU, GPU, RAM, and network rates. The color changes at a limit.                                                                                       |
-| Notifications   | `org.freedesktop.Notifications` (dbus)   | Replaces `mako` and `dunst`. Maximum height is 2/5 of the monitor.                                                                                          |
+| Notifications   | `org.freedesktop.Notifications` (dbus)   | Left click focuses the sending app, right click dismisses. Replaces `mako` and `dunst`. Maximum height is 2/5 of the monitor.                               |
 
 ## Command-line reference
 
