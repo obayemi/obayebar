@@ -21,9 +21,9 @@ pub const VERIFY_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// One bar surface we have asked the compositor for.
 ///
-/// The distinction that matters: `monitor` is what we *requested*, `verified`
-/// is whether the compositor was ever observed agreeing. Treating the request
-/// as the truth is what produced bars stacked on one screen while the app
+/// The distinction that matters: `monitor` is what we *requested*, `state` is
+/// whether the compositor was ever observed agreeing. Treating the request as
+/// the truth is what produced bars stacked on one screen while the app
 /// believed they were spread across all of them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BarRecord {
@@ -32,12 +32,23 @@ pub struct BarRecord {
     /// Unique layer-shell namespace, our handle for matching `j/layers` output
     /// back to this specific surface.
     pub namespace: String,
-    /// Set once this namespace was observed on `monitor`.
-    pub verified: bool,
-    /// When the spawn was requested. An unobserved surface is given the benefit
-    /// of the doubt for `VERIFY_GRACE` from here, so one that never maps does
-    /// not mask its monitor forever. Meaningless once `verified`.
-    pub spawned_at: std::time::Instant,
+    /// Whether the compositor was ever observed agreeing with the request.
+    pub state: BarState,
+}
+
+/// Where a [`BarRecord`] stands relative to the compositor's view of it.
+///
+/// `spawned_at` only exists while mapping: once verified, the grace window
+/// that timestamp measured no longer applies to anything, so there is no
+/// stale field left to misread in the wrong order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BarState {
+    /// Requested but not yet observed. Given the benefit of the doubt for
+    /// `VERIFY_GRACE` from `spawned_at`, so a surface that has not mapped yet
+    /// does not mask its monitor forever.
+    Mapping { spawned_at: std::time::Instant },
+    /// Observed on the monitor it was requested for.
+    Verified,
 }
 
 /// A bar surface we have asked the compositor to close.
@@ -183,23 +194,35 @@ pub fn plan_from_observation(
             None => {
                 if wanted_gone {
                     plan.forget.push((*id, ForgetReason::MonitorDisconnected));
-                } else if record.verified {
-                    // It was there and is not any more: the surface died
-                    // without a usable `Closed` event, which is precisely the
-                    // lost-close case that used to strand a monitor forever.
-                    plan.forget.push((*id, ForgetReason::SurfaceVanished));
-                } else if now.duration_since(record.spawned_at) >= VERIFY_GRACE {
-                    // Out of patience — but *close* it rather than forget it.
-                    // A surface that has not mapped yet is not a surface that
-                    // is gone: it is very much alive, still on its way, and
-                    // dropping the record here is what produced bars nothing
-                    // could ever reach. This is the flagship bug's second half.
-                    plan.close.push((*id, CloseReason::NeverAppeared));
                 } else {
-                    // Still mapping. Hold its monitor so we do not spawn a
-                    // second bar on top of a surface that is on its way.
-                    plan.pending.push(*id);
-                    covered.insert(record.monitor.as_str());
+                    match record.state {
+                        BarState::Verified => {
+                            // It was there and is not any more: the surface
+                            // died without a usable `Closed` event, which is
+                            // precisely the lost-close case that used to
+                            // strand a monitor forever.
+                            plan.forget.push((*id, ForgetReason::SurfaceVanished));
+                        }
+                        BarState::Mapping { spawned_at }
+                            if now.duration_since(spawned_at) >= VERIFY_GRACE =>
+                        {
+                            // Out of patience — but *close* it rather than
+                            // forget it. A surface that has not mapped yet is
+                            // not a surface that is gone: it is very much
+                            // alive, still on its way, and dropping the
+                            // record here is what produced bars nothing could
+                            // ever reach. This is the flagship bug's second
+                            // half.
+                            plan.close.push((*id, CloseReason::NeverAppeared));
+                        }
+                        BarState::Mapping { .. } => {
+                            // Still mapping. Hold its monitor so we do not
+                            // spawn a second bar on top of a surface that is
+                            // on its way.
+                            plan.pending.push(*id);
+                            covered.insert(record.monitor.as_str());
+                        }
+                    }
                 }
             }
         }
@@ -273,7 +296,7 @@ pub const fn should_reissue_close(attempts: u32) -> bool {
 #[allow(clippy::expect_used)]
 mod reconcile_tests {
     use super::{
-        plan_from_observation, should_reissue_close, BarPlan, BarRecord, CloseReason,
+        plan_from_observation, should_reissue_close, BarPlan, BarRecord, BarState, CloseReason,
         ClosingRecord, ForgetReason, VERIFY_GRACE,
     };
     use iced::window;
@@ -296,13 +319,19 @@ mod reconcile_tests {
         entries
             .into_iter()
             .map(|(id, monitor, namespace, verified)| {
+                let state = if verified {
+                    BarState::Verified
+                } else {
+                    BarState::Mapping {
+                        spawned_at: Instant::now(),
+                    }
+                };
                 (
                     id,
                     BarRecord {
                         monitor: monitor.to_string(),
                         namespace: namespace.to_string(),
-                        verified,
-                        spawned_at: Instant::now(),
+                        state,
                     },
                 )
             })
@@ -515,7 +544,11 @@ mod reconcile_tests {
             .checked_sub(VERIFY_GRACE)
             .expect("the clock has been running at least as long as the grace window");
         let mut map = tracked([(a, "DP-1", "obayebar-bar-1", false)]);
-        map.entry(a).and_modify(|r| r.spawned_at = long_ago);
+        map.entry(a).and_modify(|r| {
+            r.state = BarState::Mapping {
+                spawned_at: long_ago,
+            };
+        });
         let plan = plan_from_observation(
             Some(&observed([])),
             &expected(["DP-1"]),

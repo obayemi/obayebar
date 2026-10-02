@@ -18,7 +18,9 @@ use iced_layershell::reexport::{
 };
 use obayebar_core::hypr::LayerMap;
 
-use plan::{plan_from_observation, should_reissue_close, BarRecord, CloseReason, ClosingRecord};
+use plan::{
+    plan_from_observation, should_reissue_close, BarRecord, BarState, CloseReason, ClosingRecord,
+};
 
 /// Prefix for every bar's layer-shell namespace, followed by this process's pid
 /// and the bar's generation.
@@ -63,15 +65,14 @@ pub struct ReconcileOutcome {
 /// state the reconcile loop needs to keep that in sync with reality.
 ///
 /// Fields are private: only the methods here may touch them, which is what
-/// keeps the reconcile invariants ("only one pass in flight", "a record's
-/// `spawned_at` is meaningless once verified") from being violated by code
-/// elsewhere in the app.
+/// keeps the reconcile invariant ("only one pass in flight") from being
+/// violated by code elsewhere in the app.
 #[derive(Debug)]
 pub struct BarFleet {
     /// Every bar surface we have asked the compositor for, keyed by window id.
     ///
     /// This is bookkeeping, not truth: a record says which monitor we *asked*
-    /// for, and `BarRecord::verified` says whether the compositor was ever
+    /// for, and `BarRecord::state` says whether the compositor was ever
     /// observed agreeing.
     tracked: HashMap<window::Id, BarRecord>,
     /// Bar surfaces we have asked the compositor to close, kept until an
@@ -175,8 +176,9 @@ impl BarFleet {
             BarRecord {
                 monitor: monitor.clone(),
                 namespace: namespace.clone(),
-                verified: false,
-                spawned_at: Instant::now(),
+                state: BarState::Mapping {
+                    spawned_at: Instant::now(),
+                },
             },
         );
         let settings = NewLayerShellSettings {
@@ -224,7 +226,7 @@ impl BarFleet {
 
         for id in &plan.verified {
             if let Some(record) = self.tracked.get_mut(id) {
-                if !record.verified {
+                if !matches!(record.state, BarState::Verified) {
                     log::info!("bars: {} confirmed on {}", record.namespace, record.monitor);
                     // Something is working; stop backing off. Only on the
                     // transition: re-confirming a bar that was already fine is
@@ -233,7 +235,7 @@ impl BarFleet {
                     // four times a second forever.
                     self.verify_backoff = VERIFY_DELAY;
                 }
-                record.verified = true;
+                record.state = BarState::Verified;
             }
         }
         for id in &plan.pending {
@@ -333,11 +335,14 @@ impl BarFleet {
         let covered: HashSet<&str> = self
             .tracked
             .values()
-            .filter(|r| r.verified)
+            .filter(|r| matches!(r.state, BarState::Verified))
             .map(|r| r.monitor.as_str())
             .collect();
         !self.closing.is_empty()
-            || self.tracked.values().any(|r| !r.verified)
+            || self
+                .tracked
+                .values()
+                .any(|r| !matches!(r.state, BarState::Verified))
             || expected.iter().any(|m| !covered.contains(m.as_str()))
     }
 
