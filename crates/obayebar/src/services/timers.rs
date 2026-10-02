@@ -1,7 +1,7 @@
-//! Event-driven timers that replace the 1 Hz Tick subscription.
+//! Event-driven timers: wake only when something actually changes.
 //!
-//! The bar no longer needs to wake every second: the clock only changes on
-//! minute boundaries, and popup expiry is driven by absolute timestamps.
+//! The clock only changes on minute boundaries, and popup expiry is driven
+//! by absolute timestamps, so neither needs a 1 Hz wake-up.
 
 use chrono::{DateTime, Local, Timelike};
 use futures_util::Stream;

@@ -1,11 +1,9 @@
 //! The application launcher, drawn by the bar.
 //!
-//! This used to be a separate process: every keypress paid for a fork, a 30 MB
-//! dynamic link, wgpu device creation and a fresh desktop-entry scan before it
-//! could show a list. Living inside the bar daemon means the entry list is
-//! already parsed, the icons are already decoded, and showing the surface costs
-//! one frame. `obayebar-launcher` is now a shim that pokes the bar's control
-//! socket.
+//! Living inside the bar daemon means the entry list is already parsed, the
+//! icons are already decoded, and showing the surface costs one frame rather
+//! than a fresh process's fork, dynamic link and desktop-entry scan.
+//! `obayebar-launcher` is a shim that pokes the bar's control socket.
 
 pub mod desktop_entry;
 pub mod icons;

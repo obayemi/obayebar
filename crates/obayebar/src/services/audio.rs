@@ -389,15 +389,13 @@ const PW_RECONNECT_DELAY: std::time::Duration = std::time::Duration::from_secs(2
 /// Own the `PipeWire` monitor thread: connect, run until the connection dies,
 /// publish an unavailable state, wait, and try again.
 ///
-/// Every failure used to `return`, ending the thread and dropping `tx`; iced
-/// never restarts a finished subscription recipe, so the volume widget stayed
-/// at `AudioInfo::default()` (0%, muted icon) for the rest of the session after
-/// a single early failure — the common case being the bar starting from
-/// `exec-once` before the pipewire user unit is up. The steady state was no
-/// better: a core error called `main_loop.quit()` and the old trailing
-/// `loop { main_loop.run(); sleep(100ms) }` re-entered with a dead core and a
-/// `PwState` that was never reset, so stale sinks kept rendering and commands
-/// were written to dead node proxies.
+/// Must never `return`: iced never restarts a finished subscription recipe,
+/// so an early exit would strand the volume widget at `AudioInfo::default()`
+/// (0%, muted icon) for the rest of the session — the common case being the
+/// bar starting from `exec-once` before the `PipeWire` user unit is up. Each
+/// retry must also start from a fresh `PwState`, not a reused one: a stale
+/// state after a dead core means rendering stale sinks and writing commands
+/// to dead node proxies.
 #[allow(clippy::needless_pass_by_value)]
 fn run_pipewire_monitor(
     tx: tokio::sync::mpsc::UnboundedSender<AudioInfo>,

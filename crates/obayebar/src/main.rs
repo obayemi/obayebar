@@ -72,9 +72,7 @@ impl log::Log for FatalErrorLogger {
 }
 
 /// Namespace for the notification popup surface, so `j/layers` can tell it
-/// apart from a bar. Every surface previously shared the app-wide `obayebar`
-/// namespace, which also meant a `layerrule` could not target one and not the
-/// others.
+/// apart from a bar, and a `layerrule` can target one without the other.
 const POPUP_NAMESPACE: &str = "obayebar-notifications";
 
 /// How long after the pointer leaves a bar trigger or a panel before the panel
@@ -445,10 +443,9 @@ impl App {
     /// Get the monitor name for a bar window ID. Returns `None` if `id` is
     /// not a tracked bar surface.
     ///
-    /// An exact lookup, with no fallback. The old version returned
-    /// `initial_monitor` for *any* unknown id while `initial_bar_id` was
-    /// unset, which meant a panel or popup surface could be rendered as a bar
-    /// for the wrong monitor.
+    /// An exact lookup, with no fallback: an unknown id must never be read
+    /// as belonging to any particular monitor, or a panel or popup surface
+    /// could be rendered as a bar on the wrong one.
     fn monitor_for_bar(&self, id: window::Id) -> Option<&str> {
         self.bars.monitor_for(id)
     }
@@ -499,11 +496,10 @@ impl App {
     /// Derive each service's cadence signal from whether its panel is actually
     /// open, rather than latching it at open/close time.
     ///
-    /// A panel surface can die without a usable `Closed` event, which used to
-    /// leave `signal_setter(true)` stuck on and its service polling at panel
-    /// cadence indefinitely — network rescanning every 10s instead of every
-    /// 2min, sysinfo every 2s instead of every 10s. `PanelSignal::set` only
-    /// notifies on a change, so running this after every message is cheap.
+    /// A panel surface can die without a usable `Closed` event, so latching
+    /// the signal would risk leaving a service stuck polling at panel
+    /// cadence indefinitely. `PanelSignal::set` only notifies on a change, so
+    /// re-deriving it here after every message is cheap.
     fn sync_panel_signals(&self) {
         for (kind, panel) in &self.panels {
             if let Some(setter) = kind.signal_setter() {

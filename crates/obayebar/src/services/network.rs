@@ -448,13 +448,12 @@ async fn find_saved_connection(conn: &zbus::Connection, ssid: &str) -> Option<St
 
 /// Ask `NetworkManager` to connect to `ssid`.
 ///
-/// Returns `Err` with a user-facing reason when the request itself fails. This
-/// used to be a detached `tokio::spawn` whose only outcome was a log line, so
-/// the UI's optimistic `connecting_ssid` had nothing to clear it: a synchronous
-/// failure — a stale AP so no device/AP pair is found, or an immediate
-/// activation error — left the row spinning forever, and the panel hides the
-/// connect button while a row is connecting, so that network became
-/// unretryable until Wi-Fi dropped or was toggled off.
+/// Returns `Err` with a user-facing reason when the request itself fails —
+/// a stale AP so no device/AP pair is found, or an immediate activation
+/// error — so the caller can clear the UI's optimistic `connecting_ssid`.
+/// Left spinning, that row would be unretryable until Wi-Fi dropped or was
+/// toggled off, since the panel hides the connect button while a row is
+/// connecting.
 ///
 /// A successful return only means `NetworkManager` accepted the request.
 /// Authentication happens afterwards, so the caller still needs its own

@@ -33,7 +33,7 @@ impl PanelSignal {
     }
 
     /// Called from the UI thread when the panel opens/closes.
-    /// Wakes anyone waiting on `wait_change` so refreshes happen immediately.
+    /// Wakes anyone awaiting [`Self::changed`] so refreshes happen immediately.
     pub fn set(&self, open: bool) {
         let prev = self.open.swap(open, Ordering::Relaxed);
         if prev != open {
@@ -109,11 +109,10 @@ pub struct ProxyError {
 /// object path, interface).
 ///
 /// Returns `None` — every caller treats an unavailable service as "render it
-/// as absent" rather than propagating — but the reason is *logged* first. This
-/// is the single widest swallow site in the codebase: every service builds its
-/// proxies here, and a construction failure used to disappear entirely,
-/// leaving the module to report the service as off or empty with nothing to
-/// distinguish that from a real absence.
+/// as absent" rather than propagating — but the reason is *logged* first, so
+/// a real construction failure stays distinguishable from a genuine absence.
+/// This is the single widest swallow site in the codebase: every service
+/// builds its proxies here.
 pub async fn proxy<'a>(
     conn: &'a zbus::Connection,
     dest: &str,

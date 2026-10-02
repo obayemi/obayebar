@@ -77,12 +77,12 @@ fn pick_adapter_path<I: IntoIterator<Item = String>>(paths: I) -> Option<String>
 
 /// Find the `BlueZ` adapter's object path in the exported object tree.
 ///
-/// The path used to be hardcoded to `/org/bluez/hci0`. On a machine whose
-/// adapter is `hci1` that path does not exist, but zbus proxies are built
-/// lazily — so construction succeeded, only the property read failed, and
-/// `unwrap_or(false)` reported "Bluetooth is off" forever with the power
-/// toggle writing into the void. The object tree is already fetched for device
-/// enumeration, so the real path costs nothing extra to find.
+/// A hardcoded `/org/bluez/hci0` would silently misreport "Bluetooth is off"
+/// on any machine whose adapter numbers differently, since zbus proxies are
+/// built lazily: construction against a path that does not exist still
+/// succeeds, and only the property read fails. The object tree is already
+/// fetched for device enumeration, so the real path costs nothing extra to
+/// find.
 async fn find_adapter_path(conn: &zbus::Connection) -> Option<String> {
     let om_proxy = build_proxy(conn, "/", OBJECT_MANAGER).await?;
     let objects = om_proxy
@@ -245,11 +245,12 @@ async fn adapter_for<'a>(conn: &'a zbus::Connection, action: &str) -> Option<zbu
 
 /// Report the outcome of a `BlueZ` call instead of discarding it.
 ///
-/// These used to go through `call_noreply`, whose `NO_REPLY_EXPECTED` flag
-/// means `BlueZ` never sends its error reply at all — so even a correct `if let
-/// Err` could not have seen `org.bluez.Error.Failed` or
-/// `br-connection-profile-unavailable`. A failed action was a silent no-op:
-/// the user re-clicked blindly and there was nothing at any log level.
+/// Must go through a call that waits for the reply, never `call_noreply`:
+/// its `NO_REPLY_EXPECTED` flag means `BlueZ` never sends an error reply at
+/// all, so even a correct `if let Err` could not see
+/// `org.bluez.Error.Failed` or `br-connection-profile-unavailable`. Discarded
+/// that way, a failed action is a silent no-op — the user re-clicks blindly
+/// with nothing logged at any level.
 fn log_result<E: std::fmt::Display>(action: &str, result: Result<(), E>) {
     match result {
         Ok(()) => log::debug!("bluetooth: {action} succeeded"),
@@ -430,8 +431,6 @@ mod tests {
 
     #[test]
     fn picks_the_only_adapter_whatever_its_number() {
-        // The path used to be hardcoded to hci0, so an hci1-only machine
-        // reported "Bluetooth off" forever.
         assert_eq!(
             pick_adapter_path(vec!["/org/bluez/hci1".to_string()]),
             Some("/org/bluez/hci1".to_string())

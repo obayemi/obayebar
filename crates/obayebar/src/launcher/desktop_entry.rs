@@ -1,12 +1,11 @@
 //! Desktop-entry discovery: what the launcher shows, and how it starts it.
 //!
 //! Parsing goes through `freedesktop-desktop-entry` and icon lookup through
-//! `freedesktop-icons` rather than the hand-rolled versions this file used to
-//! carry. Both handle parts of the spec the hand-rolled code did not: localized
-//! `Name[fr]`, `OnlyShowIn` / `NotShowIn`, `TryExec`, desktop IDs from nested
-//! directories (`kde/foo.desktop` is `kde-foo`), and icon themes with their
-//! inheritance — the old lookup searched `hicolor` only, so an app whose icon
-//! ships in Adwaita simply had none.
+//! `freedesktop-icons`, which between them handle the parts of the spec a
+//! hand-rolled parser tends to miss: localized `Name[fr]`, `OnlyShowIn` /
+//! `NotShowIn`, `TryExec`, desktop IDs from nested directories
+//! (`kde/foo.desktop` is `kde-foo`), and icon themes with their inheritance —
+//! an app whose icon ships only in Adwaita still resolves one.
 //!
 //! What is *not* delegated is the `Exec` line. `parse_exec()` splits on
 //! whitespace, which mangles a quoted argument containing spaces; the entries

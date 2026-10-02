@@ -2,9 +2,9 @@
 //! monitor, verified against what the compositor actually shows.
 //!
 //! [`BarFleet`] owns every field the reconcile loop touches and is the only
-//! thing allowed to mutate them — a module boundary enforces what used to be
-//! only a doc comment's promise. [`plan`] holds the pure planner this fleet
-//! drives, independently testable without a compositor.
+//! thing allowed to mutate them, a module boundary rather than a doc
+//! comment's promise. [`plan`] holds the pure planner this fleet drives,
+//! independently testable without a compositor.
 
 mod plan;
 
@@ -161,9 +161,8 @@ impl BarFleet {
     /// surface with no output and the compositor puts it on the focused
     /// monitor, reporting nothing back. A per-surface namespace is what lets
     /// the next `j/layers` observation say which monitor this specific surface
-    /// landed on. All bars previously shared the app-wide `obayebar`
-    /// namespace, which made them indistinguishable and verification
-    /// impossible.
+    /// landed on — a namespace shared across bars would make them
+    /// indistinguishable, and verification impossible.
     fn spawn_for(&mut self, monitor: String, now: Instant) -> (window::Id, NewLayerShellSettings) {
         self.generation = self.generation.wrapping_add(1);
         let namespace = format!("{}{}", self.prefix, self.generation);
