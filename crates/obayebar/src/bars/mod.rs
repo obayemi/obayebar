@@ -395,3 +395,252 @@ impl BarFleet {
         }
     }
 }
+
+#[cfg(test)]
+mod reconcile_tests {
+    use super::{BarFleet, BarRecord, BarState, ClosingRecord, VERIFY_DELAY};
+    use iced::window;
+    use iced_layershell::reexport::OutputOption;
+    use std::collections::HashSet;
+    use std::time::{Duration, Instant};
+
+    fn expected<const N: usize>(monitors: [&str; N]) -> HashSet<String> {
+        monitors.iter().map(|m| (*m).to_string()).collect()
+    }
+
+    fn observed<const N: usize>(entries: [(&str, &[&str]); N]) -> obayebar_core::hypr::LayerMap {
+        entries
+            .into_iter()
+            .map(|(monitor, namespaces)| {
+                (
+                    monitor.to_string(),
+                    namespaces.iter().map(|n| (*n).to_string()).collect(),
+                )
+            })
+            .collect()
+    }
+
+    /// A fleet with one tracked record, backed off well past the minimum so
+    /// a reset is observable.
+    fn fleet_with(id: window::Id, monitor: &str, namespace: &str, state: BarState) -> BarFleet {
+        let mut tracked = std::collections::HashMap::new();
+        tracked.insert(
+            id,
+            BarRecord {
+                monitor: monitor.to_string(),
+                namespace: namespace.to_string(),
+                state,
+            },
+        );
+        BarFleet {
+            tracked,
+            closing: std::collections::HashMap::new(),
+            prefix: "obayebar-bar-".to_string(),
+            generation: 0,
+            verify_pending: false,
+            verify_backoff: Duration::from_secs(8),
+        }
+    }
+
+    #[test]
+    fn verifying_a_pending_bar_resets_backoff() {
+        let id = window::Id::unique();
+        let mut fleet = fleet_with(
+            id,
+            "DP-1",
+            "obayebar-bar-1",
+            BarState::Mapping {
+                spawned_at: Instant::now(),
+            },
+        );
+        let obs = observed([("DP-1", &["obayebar-bar-1"])]);
+        fleet.reconcile(Some(&obs), &expected(["DP-1"]), Instant::now());
+
+        assert!(matches!(
+            fleet.tracked.get(&id).map(|r| &r.state),
+            Some(BarState::Verified)
+        ));
+        assert_eq!(fleet.verify_backoff, VERIFY_DELAY);
+    }
+
+    #[test]
+    fn reverifying_an_already_verified_bar_keeps_backoff() {
+        let id = window::Id::unique();
+        let mut fleet = fleet_with(id, "DP-1", "obayebar-bar-1", BarState::Verified);
+        let grown = fleet.verify_backoff;
+        let obs = observed([("DP-1", &["obayebar-bar-1"])]);
+        fleet.reconcile(Some(&obs), &expected(["DP-1"]), Instant::now());
+
+        assert_eq!(fleet.verify_backoff, grown);
+    }
+
+    #[test]
+    fn a_bar_that_never_appeared_is_closed_and_grows_backoff() -> Result<(), &'static str> {
+        let id = window::Id::unique();
+        let spawned_at = Instant::now()
+            .checked_sub(Duration::from_secs(10))
+            .ok_or("instant far enough in the past")?;
+        let mut fleet = fleet_with(
+            id,
+            "DP-1",
+            "obayebar-bar-1",
+            BarState::Mapping { spawned_at },
+        );
+        let before = fleet.verify_backoff;
+        let obs = obayebar_core::hypr::LayerMap::new();
+        let outcome = fleet.reconcile(Some(&obs), &expected(["DP-1"]), Instant::now());
+
+        assert_eq!(outcome.close_ids, vec![id]);
+        assert!(!fleet.tracked.contains_key(&id));
+        assert!(fleet.closing.contains_key(&id));
+        assert!(fleet.verify_backoff > before);
+        Ok(())
+    }
+
+    #[test]
+    fn a_disconnected_bar_is_closed_without_growing_backoff() {
+        let id = window::Id::unique();
+        let mut fleet = fleet_with(id, "DP-1", "obayebar-bar-1", BarState::Verified);
+        let before = fleet.verify_backoff;
+        let obs = observed([("DP-1", &["obayebar-bar-1"])]);
+        let outcome = fleet.reconcile(Some(&obs), &expected(["DP-2"]), Instant::now());
+
+        assert_eq!(outcome.close_ids, vec![id]);
+        assert!(fleet.closing.contains_key(&id));
+        assert_eq!(fleet.verify_backoff, before);
+    }
+
+    #[test]
+    fn a_vanished_bar_is_forgotten_without_a_close_request() {
+        let id = window::Id::unique();
+        let mut fleet = fleet_with(id, "DP-1", "obayebar-bar-1", BarState::Verified);
+        let outcome = fleet.reconcile(
+            Some(&obayebar_core::hypr::LayerMap::new()),
+            &expected(["DP-1"]),
+            Instant::now(),
+        );
+
+        assert_eq!(outcome.close_ids, Vec::new());
+        assert!(!fleet.tracked.contains_key(&id));
+        assert!(!fleet.closing.contains_key(&id));
+    }
+
+    #[test]
+    fn a_closing_surface_still_observed_is_reissued_and_grows_backoff() {
+        let id = window::Id::unique();
+        let mut fleet = fleet_with(
+            window::Id::unique(),
+            "DP-2",
+            "unrelated",
+            BarState::Verified,
+        );
+        fleet.closing.insert(
+            id,
+            ClosingRecord {
+                namespace: "obayebar-bar-1".to_string(),
+                attempts: 0,
+            },
+        );
+        let before = fleet.verify_backoff;
+        let obs = observed([("DP-1", &["obayebar-bar-1"])]);
+        let outcome = fleet.reconcile(Some(&obs), &expected(["DP-1", "DP-2"]), Instant::now());
+
+        assert_eq!(outcome.close_ids, vec![id]);
+        assert_eq!(fleet.closing.get(&id).map(|r| r.attempts), Some(1));
+        assert!(fleet.verify_backoff > before);
+    }
+
+    #[test]
+    fn a_closing_surface_not_due_for_reissue_still_grows_backoff() {
+        let id = window::Id::unique();
+        let mut fleet = fleet_with(
+            window::Id::unique(),
+            "DP-2",
+            "unrelated",
+            BarState::Verified,
+        );
+        fleet.closing.insert(
+            id,
+            ClosingRecord {
+                namespace: "obayebar-bar-1".to_string(),
+                attempts: 2,
+            },
+        );
+        let before = fleet.verify_backoff;
+        let obs = observed([("DP-1", &["obayebar-bar-1"])]);
+        let outcome = fleet.reconcile(Some(&obs), &expected(["DP-1", "DP-2"]), Instant::now());
+
+        assert_eq!(outcome.close_ids, Vec::new());
+        assert_eq!(fleet.closing.get(&id).map(|r| r.attempts), Some(3));
+        assert!(fleet.verify_backoff > before);
+    }
+
+    #[test]
+    fn a_gone_closing_surface_is_dropped() {
+        let id = window::Id::unique();
+        let mut fleet = fleet_with(
+            window::Id::unique(),
+            "DP-2",
+            "unrelated",
+            BarState::Verified,
+        );
+        fleet.closing.insert(
+            id,
+            ClosingRecord {
+                namespace: "obayebar-bar-1".to_string(),
+                attempts: 1,
+            },
+        );
+        let before = fleet.verify_backoff;
+        let obs = observed([("DP-2", &["unrelated"])]);
+        let outcome = fleet.reconcile(Some(&obs), &expected(["DP-2"]), Instant::now());
+
+        assert_eq!(outcome.close_ids, Vec::new());
+        assert!(!fleet.closing.contains_key(&id));
+        assert_eq!(fleet.verify_backoff, before);
+    }
+
+    #[test]
+    fn an_uncovered_monitor_is_spawned_for() -> Result<(), &'static str> {
+        let mut fleet = BarFleet::new();
+        let outcome = fleet.reconcile(
+            Some(&obayebar_core::hypr::LayerMap::new()),
+            &expected(["DP-1"]),
+            Instant::now(),
+        );
+
+        let (id, settings) = outcome.spawn.ok_or("a spawn was planned")?;
+        assert_eq!(
+            settings.output_option,
+            OutputOption::OutputName("DP-1".to_string())
+        );
+        assert!(fleet.tracked.contains_key(&id));
+        assert!(outcome.needs_verify);
+        Ok(())
+    }
+
+    #[test]
+    fn begin_verify_allows_only_one_pass_in_flight() {
+        let mut fleet = BarFleet::new();
+        assert_eq!(fleet.begin_verify(), Some(VERIFY_DELAY));
+        assert_eq!(fleet.begin_verify(), None);
+
+        fleet.reconcile(
+            Some(&obayebar_core::hypr::LayerMap::new()),
+            &expected(["DP-1"]),
+            Instant::now(),
+        );
+
+        assert_eq!(fleet.begin_verify(), Some(VERIFY_DELAY));
+    }
+
+    #[test]
+    fn a_fully_verified_setup_needs_no_further_verification() {
+        let id = window::Id::unique();
+        let mut fleet = fleet_with(id, "DP-1", "obayebar-bar-1", BarState::Verified);
+        let obs = observed([("DP-1", &["obayebar-bar-1"])]);
+        let outcome = fleet.reconcile(Some(&obs), &expected(["DP-1"]), Instant::now());
+
+        assert!(!outcome.needs_verify);
+    }
+}
