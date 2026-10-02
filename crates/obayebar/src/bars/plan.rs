@@ -332,8 +332,8 @@ mod reconcile_tests {
     /// with it so a name from another instance stays distinguishable.
     const PREFIX: &str = "obayebar-bar-";
 
-    /// A tracking map from `(monitor, namespace, verified)` triples. Records
-    /// start with their full grace window ahead of them.
+    /// A tracking map from `(id, monitor, namespace, verified)` tuples.
+    /// Records start with their full grace window ahead of them.
     fn tracked<const N: usize>(
         entries: [(window::Id, &str, &str, bool); N],
     ) -> HashMap<window::Id, BarRecord> {
@@ -359,7 +359,7 @@ mod reconcile_tests {
             .collect()
     }
 
-    /// A closing set from `(id, namespace)` pairs.
+    /// A closing set from `(id, namespace, attempts)` tuples.
     fn closing<const N: usize>(
         entries: [(window::Id, &str, u32); N],
     ) -> HashMap<window::Id, ClosingRecord> {
