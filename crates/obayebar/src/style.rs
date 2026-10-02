@@ -567,8 +567,8 @@ fn find_outlined_font_at(dir: &std::path::Path, depth: u32) -> Option<std::path:
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            if depth > 0 {
-                if let Some(found) = find_outlined_font_at(&path, depth - 1) {
+            if let Some(next) = depth.checked_sub(1) {
+                if let Some(found) = find_outlined_font_at(&path, next) {
                     return Some(found);
                 }
             }
