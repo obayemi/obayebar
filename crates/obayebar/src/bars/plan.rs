@@ -251,11 +251,11 @@ fn classify_record<'a>(
     covered: &mut HashSet<&'a str>,
     now: std::time::Instant,
 ) -> Outcome {
-    let wanted_gone = !expected.contains(&record.monitor);
+    let monitor_disconnected = !expected.contains(&record.monitor);
     match location.get(record.namespace.as_str()) {
         // Observed exactly where we asked.
         Some(actual) if *actual == record.monitor => {
-            if wanted_gone {
+            if monitor_disconnected {
                 Outcome::Close(CloseReason::MonitorDisconnected)
             } else if covered.insert(actual) {
                 Outcome::Verified
@@ -270,7 +270,7 @@ fn classify_record<'a>(
         // only reason it is fixable is that we can see it here.
         Some(_) => Outcome::Close(CloseReason::WrongMonitor),
         // Not mapped anywhere.
-        None if wanted_gone => Outcome::Forget(ForgetReason::MonitorDisconnected),
+        None if monitor_disconnected => Outcome::Forget(ForgetReason::MonitorDisconnected),
         None => match record.state {
             // It was there and is not any more: the surface died without a
             // usable `Closed` event, which is precisely the lost-close case
