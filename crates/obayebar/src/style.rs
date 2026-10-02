@@ -35,6 +35,7 @@ pub const BAR_INNER_WIDTH: f32 = 40.0;
 // contentWidth = innerWidth + padding * 2 = 40 + 14 = 54
 pub const BAR_PADDING: f32 = 7.0;
 pub const BAR_WIDTH: u32 = 54;
+pub const BAR_EXCLUSIVE_ZONE: i32 = BAR_WIDTH.cast_signed();
 pub const NOTIF_WIDTH: u32 = 400;
 
 // Spacing (from AppearanceConfig)

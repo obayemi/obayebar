@@ -209,7 +209,7 @@ fn main() {
             layer_settings: LayerShellSettings {
                 anchor: Anchor::Left | Anchor::Top | Anchor::Bottom,
                 layer: Layer::Top,
-                exclusive_zone: i32::try_from(style::BAR_WIDTH).unwrap_or(54),
+                exclusive_zone: style::BAR_EXCLUSIVE_ZONE,
                 size: Some((style::BAR_WIDTH, 0)),
                 keyboard_interactivity: KeyboardInteractivity::None,
                 start_mode: StartMode::Background,

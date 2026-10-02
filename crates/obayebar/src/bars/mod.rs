@@ -183,7 +183,7 @@ impl BarFleet {
         let settings = NewLayerShellSettings {
             anchor: Anchor::Left | Anchor::Top | Anchor::Bottom,
             layer: Layer::Top,
-            exclusive_zone: Some(i32::try_from(style::BAR_WIDTH).unwrap_or(54)),
+            exclusive_zone: Some(style::BAR_EXCLUSIVE_ZONE),
             size: Some((style::BAR_WIDTH, 0)),
             output_option: OutputOption::OutputName(monitor),
             keyboard_interactivity: KeyboardInteractivity::None,
