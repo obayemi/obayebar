@@ -121,8 +121,9 @@ impl BarFleet {
         self.tracked.get(&id).map(|record| record.monitor.as_str())
     }
 
-    /// Whether another verification pass is already scheduled. If not, this
-    /// schedules one and returns the delay to wait before it.
+    /// Schedule a verification pass unless one is already in flight. Returns
+    /// the delay to wait before running it, or `None` when a pass is already
+    /// pending.
     pub const fn begin_verify(&mut self) -> Option<Duration> {
         if self.verify_pending {
             return None;
