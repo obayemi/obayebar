@@ -670,10 +670,12 @@ decisions come from that goal:
   arrows and `Enter` from the raw event stream, because the search field has
   the focus and takes those keys. That grab also keeps the smithay clipboard
   worker on: `Ctrl+V` in the search field is a true paste.
-- **The kernel keyring holds the secrets.** A GitLab token goes through Secret
-  Service. If Secret Service is not available, the token goes to a file in
-  `XDG_CONFIG_HOME`. The token never goes into the Nix store, also through the
-  home-manager module.
+- **The Secret Service keyring holds the secrets.** A GitLab token goes
+  through `org.freedesktop.secrets` — a user-space daemon such as
+  `gnome-keyring` or KeePassXC, not the kernel keyring. If no such daemon is
+  running, or its default collection is locked, the token falls back to a
+  file in `XDG_CONFIG_HOME`. The token never goes into the Nix store, also
+  through the home-manager module.
 - **The bar verifies the position on each monitor.** The bar *examines* the
   position, and does not assume the position. The bar starts each surface with
   its own layer-shell namespace (`obayebar-bar-<pid>-<n>`), and then compares the
@@ -720,7 +722,7 @@ operates.
 | `reqwest` (rustls + ring)     | GitLab REST API, album art of the media panel                        |
 | `url`                         | Parsing `file:` URIs from notifications and album art                |
 | `lru`                         | Least-recently-used eviction of the album art cache                  |
-| `secret-service`              | Storage of the GitLab PAT in the kernel keyring                      |
+| `secret-service`              | Storage of the GitLab PAT in the Secret Service keyring              |
 | `serde` + `toml`              | Config file parsing                                                  |
 | `ab_glyph` + `fontdb`         | Vector text on the workspace canvas                                  |
 | `thiserror`                   | Typed errors on the IPC and rendering paths                          |
