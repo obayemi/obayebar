@@ -276,10 +276,13 @@ the XDG directories. The `~` form works only in a hand-written
 
 ### Options
 
+Every option below is relative to `programs.obayebar.` (so `gitlab.enable`
+below is `programs.obayebar.gitlab.enable`).
+
 | Option                             | Type    | Default                        | Function                                                     |
 |------------------------------------|---------|--------------------------------|--------------------------------------------------------------|
-| `programs.obayebar.enable`         | bool    | `false`                        | Install obayebar and start the bar.                          |
-| `programs.obayebar.package`        | package | the package of this flake      | The package to install.                                      |
+| `enable`                           | bool    | `false`                        | Install obayebar and start the bar.                          |
+| `package`                          | package | the package of this flake      | The package to install.                                      |
 | `systemd.enable`                   | bool    | `true`                         | Add the systemd user services.                               |
 | `systemd.target`                   | str     | `config.wayland.systemd.target`| The target that starts the services.                         |
 | `systemd.slice`                    | str     | `"app-obayebar.slice"`         | The slice that holds each program the bar starts.            |
