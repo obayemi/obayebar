@@ -65,7 +65,7 @@ pub struct ClosingRecord {
 }
 
 /// Why `plan_from_observation` is closing a bar surface.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CloseReason {
     MonitorDisconnected,
     DuplicateOnMonitor,
@@ -85,7 +85,7 @@ impl std::fmt::Display for CloseReason {
 }
 
 /// Why `plan_from_observation` is dropping a bar record without closing it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ForgetReason {
     MonitorDisconnected,
     SurfaceVanished,
