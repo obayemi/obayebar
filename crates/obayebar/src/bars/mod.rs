@@ -164,7 +164,7 @@ impl BarFleet {
     /// landed on. All bars previously shared the app-wide `obayebar`
     /// namespace, which made them indistinguishable and verification
     /// impossible.
-    fn spawn_for(&mut self, monitor: String) -> (window::Id, NewLayerShellSettings) {
+    fn spawn_for(&mut self, monitor: String, now: Instant) -> (window::Id, NewLayerShellSettings) {
         self.generation = self.generation.wrapping_add(1);
         let namespace = format!("{}{}", self.prefix, self.generation);
         let id = window::Id::unique();
@@ -177,9 +177,7 @@ impl BarFleet {
             BarRecord {
                 monitor: monitor.clone(),
                 namespace: namespace.clone(),
-                state: BarState::Mapping {
-                    spawned_at: Instant::now(),
-                },
+                state: BarState::Mapping { spawned_at: now },
             },
         );
         let settings = NewLayerShellSettings {
@@ -237,7 +235,7 @@ impl BarFleet {
         // same frozen cache. When that cache was cold they all missed
         // together and stacked on the focused monitor. Spawning one at a time
         // and verifying in between makes that impossible.
-        let spawn = plan.spawn.map(|monitor| self.spawn_for(monitor));
+        let spawn = plan.spawn.map(|monitor| self.spawn_for(monitor, now));
 
         self.log_invariants(observed, expected);
 
