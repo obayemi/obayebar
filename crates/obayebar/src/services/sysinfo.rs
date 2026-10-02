@@ -112,6 +112,13 @@ fn compute_cpu_percent(prev_idle: u64, prev_total: u64, idle: u64, total: u64) -
     }
 }
 
+/// Bytes/sec since the last sample. Never divides by zero: an interval
+/// that rounds down to 0s counts as 1s.
+fn compute_net_rate(current: u64, previous: u64, elapsed_secs: u64) -> u64 {
+    let delta = current.saturating_sub(previous);
+    delta.checked_div(elapsed_secs).unwrap_or(delta)
+}
+
 /// GPU backend detection result.
 enum GpuBackend {
     /// AMD/Intel via sysfs `gpu_busy_percent` + optional hwmon temp path
@@ -358,9 +365,9 @@ pub fn stream() -> impl Stream<Item = SysInfo> {
                 .ok()
                 .map_or((0, 0), |content| parse_net_dev(&content));
 
-            let elapsed = prev_sample_at.elapsed().as_secs().max(1);
-            let rx_rate = net_rx.saturating_sub(prev_net_rx) / elapsed;
-            let tx_rate = net_tx.saturating_sub(prev_net_tx) / elapsed;
+            let elapsed = prev_sample_at.elapsed().as_secs();
+            let rx_rate = compute_net_rate(net_rx, prev_net_rx, elapsed);
+            let tx_rate = compute_net_rate(net_tx, prev_net_tx, elapsed);
             prev_net_rx = net_rx;
             prev_net_tx = net_tx;
             prev_sample_at = std::time::Instant::now();
@@ -468,6 +475,21 @@ mod tests {
     fn cpu_percent_zero_delta() {
         let pct = compute_cpu_percent(100, 200, 100, 200);
         assert!((pct - 0.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn net_rate_divides_bytes_delta_by_elapsed() {
+        assert_eq!(compute_net_rate(2_000, 1_000, 2), 500);
+    }
+
+    #[test]
+    fn net_rate_treats_zero_elapsed_as_one_second() {
+        assert_eq!(compute_net_rate(2_000, 1_000, 0), 1_000);
+    }
+
+    #[test]
+    fn net_rate_saturates_on_counter_reset() {
+        assert_eq!(compute_net_rate(100, 1_000, 1), 0);
     }
 
     #[test]
