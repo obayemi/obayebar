@@ -23,7 +23,7 @@ pub const WALLPAPER_SOCKET: &str = "wallpaper.sock";
 /// What can go wrong talking to (or binding) a control socket.
 #[derive(Debug, thiserror::Error)]
 pub enum ControlError {
-    #[error("XDG_RUNTIME_DIR is unset")]
+    #[error("XDG_RUNTIME_DIR is unset or not absolute")]
     NoRuntimeDir,
     /// Nothing is listening — for a client, this means the daemon is not
     /// running, which is the error worth reporting to a person.
