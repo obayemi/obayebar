@@ -1983,7 +1983,7 @@ fn connection_type_groups(conns: &[services::network::ActiveConnectionInfo]) -> 
     let mut groups: Vec<(&str, usize)> = Vec::new();
     for ac in conns {
         if let Some(g) = groups.iter_mut().find(|(t, _)| *t == ac.conn_type) {
-            g.1 += 1;
+            g.1 = g.1.saturating_add(1);
         } else {
             groups.push((&ac.conn_type, 1));
         }
