@@ -115,6 +115,19 @@ impl MonitorGeom {
             (self.height, self.width)
         }
     }
+
+    /// Logical pixel dimensions: the oriented size scaled down by
+    /// `self.scale`, treating a non-positive scale as unscaled.
+    #[must_use]
+    pub fn logical_size(&self) -> (f64, f64) {
+        let scale = if self.scale > 0.0 {
+            f64::from(self.scale)
+        } else {
+            1.0
+        };
+        let (w, h) = self.oriented_size();
+        (f64::from(w) / scale, f64::from(h) / scale)
+    }
 }
 
 /// Why a Hyprland IPC query failed.
@@ -591,11 +604,11 @@ pub async fn fetch_layer_namespaces() -> Option<LayerMap> {
 mod tests {
     use super::*;
 
-    fn geom(width: u32, height: u32, transform: i32) -> MonitorGeom {
+    fn geom(width: u32, height: u32, scale: f32, transform: i32) -> MonitorGeom {
         MonitorGeom {
             width,
             height,
-            scale: 1.0,
+            scale,
             transform,
         }
     }
@@ -604,7 +617,11 @@ mod tests {
     fn even_transforms_keep_the_axes() {
         // 0 = normal, 2 = 180°, 4/6 = flipped variants that do not rotate.
         for t in [0, 2, 4, 6] {
-            assert_eq!(geom(2560, 1440, t).oriented_size(), (2560, 1440), "{t}");
+            assert_eq!(
+                geom(2560, 1440, 1.0, t).oriented_size(),
+                (2560, 1440),
+                "{t}"
+            );
         }
     }
 
@@ -612,8 +629,27 @@ mod tests {
     fn odd_transforms_swap_the_axes() {
         // 1 = 90°, 3 = 270°, 5/7 = flipped-and-rotated.
         for t in [1, 3, 5, 7] {
-            assert_eq!(geom(2560, 1440, t).oriented_size(), (1440, 2560), "{t}");
+            assert_eq!(
+                geom(2560, 1440, 1.0, t).oriented_size(),
+                (1440, 2560),
+                "{t}"
+            );
         }
+    }
+
+    #[test]
+    fn logical_size_divides_the_oriented_size_by_scale() {
+        assert_eq!(geom(2560, 1440, 2.0, 0).logical_size(), (1280.0, 720.0));
+    }
+
+    #[test]
+    fn logical_size_uses_the_oriented_axes() {
+        assert_eq!(geom(2560, 1440, 1.0, 1).logical_size(), (1440.0, 2560.0));
+    }
+
+    #[test]
+    fn logical_size_treats_a_non_positive_scale_as_unscaled() {
+        assert_eq!(geom(2560, 1440, 0.0, 0).logical_size(), (2560.0, 1440.0));
     }
 
     #[test]

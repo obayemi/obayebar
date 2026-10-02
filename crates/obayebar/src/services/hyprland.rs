@@ -89,7 +89,7 @@ async fn fetch_full_state() -> Option<HyprState> {
                 MonitorGeom {
                     width: m.width,
                     height: m.height,
-                    scale: if m.scale > 0.0 { m.scale } else { 1.0 },
+                    scale: m.scale,
                     transform: m.transform,
                 },
             )

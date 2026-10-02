@@ -1523,20 +1523,15 @@ impl App {
     /// logical height.
     #[allow(
         clippy::cast_possible_truncation,
-        clippy::cast_precision_loss,
         clippy::cast_sign_loss,
         clippy::as_conversions
     )]
     fn popup_height_cap(geom: Option<&MonitorGeom>) -> u32 {
-        const FALLBACK_LOGICAL_H: f32 = 1080.0;
+        const FALLBACK_LOGICAL_H: f64 = 1080.0;
 
-        let logical_h = geom.map_or(FALLBACK_LOGICAL_H, |g| {
-            let scale = if g.scale > 0.0 { g.scale } else { 1.0 };
-            let (_, raw) = g.oriented_size();
-            raw as f32 / scale
-        });
+        let logical_h = geom.map_or(FALLBACK_LOGICAL_H, |g| g.logical_size().1);
 
-        (logical_h * style::NOTIF_POPUP_MAX_FRACTION) as u32
+        (logical_h * f64::from(style::NOTIF_POPUP_MAX_FRACTION)) as u32
     }
 
     /// Maximum popup height in logical pixels, for the monitor the popup is
@@ -1936,12 +1931,6 @@ mod popup_height_cap_tests {
     fn scale_shrinks_the_logical_size_before_capping() {
         let g = geom(2560, 1440, 2.0, 0);
         assert_eq!(App::popup_height_cap(Some(&g)), 288);
-    }
-
-    #[test]
-    fn a_non_positive_scale_is_treated_as_unscaled() {
-        let g = geom(2560, 1440, 0.0, 0);
-        assert_eq!(App::popup_height_cap(Some(&g)), 576);
     }
 }
 
