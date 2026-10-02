@@ -155,7 +155,8 @@ the unit too: systemd makes an undefined slice with no description and no
 limits.
 
 The precedence for each field is: command-line flag, then environment
-variable, then configuration file, then the default value.
+variable, then configuration file, then the default value. The GitLab host
+is the only field with an environment variable, `OBAYEBAR_GITLAB_URL`.
 
 `[gitlab].enable` and `[media].enable` control their modules on the bar. The
 media module is on by default; `--no-media` or `--media` overrides the file.
