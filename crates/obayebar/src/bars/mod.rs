@@ -468,28 +468,47 @@ mod fleet_tests {
     use super::{BarFleet, BarRecord, BarState, ClosingRecord, VERIFY_DELAY};
     use iced::window;
     use iced_layershell::reexport::OutputOption;
+    use std::collections::HashMap;
     use std::time::{Duration, Instant};
 
     /// A fleet with one tracked record, backed off well past the minimum so
     /// a reset is observable.
     fn fleet_with(id: window::Id, monitor: &str, namespace: &str, state: BarState) -> BarFleet {
-        let mut tracked = std::collections::HashMap::new();
-        tracked.insert(
-            id,
-            BarRecord {
-                monitor: monitor.to_string(),
-                namespace: namespace.to_string(),
-                state,
-            },
-        );
         BarFleet {
-            tracked,
-            closing: std::collections::HashMap::new(),
+            tracked: HashMap::from([(
+                id,
+                BarRecord {
+                    monitor: monitor.to_string(),
+                    namespace: namespace.to_string(),
+                    state,
+                },
+            )]),
+            closing: HashMap::new(),
             prefix: "obayebar-bar-".to_string(),
             generation: 0,
             verify_pending: false,
             verify_backoff: Duration::from_secs(8),
         }
+    }
+
+    /// A fleet with one unrelated verified bar on DP-2, and `id` already
+    /// closing under the `obayebar-bar-1` namespace with `attempts` passes
+    /// spent still seeing it.
+    fn fleet_closing(id: window::Id, attempts: u32) -> BarFleet {
+        let mut fleet = fleet_with(
+            window::Id::unique(),
+            "DP-2",
+            "unrelated",
+            BarState::Verified,
+        );
+        fleet.closing.insert(
+            id,
+            ClosingRecord {
+                namespace: "obayebar-bar-1".to_string(),
+                attempts,
+            },
+        );
+        fleet
     }
 
     #[test]
@@ -574,19 +593,7 @@ mod fleet_tests {
     #[test]
     fn a_closing_surface_still_observed_is_reissued_and_grows_backoff() {
         let id = window::Id::unique();
-        let mut fleet = fleet_with(
-            window::Id::unique(),
-            "DP-2",
-            "unrelated",
-            BarState::Verified,
-        );
-        fleet.closing.insert(
-            id,
-            ClosingRecord {
-                namespace: "obayebar-bar-1".to_string(),
-                attempts: 0,
-            },
-        );
+        let mut fleet = fleet_closing(id, 0);
         let before = fleet.verify_backoff;
         let obs = observed([("DP-1", &["obayebar-bar-1"])]);
         let outcome = fleet.reconcile(Some(&obs), &expected(["DP-1", "DP-2"]), Instant::now());
@@ -599,19 +606,7 @@ mod fleet_tests {
     #[test]
     fn a_closing_surface_not_due_for_reissue_still_grows_backoff() {
         let id = window::Id::unique();
-        let mut fleet = fleet_with(
-            window::Id::unique(),
-            "DP-2",
-            "unrelated",
-            BarState::Verified,
-        );
-        fleet.closing.insert(
-            id,
-            ClosingRecord {
-                namespace: "obayebar-bar-1".to_string(),
-                attempts: 2,
-            },
-        );
+        let mut fleet = fleet_closing(id, 2);
         let before = fleet.verify_backoff;
         let obs = observed([("DP-1", &["obayebar-bar-1"])]);
         let outcome = fleet.reconcile(Some(&obs), &expected(["DP-1", "DP-2"]), Instant::now());
@@ -624,19 +619,7 @@ mod fleet_tests {
     #[test]
     fn a_gone_closing_surface_is_dropped() {
         let id = window::Id::unique();
-        let mut fleet = fleet_with(
-            window::Id::unique(),
-            "DP-2",
-            "unrelated",
-            BarState::Verified,
-        );
-        fleet.closing.insert(
-            id,
-            ClosingRecord {
-                namespace: "obayebar-bar-1".to_string(),
-                attempts: 1,
-            },
-        );
+        let mut fleet = fleet_closing(id, 1);
         let before = fleet.verify_backoff;
         let obs = observed([("DP-2", &["unrelated"])]);
         let outcome = fleet.reconcile(Some(&obs), &expected(["DP-2"]), Instant::now());
