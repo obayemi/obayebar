@@ -577,8 +577,7 @@ fn runner(mode: Mode) -> Runner {
 /// matters — can `systemd-run --user` reach anything — rather than the weaker
 /// "is systemd pid 1", which is true in a container with no user manager.
 fn systemd_user_manager_is_up() -> bool {
-    std::env::var_os("XDG_RUNTIME_DIR")
-        .is_some_and(|dir| PathBuf::from(dir).join("systemd/private").exists())
+    dirs::runtime_dir().is_some_and(|dir| dir.join("systemd/private").exists())
 }
 
 /// Take the singleton's unit name, or explain why it cannot be had.
