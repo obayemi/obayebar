@@ -1,9 +1,7 @@
 //! Hand-rolled argument parsing, matching the bar's.
 //!
 //! Split from `main` and taking an iterator rather than reading `env::args`
-//! directly so the precedence and the error messages are testable — the bar's
-//! parser is not, and it has a latent bug where every value-taking flag lands
-//! in the same field.
+//! directly so the precedence and the error messages are testable.
 
 use std::path::PathBuf;
 
@@ -141,8 +139,6 @@ mod tests {
 
     #[test]
     fn each_value_flag_lands_in_its_own_field() {
-        // The bar's parser funnels every value into one field; this guards
-        // against repeating that here.
         let args = parse_args(&["--interval", "2h", "--directory", "/pics"]).unwrap();
         assert_eq!(args.interval.as_deref(), Some("2h"));
         assert_eq!(args.directory, Some(PathBuf::from("/pics")));

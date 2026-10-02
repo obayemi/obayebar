@@ -58,11 +58,9 @@ pub enum DecodeError {
 
 /// Decode `path` and scale it to exactly `width`x`height`, cropping to fill.
 ///
-/// `resize_to_fill` is the "cover" behaviour a wallpaper wants: the image keeps
-/// its aspect ratio, fills the whole output, and the overflow is cropped
-/// centrally. Scaling to the output's real size here rather than letting
-/// anything downstream do it means the compositor gets a buffer it can put on
-/// screen unchanged.
+/// Scaling to the output's real size here rather than letting anything
+/// downstream do it means the compositor gets a buffer it can put on screen
+/// unchanged.
 ///
 /// # Errors
 ///
