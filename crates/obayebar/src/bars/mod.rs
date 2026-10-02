@@ -656,6 +656,7 @@ mod fleet_tests {
             settings.output_option,
             OutputOption::OutputName("DP-1".to_string())
         );
+        assert_eq!(settings.exclusive_zone, Some(54));
         assert!(fleet.tracked.contains_key(&id));
         assert!(outcome.needs_verify);
         Ok(())
