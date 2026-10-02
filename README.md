@@ -98,7 +98,8 @@ bind = SUPER, D, exec, obayebar-launcher
 bind = SUPER, W, exec, obayebar-wallpaper --next
 bind = SUPER, O, exec, obayebar-lock
 
-# blur all the surfaces of obayebar
+# blur all the surfaces of obayebar — this also matches the wallpaper's
+# own background-layer surface, obayebar-wallpaper
 layerrule = blur, ^obayebar
 ```
 
@@ -106,11 +107,13 @@ If home-manager starts the bar and the wallpaper daemon, remove the two
 `exec-once` lines. Refer to [NixOS and home-manager](#nixos-and-home-manager).
 
 **Each surface has its own layer-shell namespace.** The namespaces are
-`obayebar-bar-N` (one for each bar), `obayebar-panel-<kind>` (audio, network,
-bluetooth, battery, sysinfo, gitlab, media, calendar), `obayebar-notifications`
-and `obayebar-launcher`. Thus a rule must match a prefix, as in the example
-above. A rule that matches the exact name `obayebar` matches no surface. A rule
-can also match one kind of surface, and not the other kinds.
+`obayebar-bar-<pid>-<n>` (one per bar, `n` a per-instance generation),
+`obayebar-panel-<kind>` (audio, network, bluetooth, battery, sysinfo, gitlab,
+media, calendar), `obayebar-notifications`, `obayebar-launcher` and
+`obayebar-wallpaper` (the wallpaper's background layer). Thus a rule must
+match a prefix, as in the example above. A rule that matches the exact name
+`obayebar` matches no surface. A rule can also match one kind of surface, and
+not the other kinds.
 
 ### 4. Configure obayebar
 
@@ -673,7 +676,7 @@ decisions come from that goal:
   home-manager module.
 - **The bar verifies the position on each monitor.** The bar *examines* the
   position, and does not assume the position. The bar starts each surface with
-  its own layer-shell namespace (`obayebar-bar-N`), and then compares the
+  its own layer-shell namespace (`obayebar-bar-<pid>-<n>`), and then compares the
   surface with the `j/layers` data of Hyprland. The bar closes a surface and
   starts a new surface in four conditions: the bar is on an incorrect
   monitor, the bar stops with no close event, two bars are on one monitor, or
