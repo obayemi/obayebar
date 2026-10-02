@@ -97,9 +97,10 @@ pub struct BarFleet {
     /// burst of those, so without this the passes ran concurrently: several
     /// `j/layers` queries in flight at once, all reconciling the same state.
     verify_pending: bool,
-    /// Delay before the next verification pass. Grows when a spawn fails to
-    /// appear so a compositor that refuses us is not hammered; reset whenever
-    /// the monitor set changes or a bar verifies.
+    /// Delay before the next verification pass. Grows while the compositor
+    /// has not honoured a request — a spawn that never appeared, or a close
+    /// that has not landed — so a refusing compositor is not hammered; reset
+    /// whenever the monitor set changes or a bar verifies.
     verify_backoff: Duration,
 }
 
@@ -132,8 +133,7 @@ impl BarFleet {
         Some(self.verify_backoff)
     }
 
-    /// A fresh monitor topology is the one moment worth retrying eagerly, so
-    /// drop any accumulated backoff.
+    /// Return to the fastest verification rate.
     pub const fn reset_backoff(&mut self) {
         self.verify_backoff = VERIFY_DELAY;
     }
@@ -364,8 +364,8 @@ impl BarFleet {
             || expected.iter().any(|m| !covered.contains(m.as_str()))
     }
 
-    /// Back off after a spawn failed to appear, so a compositor that will not
-    /// place our surface is retried at a decreasing rate rather than hammered.
+    /// Slow the next pass down after a request the compositor has not
+    /// honoured: a spawn that never appeared, or a close that has not landed.
     fn grow_backoff(&mut self) {
         self.verify_backoff = self
             .verify_backoff
