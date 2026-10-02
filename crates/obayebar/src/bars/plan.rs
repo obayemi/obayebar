@@ -173,22 +173,43 @@ pub fn plan_from_observation(
         }
     }
 
-    // Closing surfaces: wait for the compositor to actually drop them. They
-    // deliberately do not count as covering a monitor — a bar on its way out
-    // is not a bar — so a replacement is spawned without waiting for the close.
+    (plan.closing_observed, plan.closing_gone) = partition_closing(closing, &location);
+    plan.orphans = orphans(&location, tracked, closing, prefix);
+    plan.drop_state_for = uncovered_monitors(tracked, &covered);
+    plan.spawn = next_spawn(expected, &covered);
+
+    plan
+}
+
+/// Split closing surfaces, in id order, into those the compositor still
+/// shows and those already gone.
+///
+/// A bar on its way out deliberately does not count as covering a monitor,
+/// so a replacement is spawned without waiting for the close.
+fn partition_closing(
+    closing: &HashMap<window::Id, ClosingRecord>,
+    location: &HashMap<&str, &str>,
+) -> (Vec<window::Id>, Vec<window::Id>) {
+    let mut observed = Vec::new();
+    let mut gone = Vec::new();
     let mut closing_records: Vec<(&window::Id, &ClosingRecord)> = closing.iter().collect();
     closing_records.sort_by_key(|(id, _)| **id);
     for (id, record) in closing_records {
         if location.contains_key(record.namespace.as_str()) {
-            plan.closing_observed.push(*id);
+            observed.push(*id);
         } else {
-            plan.closing_gone.push(*id);
+            gone.push(*id);
         }
     }
+    (observed, gone)
+}
 
-    plan.orphans = orphans(&location, tracked, closing, prefix);
-
-    // Per-monitor state belongs to monitors that no longer keep a bar.
+/// Monitors a tracked record names but that end this pass without a bar we
+/// trust to be there; their per-monitor state should be dropped.
+fn uncovered_monitors(
+    tracked: &HashMap<window::Id, BarRecord>,
+    covered: &HashSet<&str>,
+) -> Vec<String> {
     let mut dropped: Vec<String> = tracked
         .values()
         .map(|r| r.monitor.clone())
@@ -196,17 +217,17 @@ pub fn plan_from_observation(
         .collect();
     dropped.sort();
     dropped.dedup();
-    plan.drop_state_for = dropped;
+    dropped
+}
 
-    // The single uncovered monitor this pass spawns for, lowest name first
-    // for determinism.
-    plan.spawn = expected
+/// The single uncovered monitor this pass spawns for, lowest name first for
+/// determinism.
+fn next_spawn(expected: &HashSet<String>, covered: &HashSet<&str>) -> Option<String> {
+    expected
         .iter()
         .filter(|m| !covered.contains(m.as_str()))
         .min()
-        .cloned();
-
-    plan
+        .cloned()
 }
 
 /// Where each namespace actually is, according to the compositor.
@@ -321,8 +342,9 @@ pub const fn should_reissue_close(attempts: u32) -> bool {
 mod reconcile_tests {
     use super::super::test_support::{expected, observed};
     use super::{
-        locate, orphans, plan_from_observation, should_reissue_close, BarPlan, BarRecord, BarState,
-        CloseReason, ClosingRecord, ForgetReason, VERIFY_GRACE,
+        locate, next_spawn, orphans, partition_closing, plan_from_observation,
+        should_reissue_close, uncovered_monitors, BarPlan, BarRecord, BarState, CloseReason,
+        ClosingRecord, ForgetReason, VERIFY_GRACE,
     };
     use iced::window;
     use std::collections::{HashMap, HashSet};
@@ -790,6 +812,49 @@ mod reconcile_tests {
             &HashMap::new(),
         );
         assert_eq!(back.spawn.as_deref(), Some("DP-1"));
+    }
+
+    #[test]
+    fn partition_closing_splits_by_whether_still_observed() {
+        let a = window::Id::unique();
+        let b = window::Id::unique();
+        let layers = observed([("DP-1", &["obayebar-bar-1"][..])]);
+        let location = locate(&layers);
+        let closing = closing([(a, "obayebar-bar-1", 0), (b, "obayebar-bar-2", 0)]);
+        let (still_there, gone) = partition_closing(&closing, &location);
+        assert_eq!(still_there, vec![a]);
+        assert_eq!(gone, vec![b]);
+    }
+
+    #[test]
+    fn uncovered_monitors_are_deduped_and_sorted() {
+        let a = window::Id::unique();
+        let b = window::Id::unique();
+        let c = window::Id::unique();
+        let records = tracked([
+            (a, "DP-2", "obayebar-bar-1", true),
+            (b, "DP-1", "obayebar-bar-2", true),
+            (c, "DP-2", "obayebar-bar-3", true),
+        ]);
+        assert_eq!(
+            uncovered_monitors(&records, &HashSet::new()),
+            vec!["DP-1".to_string(), "DP-2".to_string()]
+        );
+    }
+
+    #[test]
+    fn next_spawn_picks_the_lowest_uncovered_monitor() {
+        let covered: HashSet<&str> = HashSet::from(["DP-1"]);
+        assert_eq!(
+            next_spawn(&expected(["DP-1", "DP-2", "HDMI-A-1"]), &covered),
+            Some("DP-2".to_string())
+        );
+    }
+
+    #[test]
+    fn next_spawn_is_none_once_every_monitor_is_covered() {
+        let covered: HashSet<&str> = HashSet::from(["DP-1"]);
+        assert_eq!(next_spawn(&expected(["DP-1"]), &covered), None);
     }
 
     #[test]
