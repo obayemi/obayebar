@@ -379,6 +379,14 @@ mod tests {
     }
 
     #[test]
+    fn interval_error_text_names_the_input() {
+        assert_eq!(
+            parse_interval("30").unwrap_err().to_string(),
+            r#""30": expected a trailing unit of s, m, h or d, as in "30m""#
+        );
+    }
+
+    #[test]
     fn interval_rejects_overflow() {
         assert!(parse_interval("99999999999999999999d").is_err());
         assert!(parse_interval(&format!("{}d", u64::MAX)).is_err());
