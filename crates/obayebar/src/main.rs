@@ -1533,15 +1533,10 @@ impl App {
         (logical_h * f64::from(style::NOTIF_POPUP_MAX_FRACTION)) as u32
     }
 
-    /// Maximum popup height in logical pixels, for the monitor the popup is
-    /// *on*. See [`Self::popup_height_cap`].
-    ///
-    /// Measuring `focused_monitor` instead of the popup's own monitor was
-    /// wrong in both directions: the popup did not live there, and every
-    /// focus change re-fitted the surface against a screen it was not on.
-    /// With a 4K focused monitor and a 768px host that produced a cap taller
-    /// than the screen, and since the popup column has no scrollable the
-    /// overflow summary itself fell off-screen.
+    /// Maximum popup height in logical pixels for the monitor the popup is
+    /// on, or the focused monitor before the popup has one. Measured there
+    /// because a cap from another screen can exceed the host's height, and
+    /// the popup column cannot scroll.
     fn popup_max_height(&self) -> u32 {
         let geom = self
             .notif_popup_monitor
@@ -1552,7 +1547,8 @@ impl App {
     }
 
     /// Decide how many popup cards fit and how many spill into an overflow
-    /// summary entry, using the focused monitor's screen cap.
+    /// summary entry, using the cap of the popup's monitor (see
+    /// [`Self::popup_max_height`]).
     fn popup_fit(&self) -> (usize, usize) {
         style::notif_popup_fit(self.popup_notifications.len(), self.popup_max_height())
     }
