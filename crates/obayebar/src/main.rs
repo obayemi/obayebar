@@ -2887,3 +2887,36 @@ mod popup_height_cap_tests {
         assert_eq!(App::popup_height_cap(Some(&g)), 576);
     }
 }
+
+#[cfg(test)]
+mod connection_type_groups_tests {
+    use super::connection_type_groups;
+    use crate::services::network::ActiveConnectionInfo;
+
+    fn conn(conn_type: &str) -> ActiveConnectionInfo {
+        ActiveConnectionInfo {
+            name: conn_type.to_string(),
+            conn_type: conn_type.to_string(),
+            icon_name: "icon",
+        }
+    }
+
+    #[test]
+    fn empty_input_has_no_groups() {
+        assert_eq!(connection_type_groups(&[]), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn counts_each_type_preserving_first_seen_order() {
+        let conns = [conn("vpn"), conn("ethernet"), conn("vpn")];
+        assert_eq!(connection_type_groups(&conns), vec![2, 1]);
+    }
+
+    #[test]
+    fn single_type_repeated_counts_all_of_them() {
+        let conns: Vec<_> = std::iter::repeat_with(|| conn("wireguard"))
+            .take(5)
+            .collect();
+        assert_eq!(connection_type_groups(&conns), vec![5]);
+    }
+}
