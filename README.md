@@ -449,12 +449,12 @@ separate events:
   the events that count is one list in `obayebar-core`
   (`hypr::is_monitor_event`), not a copy in each program.
 
-The two events have no order. A selection pass between the two finds a monitor
-with no surface, or a surface that `hyprctl monitors` does not list yet, and
-that screen receives nothing. The program watched only the wayland half before.
-Thus a monitor that Hyprland announced after the output kept an empty screen
-until the next rotation. Each signal now makes a pass, and the signal that
-arrives last finds the two halves.
+The two events have no order, so both must trigger the same selection pass.
+Watching only the wayland half would leave a monitor empty until the next
+rotation whenever Hyprland announced it after the output did. Each signal
+makes a pass, and the signal that arrives last finds the two halves: a
+monitor with no surface, or a surface that `hyprctl monitors` does not list
+yet.
 
 **A pass that does not reach each monitor makes another pass.** The delay
 starts at 250 ms and doubles to a maximum of 4 s, and the program stops after
