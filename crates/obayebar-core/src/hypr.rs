@@ -56,8 +56,6 @@ pub struct MonitorInfo {
     /// anything that must follow a physical panel keys on this instead.
     #[serde(default)]
     pub description: String,
-    #[serde(default)]
-    pub serial: String,
     /// Hyprland lists disabled outputs too; they have no surface to place
     /// anything on.
     #[serde(default)]
@@ -662,7 +660,6 @@ mod tests {
         });
         let m: MonitorInfo = serde_json::from_value(raw).unwrap();
         assert_eq!(m.description, "Dell Inc. DELL U2518D 3C4YP95TBJ5L");
-        assert_eq!(m.serial, "3C4YP95TBJ5L");
         assert_eq!(m.mirror_of, "none");
         assert!(m.is_usable());
     }
