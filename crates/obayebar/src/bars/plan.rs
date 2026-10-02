@@ -11,20 +11,20 @@ use iced::window;
 /// How long a freshly spawned bar gets to show up in `j/layers` before we give
 /// up on it and replace it.
 ///
-/// Wall-clock, deliberately, rather than a number of verification passes. A
-/// pass count was the first shape and it was wrong: passes are scheduled by
-/// anything that changes the monitor set, so during a dock hotplug several
-/// chains overlap and burn the entire budget inside a fraction of a second —
-/// long before a compositor busy re-creating outputs has mapped anything. Two
-/// seconds comfortably covers a hotplug map without leaving a monitor bare.
+/// Wall-clock, deliberately, rather than a number of verification passes:
+/// passes are scheduled by anything that changes the monitor set, so during a
+/// dock hotplug several chains overlap and can burn through any pass budget
+/// inside a fraction of a second — long before a compositor busy re-creating
+/// outputs has mapped anything. Two seconds comfortably covers a hotplug map
+/// without leaving a monitor bare.
 pub const VERIFY_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// One bar surface we have asked the compositor for.
 ///
-/// The distinction that matters: `monitor` is what we *requested*, `state` is
-/// whether the compositor was ever observed agreeing. Treating the request as
-/// the truth is what produced bars stacked on one screen while the app
-/// believed they were spread across all of them.
+/// `monitor` is a request, not truth: it is what we asked for, and `state`
+/// says whether the compositor was ever observed agreeing. Treating the
+/// request itself as truth would let bars stack on one screen while the app
+/// believed them spread across all of it.
 #[derive(Debug)]
 pub struct BarRecord {
     /// Monitor this bar was spawned for.

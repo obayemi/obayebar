@@ -79,11 +79,10 @@ pub struct BarFleet {
     /// Bar surfaces we have asked the compositor to close, kept until an
     /// observation shows they are actually gone.
     ///
-    /// Dropping a record at the moment we *ask* for the close is what let bars
-    /// pile up: a surface that had not mapped yet was simply forgotten, and
-    /// when it mapped a moment later nothing tracked it, nothing could close it
-    /// and — since the tracking map looked consistent — nothing even looked
-    /// again. A close is a request like any other, so it is verified like one.
+    /// A close is verified like any other request: a surface dropped from
+    /// tracking the moment we *ask* for its close can still map a moment
+    /// later, and once that happens nothing tracks it and nothing can reach
+    /// it to close it again.
     closing: HashMap<window::Id, ClosingRecord>,
     /// Namespace prefix for this instance's bars: [`BAR_NAMESPACE_PREFIX`] and
     /// our pid. Also what tells our surfaces from another instance's.
@@ -94,8 +93,8 @@ pub struct BarFleet {
     /// Whether a verification pass is already scheduled.
     ///
     /// Every monitor-set change asks for one, and a Hyprland hotplug emits a
-    /// burst of those, so without this the passes ran concurrently: several
-    /// `j/layers` queries in flight at once, all reconciling the same state.
+    /// burst of those; this keeps at most one `j/layers` query in flight
+    /// instead of several reconciling the same state at once.
     verify_pending: bool,
     /// Delay before the next verification pass. Grows while the compositor
     /// has not honoured a request — a spawn that never appeared, or a close
@@ -204,8 +203,8 @@ impl BarFleet {
     /// 3. No two bars share a monitor.
     ///
     /// Everything here is driven by `observed`, never by this fleet's own
-    /// tracking — checking tracking against itself is exactly the mistake
-    /// that reported success in every broken state.
+    /// tracking: checking tracking against itself cannot detect a broken
+    /// state.
     pub fn reconcile(
         &mut self,
         observed: Option<&LayerMap>,
@@ -263,11 +262,10 @@ impl BarFleet {
                 }
                 log::info!("bars: {} confirmed on {}", record.namespace, record.monitor);
                 record.state = BarState::Verified;
-                // Something is working; stop backing off. Only on the
-                // transition: re-confirming a bar that was already fine is
-                // not progress, and treating it as such kept the backoff
-                // pinned at its minimum while a stuck surface was polled
-                // four times a second forever.
+                // Reset only on the transition: re-confirming an
+                // already-verified bar is not progress, and treating it as
+                // such would hold the backoff at its minimum while a stuck
+                // surface is polled at the fastest rate forever.
                 self.reset_backoff();
             }
         }
