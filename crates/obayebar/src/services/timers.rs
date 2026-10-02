@@ -31,14 +31,21 @@ pub fn wake_at(at: DateTime<Local>) -> impl Stream<Item = ()> {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
 
     tokio::spawn(async move {
-        let delay = (at - Local::now())
-            .to_std()
-            .unwrap_or(std::time::Duration::ZERO);
+        let delay = duration_until(at, Local::now());
         tokio::time::sleep(delay).await;
         let _ = tx.send(());
     });
 
     UnboundedReceiverStream::new(rx)
+}
+
+/// How long to sleep to reach `at` from `now`. A past or present `at`
+/// sleeps for zero, rather than letting the signed subtraction underflow
+/// `std::time::Duration`.
+fn duration_until(at: DateTime<Local>, now: DateTime<Local>) -> std::time::Duration {
+    at.signed_duration_since(now)
+        .to_std()
+        .unwrap_or(std::time::Duration::ZERO)
 }
 
 fn duration_until_next_minute(now: &DateTime<Local>) -> std::time::Duration {
@@ -51,4 +58,35 @@ fn duration_until_next_minute(now: &DateTime<Local>) -> std::time::Duration {
         .saturating_mul(1_000_000_000)
         .saturating_sub(ns_into_minute);
     std::time::Duration::from_nanos(remaining.max(1_000_000))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::duration_until;
+    use chrono::Duration;
+
+    fn fixed_instant() -> super::DateTime<super::Local> {
+        chrono::DateTime::<chrono::Utc>::UNIX_EPOCH.with_timezone(&super::Local)
+    }
+
+    #[test]
+    fn future_instant_sleeps_for_the_gap() {
+        let now = fixed_instant();
+        let at = now + Duration::seconds(5);
+        let delay = duration_until(at, now);
+        assert_eq!(delay, std::time::Duration::from_secs(5));
+    }
+
+    #[test]
+    fn past_instant_sleeps_for_zero() {
+        let now = fixed_instant();
+        let at = now - Duration::seconds(5);
+        assert_eq!(duration_until(at, now), std::time::Duration::ZERO);
+    }
+
+    #[test]
+    fn same_instant_sleeps_for_zero() {
+        let now = fixed_instant();
+        assert_eq!(duration_until(now, now), std::time::Duration::ZERO);
+    }
 }
