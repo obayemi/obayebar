@@ -1,6 +1,6 @@
 use super::widgets::{icon_button, panel_body, panel_header, separator, styled_toggler};
 use crate::panel::PanelKind;
-use crate::services::network::NetworkInfo;
+use crate::services::network::{AccessPointInfo, NetworkInfo};
 use crate::style;
 use crate::Message;
 use iced::widget::{column, container, row, text, Space};
@@ -129,7 +129,63 @@ fn connection_type_label(conn_type: &str) -> &'static str {
     }
 }
 
-#[allow(clippy::too_many_lines)]
+struct WifiRow<'a> {
+    ap: &'a AccessPointInfo,
+    is_active: bool,
+    is_connecting: bool,
+}
+
+/// Which access points to render, and in what order: the connecting
+/// network first (unless it is already the active one), then the active
+/// network, then the rest in their given order until `max_visible` rows
+/// are shown; the connecting and active rows are always included.
+fn select_wifi_rows<'a>(
+    access_points: &'a [AccessPointInfo],
+    active_ssid: Option<&str>,
+    connecting_ssid: Option<&str>,
+    max_visible: usize,
+) -> Vec<WifiRow<'a>> {
+    let mut rows = Vec::new();
+
+    if let Some(c_ssid) = connecting_ssid {
+        if active_ssid != Some(c_ssid) {
+            if let Some(ap) = access_points.iter().find(|a| a.ssid == c_ssid) {
+                rows.push(WifiRow {
+                    ap,
+                    is_active: false,
+                    is_connecting: true,
+                });
+            }
+        }
+    }
+
+    if let Some(ssid) = active_ssid {
+        if let Some(ap) = access_points.iter().find(|a| a.ssid == ssid) {
+            rows.push(WifiRow {
+                ap,
+                is_active: true,
+                is_connecting: false,
+            });
+        }
+    }
+
+    for ap in access_points {
+        if rows.len() >= max_visible {
+            break;
+        }
+        if active_ssid == Some(ap.ssid.as_str()) || connecting_ssid == Some(ap.ssid.as_str()) {
+            continue;
+        }
+        rows.push(WifiRow {
+            ap,
+            is_active: false,
+            is_connecting: false,
+        });
+    }
+
+    rows
+}
+
 pub fn view<'a>(
     network: &'a NetworkInfo,
     connecting_ssid: Option<&'a str>,
@@ -195,44 +251,19 @@ pub fn view<'a>(
             .spacing(2.0)
             .width(Length::Fill);
 
-            let active_ssid = network.wifi_ssid.as_deref();
-
-            // Show connecting network first, then active, then others
-            let mut shown = 0;
-
-            // Connecting network at top (if not already active)
-            if let Some(c_ssid) = connecting_ssid {
-                if active_ssid != Some(c_ssid) {
-                    if let Some(ap) = network.access_points.iter().find(|a| a.ssid == c_ssid) {
-                        network_list =
-                            network_list.push(network_entry(&ap.ssid, ap.icon_name, false, true));
-                        shown += 1;
-                    }
-                }
-            }
-
-            // Active network
-            if let Some(ssid) = active_ssid {
-                if let Some(ap) = network.access_points.iter().find(|a| a.ssid == ssid) {
-                    network_list =
-                        network_list.push(network_entry(&ap.ssid, ap.icon_name, true, false));
-                    shown += 1;
-                }
-            }
-
-            for ap in &network.access_points {
-                if shown >= style::PANEL_MAX_VISIBLE_ROWS {
-                    break;
-                }
-                if active_ssid == Some(ap.ssid.as_str()) {
-                    continue;
-                }
-                if connecting_ssid == Some(ap.ssid.as_str()) {
-                    continue;
-                }
-                network_list =
-                    network_list.push(network_entry(&ap.ssid, ap.icon_name, false, false));
-                shown += 1;
+            let rows = select_wifi_rows(
+                &network.access_points,
+                network.wifi_ssid.as_deref(),
+                connecting_ssid,
+                style::PANEL_MAX_VISIBLE_ROWS,
+            );
+            for row in rows {
+                network_list = network_list.push(network_entry(
+                    &row.ap.ssid,
+                    row.ap.icon_name,
+                    row.is_active,
+                    row.is_connecting,
+                ));
             }
 
             content = content.push(network_list);
@@ -246,4 +277,69 @@ pub fn view<'a>(
     }
 
     panel_body(PanelKind::Network, content)
+}
+
+#[cfg(test)]
+mod select_wifi_rows_tests {
+    use super::{select_wifi_rows, AccessPointInfo};
+
+    fn ap(ssid: &str) -> AccessPointInfo {
+        AccessPointInfo {
+            ssid: ssid.to_string(),
+            strength: 50,
+            icon_name: "icon",
+            known: true,
+        }
+    }
+
+    #[test]
+    fn empty_access_points_yields_no_rows() {
+        let rows = select_wifi_rows(&[], None, None, 8);
+        assert!(rows.is_empty());
+    }
+
+    fn states<'a>(rows: &[super::WifiRow<'a>]) -> Vec<(&'a str, bool, bool)> {
+        rows.iter()
+            .map(|r| (r.ap.ssid.as_str(), r.is_active, r.is_connecting))
+            .collect()
+    }
+
+    #[test]
+    fn connecting_then_active_then_rest_in_order() {
+        let aps = [ap("a"), ap("b"), ap("c")];
+        let rows = select_wifi_rows(&aps, Some("b"), Some("c"), 8);
+        assert_eq!(
+            states(&rows),
+            vec![("c", false, true), ("b", true, false), ("a", false, false)]
+        );
+    }
+
+    #[test]
+    fn active_ssid_also_connecting_appears_once_as_active() {
+        let aps = [ap("a"), ap("b")];
+        let rows = select_wifi_rows(&aps, Some("a"), Some("a"), 8);
+        assert_eq!(states(&rows), vec![("a", true, false), ("b", false, false)]);
+    }
+
+    #[test]
+    fn caps_at_max_visible_rows() {
+        let aps = [ap("a"), ap("b"), ap("c")];
+        let rows = select_wifi_rows(&aps, None, None, 2);
+        assert_eq!(rows.len(), 2);
+    }
+
+    #[test]
+    fn zero_max_visible_shows_nothing_from_the_tail_loop() {
+        let aps = [ap("a"), ap("b")];
+        let rows = select_wifi_rows(&aps, None, None, 0);
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn active_and_connecting_rows_are_shown_even_past_the_cap() {
+        let aps = [ap("a"), ap("b"), ap("c")];
+        let rows = select_wifi_rows(&aps, Some("a"), Some("b"), 1);
+        let ssids: Vec<&str> = rows.iter().map(|r| r.ap.ssid.as_str()).collect();
+        assert_eq!(ssids, ["b", "a"]);
+    }
 }
