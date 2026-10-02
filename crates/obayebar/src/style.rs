@@ -260,8 +260,7 @@ fn notif_overflow_card_height() -> f32 {
 }
 
 /// Fraction of screen height the notification popup may occupy.
-pub const NOTIF_POPUP_MAX_FRACTION_NUM: u32 = 2;
-pub const NOTIF_POPUP_MAX_FRACTION_DEN: u32 = 5;
+pub const NOTIF_POPUP_MAX_FRACTION: f32 = 0.4;
 
 /// Notification popup chrome (outer padding + layout safety margin). Added to
 /// the card stack to get the full window height.

@@ -1519,8 +1519,8 @@ impl App {
 
     /// Height cap in logical pixels for a popup on `geom`, or the
     /// 1080p-based fallback when no monitor geometry is known yet. The cap
-    /// is the `style::NOTIF_POPUP_MAX_FRACTION_NUM`/`_DEN` fraction of the
-    /// oriented logical height.
+    /// is the [`style::NOTIF_POPUP_MAX_FRACTION`] fraction of the oriented
+    /// logical height.
     #[allow(
         clippy::cast_possible_truncation,
         clippy::cast_precision_loss,
@@ -1529,8 +1529,6 @@ impl App {
     )]
     fn popup_height_cap(geom: Option<&MonitorGeom>) -> u32 {
         const FALLBACK_LOGICAL_H: f32 = 1080.0;
-        let num = f32::from(u16::try_from(style::NOTIF_POPUP_MAX_FRACTION_NUM).unwrap_or(2));
-        let den = f32::from(u16::try_from(style::NOTIF_POPUP_MAX_FRACTION_DEN).unwrap_or(5));
 
         let logical_h = geom.map_or(FALLBACK_LOGICAL_H, |g| {
             let scale = if g.scale > 0.0 { g.scale } else { 1.0 };
@@ -1538,7 +1536,7 @@ impl App {
             raw as f32 / scale
         });
 
-        (logical_h * num / den) as u32
+        (logical_h * style::NOTIF_POPUP_MAX_FRACTION) as u32
     }
 
     /// Maximum popup height in logical pixels, for the monitor the popup is
