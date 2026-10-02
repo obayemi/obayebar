@@ -2847,3 +2847,47 @@ mod reset_panel_view_tests {
         assert_eq!(pager, before);
     }
 }
+
+#[cfg(test)]
+mod popup_height_cap_tests {
+    use super::App;
+    use obayebar_core::hypr::MonitorGeom;
+
+    fn geom(width: u32, height: u32, scale: f32, transform: i32) -> MonitorGeom {
+        MonitorGeom {
+            width,
+            height,
+            scale,
+            transform,
+        }
+    }
+
+    #[test]
+    fn falls_back_to_a_1080p_based_cap_without_geometry() {
+        assert_eq!(App::popup_height_cap(None), 432);
+    }
+
+    #[test]
+    fn upright_caps_on_the_logical_height() {
+        let g = geom(2560, 1440, 1.0, 0);
+        assert_eq!(App::popup_height_cap(Some(&g)), 576);
+    }
+
+    #[test]
+    fn rotated_caps_on_the_logical_width() {
+        let g = geom(2560, 1440, 1.0, 1);
+        assert_eq!(App::popup_height_cap(Some(&g)), 1024);
+    }
+
+    #[test]
+    fn scale_shrinks_the_logical_size_before_capping() {
+        let g = geom(2560, 1440, 2.0, 0);
+        assert_eq!(App::popup_height_cap(Some(&g)), 288);
+    }
+
+    #[test]
+    fn a_non_positive_scale_is_treated_as_unscaled() {
+        let g = geom(2560, 1440, 0.0, 0);
+        assert_eq!(App::popup_height_cap(Some(&g)), 576);
+    }
+}
