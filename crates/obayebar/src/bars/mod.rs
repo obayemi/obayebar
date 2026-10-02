@@ -44,6 +44,19 @@ const VERIFY_DELAY: Duration = Duration::from_millis(250);
 /// refuses to place a surface is retried slowly rather than in a hot loop.
 const MAX_VERIFY_BACKOFF: Duration = Duration::from_secs(30);
 
+/// What a closed window means for the fleet.
+pub enum BarClosed {
+    /// Not one of our bars, or one whose tracking is already cleared.
+    /// Panels and popups close through here too, so it never calls for a
+    /// respawn.
+    NotABar,
+    /// A close we asked for landed.
+    ClosedAsRequested,
+    /// The compositor closed a bar surface on its own; `uncovered` names its
+    /// monitor if no other bar is left on it.
+    Died { uncovered: Option<String> },
+}
+
 /// What a reconcile pass decided, translated into what the caller must do.
 ///
 /// `App` turns this into `Task`s and drops the per-monitor workspace state
@@ -137,20 +150,26 @@ impl BarFleet {
         self.verify_backoff = VERIFY_DELAY;
     }
 
-    /// Record that a close we asked for landed. `None` if `id` was not a bar
-    /// we were closing.
-    pub fn close_landed(&mut self, id: window::Id) -> Option<ClosingRecord> {
-        self.closing.remove(&id)
-    }
-
-    /// Record that the compositor closed a bar surface on its own. `None` if
-    /// `id` was not one of our bars.
-    pub fn bar_closed_by_compositor(&mut self, id: window::Id) -> Option<BarRecord> {
-        self.tracked.remove(&id)
+    /// Tell the fleet a window closed, and get back what it means.
+    pub fn on_closed(&mut self, id: window::Id) -> BarClosed {
+        if let Some(record) = self.closing.remove(&id) {
+            log::info!("bars: {} closed as requested", record.namespace);
+            return BarClosed::ClosedAsRequested;
+        }
+        let Some(record) = self.tracked.remove(&id) else {
+            return BarClosed::NotABar;
+        };
+        log::info!(
+            "bars: {} on {} was closed by the compositor",
+            record.namespace,
+            record.monitor
+        );
+        let uncovered = (!self.has_bar_on(&record.monitor)).then_some(record.monitor);
+        BarClosed::Died { uncovered }
     }
 
     /// Whether any tracked bar is on `monitor`.
-    pub fn has_bar_on(&self, monitor: &str) -> bool {
+    fn has_bar_on(&self, monitor: &str) -> bool {
         self.tracked.values().any(|r| r.monitor == monitor)
     }
 
@@ -465,7 +484,7 @@ pub mod test_support {
 #[cfg(test)]
 mod fleet_tests {
     use super::test_support::{expected, observed};
-    use super::{BarFleet, BarRecord, BarState, ClosingRecord, VERIFY_DELAY};
+    use super::{BarClosed, BarFleet, BarRecord, BarState, ClosingRecord, VERIFY_DELAY};
     use iced::window;
     use iced_layershell::reexport::OutputOption;
     use std::collections::HashMap;
@@ -657,55 +676,52 @@ mod fleet_tests {
     }
 
     #[test]
-    fn close_landed_returns_the_closing_record_and_removes_it() {
+    fn on_closed_is_not_a_bar_for_an_untracked_id() {
+        let mut fleet = BarFleet::new();
+        assert!(matches!(
+            fleet.on_closed(window::Id::unique()),
+            BarClosed::NotABar
+        ));
+    }
+
+    #[test]
+    fn on_closed_reports_a_landed_close_and_forgets_it() {
         let id = window::Id::unique();
         let mut fleet = fleet_closing(id, 2);
-        let record = fleet.close_landed(id);
-        assert_eq!(
-            record.map(|r| r.namespace),
-            Some("obayebar-bar-1".to_string())
-        );
+        assert!(matches!(fleet.on_closed(id), BarClosed::ClosedAsRequested));
         assert!(!fleet.closing.contains_key(&id));
     }
 
     #[test]
-    fn close_landed_is_none_for_an_untracked_id() {
-        let mut fleet = BarFleet::new();
-        assert!(fleet.close_landed(window::Id::unique()).is_none());
-    }
-
-    #[test]
-    fn bar_closed_by_compositor_removes_the_record() {
+    fn on_closed_reports_the_monitor_uncovered_when_no_bar_is_left() -> Result<(), &'static str> {
         let id = window::Id::unique();
         let mut fleet = fleet_with(id, "DP-1", "obayebar-bar-1", BarState::Verified);
-        let record = fleet.bar_closed_by_compositor(id);
-        assert_eq!(record.map(|r| r.monitor), Some("DP-1".to_string()));
+        let BarClosed::Died { uncovered } = fleet.on_closed(id) else {
+            return Err("expected Died");
+        };
+        assert_eq!(uncovered, Some("DP-1".to_string()));
         assert!(!fleet.tracked.contains_key(&id));
+        Ok(())
     }
 
     #[test]
-    fn has_bar_on_is_false_once_the_only_bar_on_a_monitor_closes() {
+    fn on_closed_reports_no_uncovered_monitor_while_another_bar_covers_it(
+    ) -> Result<(), &'static str> {
         let id = window::Id::unique();
         let mut fleet = fleet_with(id, "DP-1", "obayebar-bar-1", BarState::Verified);
-        fleet.bar_closed_by_compositor(id);
-        assert!(!fleet.has_bar_on("DP-1"));
-    }
-
-    #[test]
-    fn has_bar_on_stays_true_while_another_bar_covers_the_monitor() {
-        let id = window::Id::unique();
-        let mut fleet = fleet_with(id, "DP-1", "obayebar-bar-1", BarState::Verified);
-        let other = window::Id::unique();
         fleet.tracked.insert(
-            other,
+            window::Id::unique(),
             BarRecord {
                 monitor: "DP-1".to_string(),
                 namespace: "obayebar-bar-2".to_string(),
                 state: BarState::Verified,
             },
         );
-        fleet.bar_closed_by_compositor(id);
-        assert!(fleet.has_bar_on("DP-1"));
+        let BarClosed::Died { uncovered } = fleet.on_closed(id) else {
+            return Err("expected Died");
+        };
+        assert_eq!(uncovered, None);
+        Ok(())
     }
 
     #[test]

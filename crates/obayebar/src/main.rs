@@ -1120,28 +1120,15 @@ impl App {
             return Task::none();
         }
 
-        if let Some(record) = self.bars.close_landed(id) {
-            // Nothing else to do: the monitor it used to be on was uncovered
-            // the moment we asked.
-            log::info!("bars: {} closed as requested", record.namespace);
-            return Task::none();
-        }
-
-        // Unknown ids are surfaces whose tracking we already cleared; they must
-        // stay no-ops. Treating one as a bar is what let a panel or popup close
-        // masquerade as "the bar died" and trigger a spurious respawn.
-        if let Some(record) = self.bars.bar_closed_by_compositor(id) {
-            log::info!(
-                "bars: {} on {} was closed by the compositor",
-                record.namespace,
-                record.monitor
-            );
-            if !self.bars.has_bar_on(&record.monitor) {
-                self.drop_bar_state(&record.monitor);
+        match self.bars.on_closed(id) {
+            bars::BarClosed::NotABar | bars::BarClosed::ClosedAsRequested => Task::none(),
+            bars::BarClosed::Died { uncovered } => {
+                if let Some(monitor) = uncovered {
+                    self.drop_bar_state(&monitor);
+                }
+                self.verify_bars_soon()
             }
-            return self.verify_bars_soon();
         }
-        Task::none()
     }
 
     fn view(&self, id: window::Id) -> Element<'_, Message> {
