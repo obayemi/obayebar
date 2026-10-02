@@ -571,9 +571,14 @@ pub fn calendar_panel_height() -> u32 {
     (container_padding + clock + separator + navigation + grid + outer_spacing).ceil() as u32
 }
 
-/// Scan `dir` (and one level of subdirectories — font packages nest fonts
-/// under `TTF/`, `truetype/`, etc. depending on the packager) for a
-/// Material Symbols Outlined TTF.
+/// Scan `dir` and its immediate subdirectories for a Material Symbols
+/// Outlined TTF.
+///
+/// Nixpkgs' material-symbols package has shipped the font as
+/// `MaterialSymbolsOutlined.ttf` or as a variable
+/// `MaterialSymbolsOutlined[FILL,GRAD,opsz,wght].ttf`, under either
+/// `share/fonts/TTF/` or `share/fonts/truetype/`, so any
+/// `MaterialSymbolsOutlined*.ttf` in `dir` or one level down matches.
 fn find_outlined_font(dir: impl AsRef<std::path::Path>) -> Option<std::path::PathBuf> {
     find_outlined_font_at(dir.as_ref(), 1)
 }
@@ -604,21 +609,28 @@ fn find_outlined_font_at(dir: &std::path::Path, depth: u32) -> Option<std::path:
     None
 }
 
+/// Directories to scan for the icon font, in priority order: the
+/// `OBAYEBAR_FONT_DIR` override, the NixOS system profile's fonts, then the
+/// user font directory.
+fn icon_font_search_dirs(
+    env_override: Option<std::path::PathBuf>,
+    user_font_dir: Option<std::path::PathBuf>,
+) -> [Option<std::path::PathBuf>; 3] {
+    [
+        env_override,
+        Some(std::path::PathBuf::from(
+            "/run/current-system/sw/share/fonts",
+        )),
+        user_font_dir,
+    ]
+}
+
 /// Load the Material Symbols font from the system or `OBAYEBAR_FONT_DIR` env var.
 pub fn load_icon_font() -> Vec<Cow<'static, [u8]>> {
-    // Nixpkgs' material-symbols package has shipped the font as
-    // `MaterialSymbolsOutlined.ttf` or as a variable
-    // `MaterialSymbolsOutlined[FILL,GRAD,opsz,wght].ttf`, under either
-    // `share/fonts/TTF/` or `share/fonts/truetype/`. Scan the configured
-    // directory and its immediate subdirectories for any of those.
-    let font_dirs = [
-        std::env::var("OBAYEBAR_FONT_DIR").ok(),
-        Some("/run/current-system/sw/share/fonts".into()),
-        Some(format!(
-            "{}/.local/share/fonts",
-            std::env::var("HOME").unwrap_or_default()
-        )),
-    ];
+    let font_dirs = icon_font_search_dirs(
+        std::env::var_os("OBAYEBAR_FONT_DIR").map(std::path::PathBuf::from),
+        dirs::font_dir(),
+    );
 
     for dir in font_dirs.into_iter().flatten() {
         if let Some(path) = find_outlined_font(&dir) {
@@ -913,6 +925,22 @@ mod tests {
         assert_eq!(find_outlined_font(&root), None);
 
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn icon_font_search_dirs_checks_override_then_system_then_user() {
+        let override_dir = std::path::PathBuf::from("/override");
+        let user_dir = std::path::PathBuf::from("/home/u/.local/share/fonts");
+        assert_eq!(
+            icon_font_search_dirs(Some(override_dir.clone()), Some(user_dir.clone())),
+            [
+                Some(override_dir),
+                Some(std::path::PathBuf::from(
+                    "/run/current-system/sw/share/fonts"
+                )),
+                Some(user_dir),
+            ]
+        );
     }
 
     fn geom(width: u32, height: u32, scale: f32, transform: i32) -> MonitorGeom {
