@@ -351,18 +351,19 @@ impl BarFleet {
     /// the close is a request nobody has confirmed, and stopping there is what
     /// left surfaces on screen with no one watching for them.
     fn needs_verification(&self, expected: &HashSet<String>) -> bool {
-        let covered: HashSet<&str> = self
-            .tracked
-            .values()
-            .filter(|r| matches!(r.state, BarState::Verified))
-            .map(|r| r.monitor.as_str())
-            .collect();
         !self.closing.is_empty()
             || self
                 .tracked
                 .values()
                 .any(|r| !matches!(r.state, BarState::Verified))
-            || expected.iter().any(|m| !covered.contains(m.as_str()))
+            || expected.iter().any(|m| !self.has_verified_bar_on(m))
+    }
+
+    /// Whether a verified bar is on `monitor`.
+    fn has_verified_bar_on(&self, monitor: &str) -> bool {
+        self.tracked
+            .values()
+            .any(|r| r.monitor == monitor && r.state == BarState::Verified)
     }
 
     /// Slow the next pass down after a request the compositor has not
@@ -664,5 +665,14 @@ mod fleet_tests {
         let outcome = fleet.reconcile(Some(&obs), &expected(["DP-1"]), Instant::now());
 
         assert!(!outcome.needs_verify);
+    }
+
+    #[test]
+    fn an_expected_monitor_with_no_bar_still_needs_verification() {
+        let id = window::Id::unique();
+        let mut fleet = fleet_with(id, "DP-1", "obayebar-bar-1", BarState::Verified);
+        let outcome = fleet.reconcile(None, &expected(["DP-1", "DP-2"]), Instant::now());
+
+        assert!(outcome.needs_verify);
     }
 }
