@@ -132,12 +132,10 @@ show_when_idle = true                       # default; false shows it only while
 open_delay_ms = 200                         # default; hover time before a panel opens
 
 [wallpaper]
-enable = true                               # for the home-manager module only
 directory = "~/Images/wallpapers/enabled"   # default
 interval = "30m"                            # "45s", "2h", "1d", or "off"
 
 [lock]
-enable = true                               # for the home-manager module only
 config = "~/.config/hypr/hyprlock.conf"     # default; your own file
 blur_passes = 1                             # default
 blur_size = 3                               # default
@@ -164,10 +162,10 @@ player plays; otherwise it stays, as an icon alone when there is no player.
 before its panel opens, so a pointer that crosses the bar to go to another
 monitor opens nothing. A click opens the panel immediately. When a panel is
 open, a hover on another entry changes the panel immediately.
-`[wallpaper].enable` and `[lock].enable` control the systemd units of the
-home-manager module. The `obayebar-wallpaper` and `obayebar-lock` programs do
-not read the two `enable` keys: a program that you start manually always
-operates.
+The home-manager option `programs.obayebar.wallpaper.enable` adds the
+`obayebar-wallpaper` service, and `programs.obayebar.lock.enable` wires
+`obayebar-lock` into hypridle; config.toml has no `enable` key for these
+sections.
 
 The GitLab token does not go in this file. The bar reads the token from the
 `OBAYEBAR_GITLAB_TOKEN` environment variable, then from Secret Service, then

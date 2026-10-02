@@ -25,14 +25,12 @@ let
   };
 
   wallpaperAttrs =
-    lib.optionalAttrs cfg.wallpaper.enable { enable = true; }
-    // lib.optionalAttrs (cfg.wallpaper.directory != null)
+    lib.optionalAttrs (cfg.wallpaper.directory != null)
       { directory = toString cfg.wallpaper.directory; }
     // lib.optionalAttrs (cfg.wallpaper.interval != null) { inherit (cfg.wallpaper) interval; };
 
   lockAttrs =
-    lib.optionalAttrs cfg.lock.enable { enable = true; }
-    // lib.optionalAttrs (cfg.lock.config != null) { config = toString cfg.lock.config; }
+    lib.optionalAttrs (cfg.lock.config != null) { config = toString cfg.lock.config; }
     // lib.optionalAttrs (cfg.lock.blurPasses != null) { blur_passes = cfg.lock.blurPasses; }
     // lib.optionalAttrs (cfg.lock.blurSize != null) { blur_size = cfg.lock.blurSize; };
 

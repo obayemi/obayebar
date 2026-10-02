@@ -96,7 +96,6 @@ impl Default for MediaConfig {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct WallpaperConfig {
-    pub enable: bool,
     /// Where to look for images. `~` is expanded.
     pub directory: Option<String>,
     /// How often to rotate: `"30m"`, `"2h"`, or `"off"`.
@@ -121,7 +120,6 @@ impl WallpaperConfig {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct LockConfig {
-    pub enable: bool,
     /// Base hyprlock config to extend. `~` is expanded.
     pub config: Option<String>,
     /// Blur applied to the generated per-monitor backgrounds.
@@ -194,8 +192,6 @@ mod tests {
         let cfg = parse("");
         assert!(!cfg.gitlab.enable);
         assert!(cfg.gitlab.url.is_none());
-        assert!(!cfg.wallpaper.enable);
-        assert!(!cfg.lock.enable);
     }
 
     #[test]
@@ -258,14 +254,23 @@ mod tests {
     }
 
     #[test]
+    fn wallpaper_enable_key_is_rejected() {
+        assert!(toml::from_str::<Config>("[wallpaper]\nenable = true\n").is_err());
+    }
+
+    #[test]
+    fn lock_enable_key_is_rejected() {
+        assert!(toml::from_str::<Config>("[lock]\nenable = true\n").is_err());
+    }
+
+    #[test]
     fn parses_a_full_file_with_every_section() {
         let cfg = parse(
             "[gitlab]\nenable = true\n\n\
-             [wallpaper]\nenable = true\ndirectory = \"/pics\"\ninterval = \"45m\"\n\n\
-             [lock]\nenable = true\nconfig = \"/etc/hyprlock.conf\"\nblur_passes = 4\nblur_size = 9\n",
+             [wallpaper]\ndirectory = \"/pics\"\ninterval = \"45m\"\n\n\
+             [lock]\nconfig = \"/etc/hyprlock.conf\"\nblur_passes = 4\nblur_size = 9\n",
         );
         assert!(cfg.gitlab.enable);
-        assert!(cfg.wallpaper.enable);
         assert_eq!(cfg.wallpaper.directory(), PathBuf::from("/pics"));
         assert_eq!(cfg.wallpaper.interval(), "45m");
         assert_eq!(cfg.lock.config_path(), PathBuf::from("/etc/hyprlock.conf"));
@@ -275,7 +280,7 @@ mod tests {
 
     #[test]
     fn omitted_wallpaper_values_fall_back_to_defaults() {
-        let cfg = parse("[wallpaper]\nenable = true\n");
+        let cfg = parse("[wallpaper]\n");
         assert_eq!(cfg.wallpaper.interval(), DEFAULT_INTERVAL);
         // The default is a tilde path, so it must come back expanded.
         assert!(!cfg.wallpaper.directory().starts_with("~"));
@@ -287,7 +292,7 @@ mod tests {
 
     #[test]
     fn omitted_lock_values_fall_back_to_defaults() {
-        let cfg = parse("[lock]\nenable = true\n");
+        let cfg = parse("[lock]\n");
         assert!(!cfg.lock.config_path().starts_with("~"));
         assert!(cfg
             .lock
