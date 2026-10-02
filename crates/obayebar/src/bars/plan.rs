@@ -25,7 +25,7 @@ pub const VERIFY_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
 /// whether the compositor was ever observed agreeing. Treating the request as
 /// the truth is what produced bars stacked on one screen while the app
 /// believed they were spread across all of them.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct BarRecord {
     /// Monitor this bar was spawned for.
     pub monitor: String,
@@ -41,7 +41,7 @@ pub struct BarRecord {
 /// `spawned_at` only exists while mapping: once verified, the grace window
 /// that timestamp measured no longer applies to anything, so there is no
 /// stale field left to misread in the wrong order.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum BarState {
     /// Requested but not yet observed. Given the benefit of the doubt for
     /// `VERIFY_GRACE` from `spawned_at`, so a surface that has not mapped yet
@@ -56,7 +56,7 @@ pub enum BarState {
 /// It keeps the window id — the only handle that can close the surface — until
 /// an observation confirms the surface is gone. Anything dropped before that is
 /// unreachable for the rest of the process's life.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct ClosingRecord {
     /// Namespace to look for in `j/layers`; absence is what ends the wait.
     pub namespace: String,
