@@ -1805,30 +1805,20 @@ impl App {
         self.maybe_close_popup_window()
     }
 
-    /// Maximum popup height in logical pixels: 2/5 of the logical height of the
-    /// monitor the popup is *on*, or a conservative 1080p-based fallback.
-    ///
-    /// Measuring `focused_monitor` instead was wrong in both directions: the
-    /// popup did not live there, and every focus change re-fitted the surface
-    /// against a screen it was not on. With a 4K focused monitor and a 768px
-    /// host that produced a cap taller than the screen, and since the popup
-    /// column has no scrollable the overflow summary itself fell off-screen.
+    /// Height cap in logical pixels for a popup on `geom`, or the
+    /// 1080p-based fallback when no monitor geometry is known yet. The cap
+    /// is the `style::NOTIF_POPUP_MAX_FRACTION_NUM`/`_DEN` fraction of the
+    /// oriented logical height.
     #[allow(
         clippy::cast_possible_truncation,
         clippy::cast_precision_loss,
         clippy::cast_sign_loss,
         clippy::as_conversions
     )]
-    fn popup_max_height(&self) -> u32 {
+    fn popup_height_cap(geom: Option<&MonitorGeom>) -> u32 {
         const FALLBACK_LOGICAL_H: f32 = 1080.0;
         let num = f32::from(u16::try_from(style::NOTIF_POPUP_MAX_FRACTION_NUM).unwrap_or(2));
         let den = f32::from(u16::try_from(style::NOTIF_POPUP_MAX_FRACTION_DEN).unwrap_or(5));
-
-        let geom = self
-            .notif_popup_monitor
-            .as_deref()
-            .or(self.focused_monitor.as_deref())
-            .and_then(|name| self.monitor_geoms.get(name));
 
         let logical_h = geom.map_or(FALLBACK_LOGICAL_H, |g| {
             let scale = if g.scale > 0.0 { g.scale } else { 1.0 };
@@ -1841,6 +1831,24 @@ impl App {
         });
 
         (logical_h * num / den) as u32
+    }
+
+    /// Maximum popup height in logical pixels, for the monitor the popup is
+    /// *on*. See [`Self::popup_height_cap`].
+    ///
+    /// Measuring `focused_monitor` instead of the popup's own monitor was
+    /// wrong in both directions: the popup did not live there, and every
+    /// focus change re-fitted the surface against a screen it was not on.
+    /// With a 4K focused monitor and a 768px host that produced a cap taller
+    /// than the screen, and since the popup column has no scrollable the
+    /// overflow summary itself fell off-screen.
+    fn popup_max_height(&self) -> u32 {
+        let geom = self
+            .notif_popup_monitor
+            .as_deref()
+            .or(self.focused_monitor.as_deref())
+            .and_then(|name| self.monitor_geoms.get(name));
+        Self::popup_height_cap(geom)
     }
 
     /// Decide how many popup cards fit and how many spill into an overflow
