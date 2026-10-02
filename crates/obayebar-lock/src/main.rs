@@ -173,7 +173,9 @@ fn run(args: &cli::Args) -> i32 {
         // Without a runtime dir there is nowhere private to put the generated
         // config. Lock with the user's own file rather than refusing: a
         // plainer lock screen beats an unlocked machine.
-        log::warn!("lock: XDG_RUNTIME_DIR is unset, locking with the base config unchanged");
+        log::warn!(
+            "lock: XDG_RUNTIME_DIR is unset or not absolute, locking with the base config unchanged"
+        );
         return finish(&base_path, args);
     };
 
