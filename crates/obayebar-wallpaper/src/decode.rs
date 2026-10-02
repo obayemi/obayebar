@@ -100,7 +100,7 @@ pub fn prepare(path: &Path, width: u32, height: u32) -> Result<Wallpaper, Decode
     }
 
     // `fast_image_resize` rather than the `image` crate's own resize. Scaling
-    // is around 93% of the time it takes to put a wallpaper up, and `image`
+    // is around 92% of the time it takes to put a wallpaper up, and `image`
     // does it with scalar code; this one is SIMD.
     let src =
         fr::images::Image::from_vec_u8(source_w, source_h, source.into_raw(), fr::PixelType::U8x4)

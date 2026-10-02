@@ -1,6 +1,6 @@
 [package]
 name = "obayebar-core"
-description = "Shared, iced-free helpers: monitor detection, wallpaper selection, config"
+description = "Shared, iced-free helpers: monitor detection, wallpaper selection, config, control sockets, process spawning"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -19,8 +19,9 @@ async = ["dep:tokio"]
 images = ["dep:image"]
 
 # Deliberately no iced, no wgpu, no GUI stack. That is the whole point of the
-# boundary: it lets obayebar-lock be a small std-only binary and lets the
-# wallpaper renderer talk wlr-layer-shell without a compositor toolkit.
+# boundary: it lets obayebar-lock and the wallpaper renderer talk
+# wlr-layer-shell directly, with no async runtime and no compositor toolkit
+# of their own.
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
