@@ -119,11 +119,10 @@ impl MonitorGeom {
 
 /// Why a Hyprland IPC query failed.
 ///
-/// Every step used to end in `.ok()?`, collapsing six distinct failures into
-/// one `None` that the caller then turned into an empty state. This module had
-/// no log statements at all, so a compositor that had gone away, a renamed
-/// socket and a JSON schema change were indistinguishable — and all three
-/// presented as "no monitors are connected".
+/// Kept distinct, and logged, rather than collapsed to a single `None`: a
+/// compositor that has gone away, a renamed socket and a JSON schema change
+/// must stay distinguishable from one another and from "no monitors are
+/// connected".
 #[derive(Debug, thiserror::Error)]
 pub enum IpcError {
     #[error("HYPRLAND_INSTANCE_SIGNATURE or XDG_RUNTIME_DIR is unset")]
@@ -322,10 +321,10 @@ pub async fn query_or_log<T: serde::de::DeserializeOwned>(command: &str) -> Opti
 
 /// Deserialize a JSON array element-wise, dropping the entries that fail.
 ///
-/// `Vec<T>` as a whole would fail on a single unparseable element, so one
-/// monitor Hyprland describes in a shape we do not model used to discard
-/// *every* monitor — which the reconciler then read as "no monitors are
-/// connected". One odd monitor should cost us that monitor, nothing more.
+/// `Vec<T>` as a whole would fail the entire array on a single unparseable
+/// element. One monitor in a shape we do not model should cost us that
+/// monitor, nothing more — not every monitor, read by the reconciler as "no
+/// monitors are connected".
 #[must_use]
 pub fn parse_lenient<T: serde::de::DeserializeOwned>(values: Vec<serde_json::Value>) -> Vec<T> {
     values

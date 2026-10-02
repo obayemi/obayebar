@@ -7,8 +7,8 @@
 //!
 //! This module owns the socket mechanics only. Each daemon keeps its own
 //! command vocabulary next to the code that executes it — except the bar's,
-//! which lives here because its client ([`crate::control::BarCommand`]) must
-//! be able to speak it without linking the bar's GUI stack.
+//! which lives here because its client, `obayebar-launcher`, must speak
+//! [`BarCommand`] without linking the bar's GUI stack.
 
 use std::io::Write as _;
 use std::os::unix::net::{UnixListener, UnixStream};
