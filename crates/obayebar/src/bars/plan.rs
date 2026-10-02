@@ -329,6 +329,7 @@ pub const fn should_reissue_close(attempts: u32) -> bool {
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod reconcile_tests {
+    use super::super::test_support::{expected, observed};
     use super::{
         locate, orphans, plan_from_observation, should_reissue_close, BarPlan, BarRecord, BarState,
         CloseReason, ClosingRecord, ForgetReason, VERIFY_GRACE,
@@ -340,10 +341,6 @@ mod reconcile_tests {
     /// Stands in for the per-instance prefix; the tests name their surfaces
     /// with it so a name from another instance stays distinguishable.
     const PREFIX: &str = "obayebar-bar-";
-
-    fn expected<const N: usize>(monitors: [&str; N]) -> HashSet<String> {
-        monitors.iter().map(|m| (*m).to_string()).collect()
-    }
 
     /// A tracking map from `(monitor, namespace, verified)` triples. Records
     /// start with their full grace window ahead of them.
@@ -404,19 +401,6 @@ mod reconcile_tests {
             PREFIX,
             Instant::now(),
         )
-    }
-
-    /// A `j/layers`-shaped observation.
-    fn observed<const N: usize>(entries: [(&str, &[&str]); N]) -> obayebar_core::hypr::LayerMap {
-        entries
-            .into_iter()
-            .map(|(monitor, namespaces)| {
-                (
-                    monitor.to_string(),
-                    namespaces.iter().map(|n| (*n).to_string()).collect(),
-                )
-            })
-            .collect()
     }
 
     #[test]

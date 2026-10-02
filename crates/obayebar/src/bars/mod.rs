@@ -436,19 +436,20 @@ fn log_orphans(orphans: &[String]) {
     }
 }
 
+/// Builders shared by this module's and [`plan`]'s tests, so a monitor set or
+/// a `j/layers` observation is shaped the same way on both sides of the
+/// planner boundary.
 #[cfg(test)]
-mod reconcile_tests {
-    use super::{BarFleet, BarRecord, BarState, ClosingRecord, VERIFY_DELAY};
-    use iced::window;
-    use iced_layershell::reexport::OutputOption;
+pub mod test_support {
     use std::collections::HashSet;
-    use std::time::{Duration, Instant};
 
-    fn expected<const N: usize>(monitors: [&str; N]) -> HashSet<String> {
+    pub fn expected<const N: usize>(monitors: [&str; N]) -> HashSet<String> {
         monitors.iter().map(|m| (*m).to_string()).collect()
     }
 
-    fn observed<const N: usize>(entries: [(&str, &[&str]); N]) -> obayebar_core::hypr::LayerMap {
+    pub fn observed<const N: usize>(
+        entries: [(&str, &[&str]); N],
+    ) -> obayebar_core::hypr::LayerMap {
         entries
             .into_iter()
             .map(|(monitor, namespaces)| {
@@ -459,6 +460,15 @@ mod reconcile_tests {
             })
             .collect()
     }
+}
+
+#[cfg(test)]
+mod fleet_tests {
+    use super::test_support::{expected, observed};
+    use super::{BarFleet, BarRecord, BarState, ClosingRecord, VERIFY_DELAY};
+    use iced::window;
+    use iced_layershell::reexport::OutputOption;
+    use std::time::{Duration, Instant};
 
     /// A fleet with one tracked record, backed off well past the minimum so
     /// a reset is observable.
@@ -527,7 +537,7 @@ mod reconcile_tests {
             BarState::Mapping { spawned_at },
         );
         let before = fleet.verify_backoff;
-        let obs = obayebar_core::hypr::LayerMap::new();
+        let obs = observed([]);
         let outcome = fleet.reconcile(Some(&obs), &expected(["DP-1"]), Instant::now());
 
         assert_eq!(outcome.close_ids, vec![id]);
@@ -554,11 +564,7 @@ mod reconcile_tests {
     fn a_vanished_bar_is_forgotten_without_a_close_request() {
         let id = window::Id::unique();
         let mut fleet = fleet_with(id, "DP-1", "obayebar-bar-1", BarState::Verified);
-        let outcome = fleet.reconcile(
-            Some(&obayebar_core::hypr::LayerMap::new()),
-            &expected(["DP-1"]),
-            Instant::now(),
-        );
+        let outcome = fleet.reconcile(Some(&observed([])), &expected(["DP-1"]), Instant::now());
 
         assert_eq!(outcome.close_ids, Vec::new());
         assert!(!fleet.tracked.contains_key(&id));
@@ -643,11 +649,7 @@ mod reconcile_tests {
     #[test]
     fn an_uncovered_monitor_is_spawned_for() -> Result<(), &'static str> {
         let mut fleet = BarFleet::new();
-        let outcome = fleet.reconcile(
-            Some(&obayebar_core::hypr::LayerMap::new()),
-            &expected(["DP-1"]),
-            Instant::now(),
-        );
+        let outcome = fleet.reconcile(Some(&observed([])), &expected(["DP-1"]), Instant::now());
 
         let (id, settings) = outcome.spawn.ok_or("a spawn was planned")?;
         assert_eq!(
@@ -665,11 +667,7 @@ mod reconcile_tests {
         assert_eq!(fleet.begin_verify(), Some(VERIFY_DELAY));
         assert_eq!(fleet.begin_verify(), None);
 
-        fleet.reconcile(
-            Some(&obayebar_core::hypr::LayerMap::new()),
-            &expected(["DP-1"]),
-            Instant::now(),
-        );
+        fleet.reconcile(Some(&observed([])), &expected(["DP-1"]), Instant::now());
 
         assert_eq!(fleet.begin_verify(), Some(VERIFY_DELAY));
     }
