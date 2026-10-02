@@ -9,27 +9,24 @@ use iced::{Alignment, Border, Element, Length};
 fn network_entry<'a>(
     ssid: &'a str,
     icon_name: &'a str,
-    is_active: bool,
-    is_connecting: bool,
+    state: WifiRowState,
 ) -> Element<'a, Message> {
-    let (bg, text_color, icon_color) = if is_active {
-        (
+    let (bg, text_color, icon_color) = match state {
+        WifiRowState::Active => (
             style::with_alpha(style::M3_PRIMARY, 0.15),
             style::M3_PRIMARY,
             style::M3_PRIMARY,
-        )
-    } else if is_connecting {
-        (
+        ),
+        WifiRowState::Connecting => (
             style::with_alpha(style::M3_TERTIARY, 0.10),
             style::M3_TERTIARY,
             style::M3_TERTIARY,
-        )
-    } else {
-        (
+        ),
+        WifiRowState::Idle => (
             iced::Color::TRANSPARENT,
             style::M3_ON_SURFACE,
             style::M3_ON_SURFACE_VARIANT,
-        )
+        ),
     };
 
     let wifi_icon = text(icon_name)
@@ -42,7 +39,7 @@ fn network_entry<'a>(
         .align_y(Alignment::Center)
         .width(Length::Fill);
 
-    if is_connecting {
+    if state == WifiRowState::Connecting {
         label_row = label_row.push(
             text(style::ICON_AUTORENEW)
                 .font(style::ICON_FONT)
@@ -51,11 +48,11 @@ fn network_entry<'a>(
         );
     }
 
-    let action: Element<'a, Message> = if is_connecting {
+    let action: Element<'a, Message> = if state == WifiRowState::Connecting {
         // No action button while connecting
         Space::new().width(0.0).into()
     } else {
-        let (action_icon, action_msg) = if is_active {
+        let (action_icon, action_msg) = if state == WifiRowState::Active {
             (style::ICON_CLOSE, Message::NetworkDisconnect)
         } else {
             (
@@ -129,10 +126,17 @@ fn connection_type_label(conn_type: &str) -> &'static str {
     }
 }
 
+/// Which of the mutually exclusive states a Wi-Fi row is rendered in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WifiRowState {
+    Connecting,
+    Active,
+    Idle,
+}
+
 struct WifiRow<'a> {
     ap: &'a AccessPointInfo,
-    is_active: bool,
-    is_connecting: bool,
+    state: WifiRowState,
 }
 
 /// Which access points to render, and in what order: the connecting
@@ -152,8 +156,7 @@ fn select_wifi_rows<'a>(
             if let Some(ap) = access_points.iter().find(|a| a.ssid == c_ssid) {
                 rows.push(WifiRow {
                     ap,
-                    is_active: false,
-                    is_connecting: true,
+                    state: WifiRowState::Connecting,
                 });
             }
         }
@@ -163,8 +166,7 @@ fn select_wifi_rows<'a>(
         if let Some(ap) = access_points.iter().find(|a| a.ssid == ssid) {
             rows.push(WifiRow {
                 ap,
-                is_active: true,
-                is_connecting: false,
+                state: WifiRowState::Active,
             });
         }
     }
@@ -178,8 +180,7 @@ fn select_wifi_rows<'a>(
         }
         rows.push(WifiRow {
             ap,
-            is_active: false,
-            is_connecting: false,
+            state: WifiRowState::Idle,
         });
     }
 
@@ -258,12 +259,8 @@ pub fn view<'a>(
                 style::PANEL_MAX_VISIBLE_ROWS,
             );
             for row in rows {
-                network_list = network_list.push(network_entry(
-                    &row.ap.ssid,
-                    row.ap.icon_name,
-                    row.is_active,
-                    row.is_connecting,
-                ));
+                network_list =
+                    network_list.push(network_entry(&row.ap.ssid, row.ap.icon_name, row.state));
             }
 
             content = content.push(network_list);
@@ -298,27 +295,27 @@ mod select_wifi_rows_tests {
         assert!(rows.is_empty());
     }
 
-    fn states<'a>(rows: &[super::WifiRow<'a>]) -> Vec<(&'a str, bool, bool)> {
-        rows.iter()
-            .map(|r| (r.ap.ssid.as_str(), r.is_active, r.is_connecting))
-            .collect()
+    fn states<'a>(rows: &[super::WifiRow<'a>]) -> Vec<(&'a str, super::WifiRowState)> {
+        rows.iter().map(|r| (r.ap.ssid.as_str(), r.state)).collect()
     }
 
     #[test]
     fn connecting_then_active_then_rest_in_order() {
+        use super::WifiRowState::{Active, Connecting, Idle};
         let aps = [ap("a"), ap("b"), ap("c")];
         let rows = select_wifi_rows(&aps, Some("b"), Some("c"), 8);
         assert_eq!(
             states(&rows),
-            vec![("c", false, true), ("b", true, false), ("a", false, false)]
+            vec![("c", Connecting), ("b", Active), ("a", Idle)]
         );
     }
 
     #[test]
     fn active_ssid_also_connecting_appears_once_as_active() {
+        use super::WifiRowState::{Active, Idle};
         let aps = [ap("a"), ap("b")];
         let rows = select_wifi_rows(&aps, Some("a"), Some("a"), 8);
-        assert_eq!(states(&rows), vec![("a", true, false), ("b", false, false)]);
+        assert_eq!(states(&rows), vec![("a", Active), ("b", Idle)]);
     }
 
     #[test]
