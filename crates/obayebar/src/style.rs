@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 // Style functions are typically passed as arguments to iced widget builders;
 // #[must_use] adds no value and clutters every function signature.
 #![allow(clippy::must_use_candidate)]
@@ -10,23 +9,16 @@ use std::borrow::Cow;
 // Material Design 3 dark theme baseline palette
 pub const M3_PRIMARY: Color = Color::from_rgb(0.816, 0.737, 1.0);
 pub const M3_ON_PRIMARY: Color = Color::from_rgb(0.220, 0.118, 0.447);
-pub const M3_PRIMARY_CONTAINER: Color = Color::from_rgb(0.310, 0.216, 0.545);
-pub const M3_ON_PRIMARY_CONTAINER: Color = Color::from_rgb(0.918, 0.875, 1.0);
 
 pub const M3_SECONDARY: Color = Color::from_rgb(0.800, 0.761, 0.863);
-pub const M3_ON_SECONDARY: Color = Color::from_rgb(0.200, 0.176, 0.255);
 pub const M3_SECONDARY_CONTAINER: Color = Color::from_rgb(0.290, 0.267, 0.345);
 pub const M3_ON_SECONDARY_CONTAINER: Color = Color::from_rgb(0.914, 0.882, 0.973);
 
 pub const M3_TERTIARY: Color = Color::from_rgb(0.937, 0.722, 0.784);
-pub const M3_ON_TERTIARY: Color = Color::from_rgb(0.286, 0.145, 0.196);
 pub const M3_TERTIARY_CONTAINER: Color = Color::from_rgb(0.408, 0.271, 0.333);
-pub const M3_ON_TERTIARY_CONTAINER: Color = Color::from_rgb(1.0, 0.851, 0.894);
 
 pub const M3_ERROR: Color = Color::from_rgb(0.949, 0.722, 0.710);
 pub const M3_ON_ERROR: Color = Color::from_rgb(0.376, 0.078, 0.063);
-pub const M3_ERROR_CONTAINER: Color = Color::from_rgb(0.549, 0.114, 0.094);
-pub const M3_ON_ERROR_CONTAINER: Color = Color::from_rgb(0.976, 0.871, 0.859);
 
 pub const M3_SURFACE: Color = Color::from_rgb(0.122, 0.114, 0.129);
 pub const M3_ON_SURFACE: Color = Color::from_rgb(0.906, 0.882, 0.898);
@@ -52,14 +44,11 @@ pub const NOTIF_WIDTH: u32 = 400;
 pub const SPACING_SMALL: f32 = 7.0;
 pub const SPACING_SMALLER: f32 = 10.0;
 pub const SPACING_NORMAL: f32 = 12.0;
-pub const SPACING_LARGER: f32 = 15.0;
-pub const SPACING_LARGE: f32 = 20.0;
 
 // Padding (from AppearanceConfig)
 pub const PADDING_SMALL: f32 = 5.0;
 pub const PADDING_SMALLER: f32 = 7.0;
 pub const PADDING_NORMAL: f32 = 10.0;
-pub const PADDING_LARGER: f32 = 12.0;
 pub const PADDING_LARGE: f32 = 15.0;
 
 /// Standard vertical/horizontal padding for list entries across panels.
@@ -69,7 +58,6 @@ pub const PADDING_ENTRY: [f32; 2] = [PADDING_SMALL, PADDING_NORMAL];
 pub const ROUNDING_EXTRA_SMALL: f32 = 5.0;
 pub const ROUNDING_SMALL: f32 = 12.0;
 pub const ROUNDING_NORMAL: f32 = 17.0;
-pub const ROUNDING_LARGE: f32 = 25.0;
 pub const ROUNDING_FULL: f32 = 1000.0;
 
 /// Width of the primary outline around every panel.
@@ -94,7 +82,6 @@ pub const ICON_FONT: Font = Font::with_name("Material Symbols Outlined");
 
 // Material Symbols codepoints (ligatures don't work in cosmic-text)
 pub const ICON_CALENDAR: &str = "\u{EBCC}";
-pub const ICON_POWER: &str = "\u{F8C7}";
 pub const ICON_VOLUME_UP: &str = "\u{E050}";
 pub const ICON_VOLUME_DOWN: &str = "\u{E04D}";
 pub const ICON_VOLUME_MUTE: &str = "\u{E04E}";
@@ -125,8 +112,6 @@ pub const ICON_CABLE: &str = "\u{EFE6}";
 pub const ICON_VPN: &str = "\u{E32A}";
 pub const ICON_NOTIFICATIONS: &str = "\u{E7F5}";
 pub const ICON_CLOSE: &str = "\u{E5CD}";
-pub const ICON_EXPAND_LESS: &str = "\u{E5CE}";
-pub const ICON_EXPAND_MORE: &str = "\u{E5CF}";
 pub const ICON_SPEED: &str = "\u{E9E4}";
 pub const ICON_MEMORY: &str = "\u{E322}";
 pub const ICON_BLUETOOTH: &str = "\u{E1A7}";
@@ -140,8 +125,6 @@ pub const ICON_ARROW_UPWARD: &str = "\u{E5D8}";
 pub const ICON_ARROW_DOWNWARD: &str = "\u{E5DB}";
 pub const ICON_THERMOSTAT: &str = "\u{E1FF}";
 pub const ICON_LANGUAGE: &str = "\u{E894}";
-pub const ICON_DESKTOP: &str = "\u{E30C}";
-pub const ICON_NOTIFICATIONS_NONE: &str = "\u{E7F5}";
 pub const ICON_SETTINGS: &str = "\u{E8B8}";
 pub const ICON_AUTORENEW: &str = "\u{E863}";
 pub const ICON_TASK_ALT: &str = "\u{E2E6}";
@@ -149,7 +132,6 @@ pub const ICON_OPEN_IN_NEW: &str = "\u{E89E}";
 pub const ICON_KEY: &str = "\u{E73C}";
 pub const ICON_REFRESH: &str = "\u{E5D5}";
 pub const ICON_FOLDER: &str = "\u{E2C7}";
-pub const ICON_INFO: &str = "\u{E88E}";
 pub const ICON_CONTENT_PASTE: &str = "\u{E14F}";
 pub const ICON_MUSIC_NOTE: &str = "\u{E405}";
 pub const ICON_PLAY_ARROW: &str = "\u{E037}";
