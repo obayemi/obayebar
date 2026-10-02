@@ -20,6 +20,7 @@ use obayebar_core::hypr::LayerMap;
 
 use plan::{
     plan_from_observation, should_reissue_close, BarRecord, BarState, CloseReason, ClosingRecord,
+    ForgetReason,
 };
 
 /// Prefix for every bar's layer-shell namespace, followed by this process's pid
@@ -222,85 +223,12 @@ impl BarFleet {
             now,
         );
 
-        let mut close_ids = Vec::new();
-
-        for id in &plan.verified {
-            if let Some(record) = self.tracked.get_mut(id) {
-                if !matches!(record.state, BarState::Verified) {
-                    log::info!("bars: {} confirmed on {}", record.namespace, record.monitor);
-                    // Something is working; stop backing off. Only on the
-                    // transition: re-confirming a bar that was already fine is
-                    // not progress, and treating it as such kept the backoff
-                    // pinned at its minimum while a stuck surface was polled
-                    // four times a second forever.
-                    self.verify_backoff = VERIFY_DELAY;
-                }
-                record.state = BarState::Verified;
-            }
-        }
-        for id in &plan.pending {
-            if let Some(record) = self.tracked.get(id) {
-                log::debug!(
-                    "bars: still waiting for {} on {}",
-                    record.namespace,
-                    record.monitor
-                );
-            }
-        }
-        for (id, reason) in &plan.close {
-            if let Some(record) = self.tracked.remove(id) {
-                log::warn!(
-                    "bars: closing {} ({reason}); wanted {}",
-                    record.namespace,
-                    record.monitor
-                );
-                if *reason == CloseReason::NeverAppeared {
-                    // The spawn did not take. Ask less often before trying the
-                    // next one, so a compositor that will not place our
-                    // surfaces is not driven in a tight spawn/close loop.
-                    self.grow_backoff();
-                }
-                self.closing.insert(
-                    *id,
-                    ClosingRecord {
-                        namespace: record.namespace,
-                        attempts: 0,
-                    },
-                );
-            }
-            close_ids.push(*id);
-        }
-        for (id, reason) in &plan.forget {
-            if let Some(record) = self.tracked.remove(id) {
-                log::warn!("bars: forgetting {} ({reason})", record.namespace);
-            }
-            // Deliberately no close request: these are the records whose
-            // surface the observation shows is genuinely gone.
-        }
-        for id in &plan.closing_observed {
-            if let Some(record) = self.closing.get_mut(id) {
-                record.attempts = record.attempts.saturating_add(1);
-                if should_reissue_close(record.attempts) {
-                    log::warn!(
-                        "bars: {} still mapped after {} passes; asking again",
-                        record.namespace,
-                        record.attempts
-                    );
-                    close_ids.push(*id);
-                }
-            }
-            // A surface that will not go away must not hold the poll at its
-            // fastest rate for the rest of the session.
-            self.grow_backoff();
-        }
-        for id in &plan.closing_gone {
-            if let Some(record) = self.closing.remove(id) {
-                log::info!("bars: {} is gone", record.namespace);
-            }
-        }
-        for namespace in &plan.orphans {
-            log::error!("bar invariant: untracked bar surface {namespace} on screen");
-        }
+        self.apply_verified(&plan.verified);
+        log_pending(&self.tracked, &plan.pending);
+        let mut close_ids = self.apply_closes(&plan.close);
+        self.apply_forgets(&plan.forget);
+        close_ids.extend(self.apply_closing(&plan.closing_observed, &plan.closing_gone));
+        log_orphans(&plan.orphans);
 
         // One spawn per pass, on purpose. Batching several put them all into
         // one `Task::batch`, which layershellev drains inside
@@ -324,6 +252,98 @@ impl BarFleet {
             spawn,
             needs_verify,
         }
+    }
+
+    /// Mark newly-observed records verified, resetting the backoff on the
+    /// transition into that state.
+    fn apply_verified(&mut self, verified: &[window::Id]) {
+        for id in verified {
+            if let Some(record) = self.tracked.get_mut(id) {
+                if !matches!(record.state, BarState::Verified) {
+                    log::info!("bars: {} confirmed on {}", record.namespace, record.monitor);
+                    // Something is working; stop backing off. Only on the
+                    // transition: re-confirming a bar that was already fine is
+                    // not progress, and treating it as such kept the backoff
+                    // pinned at its minimum while a stuck surface was polled
+                    // four times a second forever.
+                    self.verify_backoff = VERIFY_DELAY;
+                }
+                record.state = BarState::Verified;
+            }
+        }
+    }
+
+    /// Move each closed record into the closing set and collect the ids to
+    /// ask the compositor to close.
+    fn apply_closes(&mut self, closes: &[(window::Id, CloseReason)]) -> Vec<window::Id> {
+        let mut close_ids = Vec::with_capacity(closes.len());
+        for (id, reason) in closes {
+            if let Some(record) = self.tracked.remove(id) {
+                log::warn!(
+                    "bars: closing {} ({reason}); wanted {}",
+                    record.namespace,
+                    record.monitor
+                );
+                if *reason == CloseReason::NeverAppeared {
+                    // The spawn did not take. Ask less often before trying the
+                    // next one, so a compositor that will not place our
+                    // surfaces is not driven in a tight spawn/close loop.
+                    self.grow_backoff();
+                }
+                self.closing.insert(
+                    *id,
+                    ClosingRecord {
+                        namespace: record.namespace,
+                        attempts: 0,
+                    },
+                );
+            }
+            close_ids.push(*id);
+        }
+        close_ids
+    }
+
+    /// Drop each record whose surface the observation shows is genuinely
+    /// gone, deliberately without a close request.
+    fn apply_forgets(&mut self, forgets: &[(window::Id, ForgetReason)]) {
+        for (id, reason) in forgets {
+            if let Some(record) = self.tracked.remove(id) {
+                log::warn!("bars: forgetting {} ({reason})", record.namespace);
+            }
+        }
+    }
+
+    /// Re-request a close still observed mapped, drop one no longer seen, and
+    /// collect the ids to re-ask. Every surface still mapped grows the
+    /// backoff, whether or not it is re-asked this pass — a surface that will
+    /// not go away must not hold the poll at its fastest rate for the rest of
+    /// the session. One that is gone does not: it cost nothing to wait for.
+    fn apply_closing(
+        &mut self,
+        closing_observed: &[window::Id],
+        closing_gone: &[window::Id],
+    ) -> Vec<window::Id> {
+        let mut close_ids = Vec::new();
+        for id in closing_observed {
+            if let Some(record) = self.closing.get_mut(id) {
+                record.attempts = record.attempts.saturating_add(1);
+                if should_reissue_close(record.attempts) {
+                    log::warn!(
+                        "bars: {} still mapped after {} passes; asking again",
+                        record.namespace,
+                        record.attempts
+                    );
+                    close_ids.push(*id);
+                }
+            }
+            self.grow_backoff();
+        }
+        for id in closing_gone {
+            if let Some(record) = self.closing.remove(id) {
+                log::info!("bars: {} is gone", record.namespace);
+            }
+        }
+        close_ids
     }
 
     /// Whether another verification pass is warranted.
@@ -393,6 +413,28 @@ impl BarFleet {
                 log::debug!("bars: monitor {monitor} has no bar yet");
             }
         }
+    }
+}
+
+/// Log each record still inside its grace window, waiting to be observed.
+fn log_pending(tracked: &HashMap<window::Id, BarRecord>, pending: &[window::Id]) {
+    for id in pending {
+        if let Some(record) = tracked.get(id) {
+            log::debug!(
+                "bars: still waiting for {} on {}",
+                record.namespace,
+                record.monitor
+            );
+        }
+    }
+}
+
+/// Report bar namespaces on screen that belong to neither the tracked nor
+/// the closing set — nothing in this process can close one, so it is
+/// reported, not actioned.
+fn log_orphans(orphans: &[String]) {
+    for namespace in orphans {
+        log::error!("bar invariant: untracked bar surface {namespace} on screen");
     }
 }
 
