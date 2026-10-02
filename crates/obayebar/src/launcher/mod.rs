@@ -275,7 +275,6 @@ impl Launcher {
             },
             _ => {}
         }
-        // Always keep focus on the search bar.
         Response::stay(focus_search())
     }
 

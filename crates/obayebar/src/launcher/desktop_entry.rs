@@ -291,8 +291,6 @@ pub fn save_launch_counts(counts: &HashMap<String, u32>) {
     }
 }
 
-// --- Launching ---
-
 /// Strip XDG field codes from an Exec value, leaving a shell-runnable string.
 ///
 /// Anything `%`-prefixed is a field code: we launch without files or URIs, so

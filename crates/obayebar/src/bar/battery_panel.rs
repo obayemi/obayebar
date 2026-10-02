@@ -138,7 +138,6 @@ fn gauge_widget(battery: &BatteryInfo) -> Element<'_, Message> {
 pub fn view(battery: &BatteryInfo) -> Element<'_, Message> {
     let header = panel_header(battery.icon_name, "Battery", style::M3_PRIMARY);
 
-    // Time remaining text
     let time_text = if battery.charging && battery.time_to_full > 0 {
         let dur = format_duration(battery.time_to_full);
         format!("{dur} until full")
@@ -162,7 +161,6 @@ pub fn view(battery: &BatteryInfo) -> Element<'_, Message> {
         .width(Length::Fill)
         .align_x(Alignment::Center);
 
-    // Power profile selector
     if let Some(ref profiles) = battery.power_profiles {
         content = content.push(separator());
         content = content.push(

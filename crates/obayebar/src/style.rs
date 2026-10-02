@@ -1,8 +1,9 @@
+//! Colors in this module follow the Material Design 3 dark baseline palette.
+
 use iced::widget::container;
 use iced::{Background, Border, Color, Font};
 use std::borrow::Cow;
 
-// Material Design 3 dark theme baseline palette
 pub const M3_PRIMARY: Color = Color::from_rgb(0.816, 0.737, 1.0);
 pub const M3_ON_PRIMARY: Color = Color::from_rgb(0.220, 0.118, 0.447);
 
@@ -227,7 +228,6 @@ pub fn audio_panel_height(sink_count: usize) -> u32 {
     // N entries + label = (N+1) items → N gaps of 2px
     let sink_list = n.mul_add(per_sink + 2.0, sink_label);
 
-    // Separator
     let separator = 1.0;
 
     // Volume section column (spacing = SPACING_SMALL):
@@ -360,7 +360,6 @@ pub fn network_panel_height(
 
     // Header: icon + "Network" + toggle
     let header = FONT_SIZE_LARGE * LINE_HEIGHT;
-    // Separator
     let separator = 1.0;
 
     // Active-connection rows are plain text; Wi-Fi rows carry an `icon_button`
@@ -613,7 +612,6 @@ pub fn load_icon_font() -> Vec<Cow<'static, [u8]>> {
         }
     }
 
-    // Try fontdb as last resort
     {
         let mut db = fontdb::Database::new();
         db.load_system_fonts();

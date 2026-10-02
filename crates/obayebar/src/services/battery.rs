@@ -189,7 +189,6 @@ async fn run_battery_loop(
     }
     .await;
 
-    // Emit initial state
     let mut last = read_full_state(&upower_proxy, conn).await;
     tx.send(last.clone()).map_err(|_| ())?;
 
@@ -205,7 +204,6 @@ async fn run_battery_loop(
             () = REFRESH.requested() => {
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             }
-            // Fallback refresh every 5 minutes in case signals are missed
             () = tokio::time::sleep(std::time::Duration::from_mins(5)) => {}
         }
 

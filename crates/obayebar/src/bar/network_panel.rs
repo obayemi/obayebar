@@ -238,7 +238,6 @@ pub fn view<'a>(
     }
 
     if network.wifi_enabled {
-        // WiFi network list
         if network.access_points.is_empty() {
             content = content.push(
                 text("No Wi-Fi networks found")

@@ -476,7 +476,6 @@ pub async fn connect_network(ssid: String) -> Result<(), String> {
         .map_err(|e| format!("bad access point path: {e}"))?;
 
     if let Some(conn_path) = find_saved_connection(&conn, &ssid).await {
-        // Activate existing saved connection
         let conn_obj = zbus::zvariant::ObjectPath::try_from(conn_path.as_str())
             .map_err(|e| format!("bad connection path: {e}"))?;
         log::info!("network: activating saved connection for {ssid}");
@@ -540,7 +539,6 @@ async fn run_network_loop(
         .await
         .map_err(|_| ())?;
 
-    // Emit initial state
     let mut last = read_network_dbus(conn).await;
     tx.send(last.clone()).map_err(|_| ())?;
 

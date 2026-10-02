@@ -104,7 +104,6 @@ impl canvas::Program<Message> for WorkspaceCanvas<'_> {
                 );
                 frame.fill(&indicator_rect, style::with_alpha(style::M3_PRIMARY, 0.15));
 
-                // Draw workspace labels
                 for (i, &(id, is_active, is_occupied)) in self.workspaces.iter().enumerate() {
                     #[allow(clippy::cast_precision_loss)]
                     let y = (i as f32) * (size + spacing);

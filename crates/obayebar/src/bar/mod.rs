@@ -81,7 +81,6 @@ pub fn view<'a>(app: &'a App, monitor: Option<&'a str>) -> Element<'a, Message> 
         .and_then(|m| app.ws_cache.get(m))
         .unwrap_or(&app.ws_cache_fallback);
 
-    // Cache keys for lazy sections
     let active_title: Option<String> = app.active_window.as_ref().map(|w| w.title.clone());
     let has_font = app.vector_font.is_some();
 

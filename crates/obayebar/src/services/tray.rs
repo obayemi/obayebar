@@ -114,7 +114,6 @@ async fn run_tray_loop(
         .await
         .map_err(|_| ())?;
 
-    // Emit initial state
     // Tracked so the fallback refresh only pushes when something changed —
     // the other three `spawn_stream` consumers already funnel through
     // `send_if_changed`, and an unconditional send makes iced_layershell
@@ -126,7 +125,6 @@ async fn run_tray_loop(
         tokio::select! {
             Some(_) = registered.next() => {}
             Some(_) = unregistered.next() => {}
-            // Fallback refresh every 2 minutes
             () = tokio::time::sleep(std::time::Duration::from_mins(2)) => {}
         }
 

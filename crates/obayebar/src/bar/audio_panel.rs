@@ -100,7 +100,6 @@ fn volume_section(audio: &AudioInfo) -> Element<'_, Message> {
 pub fn view(audio: &AudioInfo) -> Element<'_, Message> {
     let header = panel_header(audio.icon_name, "Audio", style::M3_PRIMARY);
 
-    // Output device selection
     let mut sink_list = column![text("Output device")
         .size(style::FONT_SIZE_SMALLER)
         .color(style::M3_ON_SURFACE_VARIANT)]

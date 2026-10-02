@@ -368,7 +368,6 @@ fn process_command(cmd: &AudioCommand, proxies: &PwProxies, state: &PwState) {
             let Some(metadata) = proxies.metadata.as_ref() else {
                 return;
             };
-            // Find the node name for this id
             let Some(sink) = state.sinks.iter().find(|s| s.id == id) else {
                 return;
             };
@@ -459,7 +458,6 @@ fn try_run_pipewire(
         })
         .register();
 
-    // Timer to poll command channel
     let timer_proxies = Rc::clone(&proxies);
     let timer_state = Rc::clone(&state);
     let cmd_timer = main_loop.loop_().add_timer(move |_| {

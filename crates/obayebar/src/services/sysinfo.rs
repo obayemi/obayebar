@@ -328,7 +328,6 @@ pub fn stream() -> impl Stream<Item = SysInfo> {
         let mut last = SysInfo::default();
 
         loop {
-            // CPU
             let cpu_percent = tokio::fs::read_to_string("/proc/stat")
                 .await
                 .ok()
@@ -346,20 +345,17 @@ pub fn stream() -> impl Stream<Item = SysInfo> {
                 None => None,
             };
 
-            // GPU
             let (gpu_percent, gpu_temp_c) = match &gpu_backend {
                 Some(backend) => read_gpu_info(backend).await,
                 None => (0.0, None),
             };
 
-            // RAM
             let ram_percent = tokio::fs::read_to_string("/proc/meminfo")
                 .await
                 .ok()
                 .and_then(|content| parse_meminfo(&content))
                 .unwrap_or(0.0);
 
-            // Network
             let (net_rx, net_tx) = tokio::fs::read_to_string("/proc/net/dev")
                 .await
                 .ok()

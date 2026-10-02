@@ -266,7 +266,6 @@ fn log_emit(what: &str, result: zbus::Result<()>) {
 /// `bits_per_sample`, channels, pixel data. Its header is validated by
 /// [`ImageGeometry::validate`] before a single byte is allocated.
 fn extract_image(hints: &HashMap<String, zbus::zvariant::OwnedValue>) -> Option<NotificationImage> {
-    // Try image-data / image_data first
     for key in &["image-data", "image_data"] {
         if let Some(val) = hints.get(*key) {
             if let Some(img) = parse_image_data(val) {
@@ -465,7 +464,6 @@ fn parse_image_data(value: &zbus::zvariant::OwnedValue) -> Option<NotificationIm
     let structure = if let Ok(Value::Structure(s)) = value.downcast_ref::<Value>() {
         s.try_clone().ok()?
     } else {
-        // Try via owned conversion
         let val: Value = value.try_into().ok()?;
         if let Value::Structure(s) = val {
             s.try_clone().ok()?

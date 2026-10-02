@@ -50,7 +50,6 @@ fn device_entry(dev: &crate::services::bluetooth::BluetoothDevice) -> Element<'_
         );
     }
 
-    // Action buttons
     let connect_icon = if dev.connected {
         style::ICON_BLUETOOTH_CONNECTED
     } else {
@@ -178,11 +177,9 @@ pub fn view(bt: &BluetoothInfo) -> Element<'_, Message> {
         .width(Length::Fill);
 
     if bt.powered {
-        // Discovery toggle
         content = content.push(discovery_button(bt.discovering));
         content = content.push(separator());
 
-        // Paired devices
         let paired: Vec<_> = bt.devices.iter().filter(|d| d.paired).collect();
         let mut device_list = column![text("Devices")
             .size(style::FONT_SIZE_SMALLER)

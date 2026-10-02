@@ -386,7 +386,6 @@ async fn run_bluetooth_loop(
             None => futures_util::stream::pending().boxed(),
         };
 
-    // Emit initial state
     let mut last = read_bluetooth_dbus(conn, adapter_path.as_deref()).await;
     tx.send(last.clone()).map_err(|_| ())?;
 
@@ -396,7 +395,6 @@ async fn run_bluetooth_loop(
             Some(_) = ifaces_removed.next() => {}
             Some(()) = adapter_signals.next() => {}
             () = PANEL.changed() => {}
-            // Fallback refresh every 2 minutes
             () = tokio::time::sleep(std::time::Duration::from_mins(2)) => {}
         }
 
