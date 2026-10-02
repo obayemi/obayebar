@@ -4,7 +4,7 @@
 //! testable without a compositor — the bugs it needs to catch all lived in
 //! the gap between a tracking map and reality.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use iced::window;
 
@@ -190,18 +190,13 @@ fn partition_closing(
     closing: &HashMap<window::Id, ClosingRecord>,
     location: &HashMap<&str, &str>,
 ) -> (Vec<window::Id>, Vec<window::Id>) {
-    let mut observed = Vec::new();
-    let mut gone = Vec::new();
-    let mut closing_records: Vec<(&window::Id, &ClosingRecord)> = closing.iter().collect();
-    closing_records.sort_by_key(|(id, _)| **id);
-    for (id, record) in closing_records {
-        if location.contains_key(record.namespace.as_str()) {
-            observed.push(*id);
-        } else {
-            gone.push(*id);
-        }
-    }
-    (observed, gone)
+    let mut ids: Vec<window::Id> = closing.keys().copied().collect();
+    ids.sort();
+    ids.into_iter().partition(|id| {
+        closing
+            .get(id)
+            .is_some_and(|r| location.contains_key(r.namespace.as_str()))
+    })
 }
 
 /// Monitors a tracked record names but that end this pass without a bar we
@@ -210,14 +205,13 @@ fn uncovered_monitors(
     tracked: &HashMap<window::Id, BarRecord>,
     covered: &HashSet<&str>,
 ) -> Vec<String> {
-    let mut dropped: Vec<String> = tracked
+    tracked
         .values()
         .map(|r| r.monitor.clone())
         .filter(|m| !covered.contains(m.as_str()))
-        .collect();
-    dropped.sort();
-    dropped.dedup();
-    dropped
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 /// The single uncovered monitor this pass spawns for, lowest name first for
