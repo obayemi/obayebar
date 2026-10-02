@@ -1822,11 +1822,7 @@ impl App {
 
         let logical_h = geom.map_or(FALLBACK_LOGICAL_H, |g| {
             let scale = if g.scale > 0.0 { g.scale } else { 1.0 };
-            // Transforms 1/3/5/7 rotate by 90° or 270°, swapping width/height.
-            let raw = match g.transform {
-                1 | 3 | 5 | 7 => g.width,
-                _ => g.height,
-            };
+            let (_, raw) = g.oriented_size();
             raw as f32 / scale
         });
 
