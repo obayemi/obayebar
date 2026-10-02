@@ -230,7 +230,6 @@ fn main() {
 }
 
 #[derive(Debug)]
-#[allow(clippy::struct_excessive_bools)]
 pub struct App {
     /// Every bar surface we have asked the compositor for, and the state the
     /// reconcile loop needs to keep that in sync with reality. See
