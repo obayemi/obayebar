@@ -261,7 +261,6 @@ fn classify_record<'a>(
 ) -> Outcome {
     let monitor_disconnected = !expected.contains(&record.monitor);
     match location.get(record.namespace.as_str()) {
-        // Observed exactly where we asked.
         Some(actual) if *actual == record.monitor => {
             if monitor_disconnected {
                 Outcome::Close(CloseReason::MonitorDisconnected)
@@ -277,7 +276,6 @@ fn classify_record<'a>(
         // output and nothing told us, so seeing it here is the only way to
         // catch it.
         Some(_) => Outcome::Close(CloseReason::WrongMonitor),
-        // Not mapped anywhere.
         None if monitor_disconnected => Outcome::Forget(ForgetReason::MonitorDisconnected),
         None => match record.state {
             // It was there and is not any more: the surface died without a
