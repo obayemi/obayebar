@@ -49,16 +49,14 @@ pub fn expand_tilde(path: &Path) -> PathBuf {
     let Ok(rest) = path.strip_prefix("~") else {
         return path.to_path_buf();
     };
-    dirs::home_dir().map_or_else(
-        || {
-            log::warn!(
-                "xdg: cannot expand {} because the home directory is unknown",
-                path.display()
-            );
-            path.to_path_buf()
-        },
-        |home| home.join(rest),
-    )
+    let Some(home) = dirs::home_dir() else {
+        log::warn!(
+            "xdg: cannot expand {} because the home directory is unknown",
+            path.display()
+        );
+        return path.to_path_buf();
+    };
+    home.join(rest)
 }
 
 /// `runtime_dir()`, created if needed with mode 700.
