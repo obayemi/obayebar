@@ -100,10 +100,11 @@ impl std::fmt::Display for ForgetReason {
     }
 }
 
-/// What `plan_from_observation` decided. Every field is sorted so the plan is
-/// deterministic and directly comparable in tests — the order comes from
-/// walking each source (`tracked`, `closing`, `expected`) in id or name order,
-/// never from a separate sort afterward.
+/// What `plan_from_observation` decided.
+///
+/// Every field is in a deterministic order (id order for records, name order
+/// for monitors and namespaces), so a plan can be compared directly in
+/// tests.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct BarPlan {
     /// Surfaces to close, with the reason. The caller moves each into the
