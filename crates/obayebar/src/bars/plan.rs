@@ -475,8 +475,7 @@ mod reconcile_tests {
 
     #[test]
     fn two_bars_on_one_monitor_leaves_exactly_one() {
-        let a = window::Id::unique();
-        let b = window::Id::unique();
+        let (kept, dropped) = ordered_ids();
         let plan = plan(
             Some(&observed([(
                 "DP-1",
@@ -484,11 +483,10 @@ mod reconcile_tests {
             )])),
             &expected(["DP-1"]),
             &tracked([
-                (a, "DP-1", "obayebar-bar-1", true),
-                (b, "DP-1", "obayebar-bar-2", true),
+                (kept, "DP-1", "obayebar-bar-1", true),
+                (dropped, "DP-1", "obayebar-bar-2", true),
             ]),
         );
-        let (kept, dropped) = if a < b { (a, b) } else { (b, a) };
         assert_eq!(plan.verified, vec![kept]);
         assert_eq!(plan.close, vec![(dropped, CloseReason::DuplicateOnMonitor)]);
         assert_eq!(plan.spawn, None);
