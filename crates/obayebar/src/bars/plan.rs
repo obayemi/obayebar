@@ -4,7 +4,7 @@
 //! testable without a compositor — the bugs it needs to catch all lived in
 //! the gap between a tracking map and reality.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use iced::window;
 
@@ -101,7 +101,9 @@ impl std::fmt::Display for ForgetReason {
 }
 
 /// What `plan_from_observation` decided. Every field is sorted so the plan is
-/// deterministic and directly comparable in tests.
+/// deterministic and directly comparable in tests — the order comes from
+/// walking each source (`tracked`, `closing`, `expected`) in id or name order,
+/// never from a separate sort afterward.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct BarPlan {
     /// Surfaces to close, with the reason. The caller moves each into the
@@ -139,7 +141,7 @@ pub struct BarPlan {
 /// against, passed in so this stays a pure function of its inputs.
 pub fn plan_from_observation(
     observed: Option<&obayebar_core::hypr::LayerMap>,
-    expected: &std::collections::HashSet<String>,
+    expected: &HashSet<String>,
     tracked: &HashMap<window::Id, BarRecord>,
     closing: &HashMap<window::Id, ClosingRecord>,
     prefix: &str,
@@ -156,75 +158,21 @@ pub fn plan_from_observation(
         return plan;
     };
 
-    // Where each namespace actually is, according to the compositor.
-    let mut location: HashMap<&str, &str> = HashMap::new();
-    for (monitor, namespaces) in observed {
-        for namespace in namespaces {
-            location.insert(namespace.as_str(), monitor.as_str());
-        }
-    }
+    let location = locate(observed);
 
     // Walk records in id order so the plan does not depend on HashMap order.
     let mut records: Vec<(&window::Id, &BarRecord)> = tracked.iter().collect();
     records.sort_by_key(|(id, _)| **id);
 
     // Monitors that end this pass with a bar we trust to be there.
-    let mut covered: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut covered: HashSet<&str> = HashSet::new();
 
     for (id, record) in records {
-        let wanted_gone = !expected.contains(&record.monitor);
-        match location.get(record.namespace.as_str()) {
-            // Observed exactly where we asked.
-            Some(actual) if *actual == record.monitor => {
-                if wanted_gone {
-                    plan.close.push((*id, CloseReason::MonitorDisconnected));
-                } else if covered.insert(actual) {
-                    plan.verified.push(*id);
-                } else {
-                    // Another bar already holds this monitor. Duplicates are
-                    // resolved by id order so the choice is stable.
-                    plan.close.push((*id, CloseReason::DuplicateOnMonitor));
-                }
-            }
-            // Observed somewhere else: `OutputName` fell back to the focused
-            // output and nothing told us. This is the flagship bug, and the
-            // only reason it is fixable is that we can see it here.
-            Some(_) => plan.close.push((*id, CloseReason::WrongMonitor)),
-            // Not mapped anywhere.
-            None => {
-                if wanted_gone {
-                    plan.forget.push((*id, ForgetReason::MonitorDisconnected));
-                } else {
-                    match record.state {
-                        BarState::Verified => {
-                            // It was there and is not any more: the surface
-                            // died without a usable `Closed` event, which is
-                            // precisely the lost-close case that used to
-                            // strand a monitor forever.
-                            plan.forget.push((*id, ForgetReason::SurfaceVanished));
-                        }
-                        BarState::Mapping { spawned_at }
-                            if now.duration_since(spawned_at) >= VERIFY_GRACE =>
-                        {
-                            // Out of patience — but *close* it rather than
-                            // forget it. A surface that has not mapped yet is
-                            // not a surface that is gone: it is very much
-                            // alive, still on its way, and dropping the
-                            // record here is what produced bars nothing could
-                            // ever reach. This is the flagship bug's second
-                            // half.
-                            plan.close.push((*id, CloseReason::NeverAppeared));
-                        }
-                        BarState::Mapping { .. } => {
-                            // Still mapping. Hold its monitor so we do not
-                            // spawn a second bar on top of a surface that is
-                            // on its way.
-                            plan.pending.push(*id);
-                            covered.insert(record.monitor.as_str());
-                        }
-                    }
-                }
-            }
+        match classify_record(record, &location, expected, &mut covered, now) {
+            Outcome::Verified => plan.verified.push(*id),
+            Outcome::Pending => plan.pending.push(*id),
+            Outcome::Close(reason) => plan.close.push((*id, reason)),
+            Outcome::Forget(reason) => plan.forget.push((*id, reason)),
         }
     }
 
@@ -244,17 +192,7 @@ pub fn plan_from_observation(
     // Anything of ours on screen that neither set claims. With both halves of
     // the fix in place this should be unreachable, which is the point of
     // reporting it: it is the signature of a surface escaping tracking.
-    let known: std::collections::HashSet<&str> = tracked
-        .values()
-        .map(|r| r.namespace.as_str())
-        .chain(closing.values().map(|r| r.namespace.as_str()))
-        .collect();
-    plan.orphans = location
-        .keys()
-        .filter(|ns| ns.starts_with(prefix) && !known.contains(*ns))
-        .map(|ns| (*ns).to_string())
-        .collect();
-    plan.orphans.sort();
+    plan.orphans = orphans(&location, tracked, closing, prefix);
 
     // Per-monitor state belongs to monitors that no longer keep a bar.
     let mut dropped: Vec<String> = tracked
@@ -266,21 +204,117 @@ pub fn plan_from_observation(
     dropped.dedup();
     plan.drop_state_for = dropped;
 
-    // One uncovered monitor per pass, lowest name first for determinism.
-    let mut uncovered: Vec<&String> = expected
+    // The single uncovered monitor this pass spawns for, lowest name first
+    // for determinism.
+    plan.spawn = expected
         .iter()
         .filter(|m| !covered.contains(m.as_str()))
-        .collect();
-    uncovered.sort();
-    plan.spawn = uncovered.first().map(|m| (*m).clone());
+        .min()
+        .cloned();
 
-    plan.close.sort();
-    plan.forget.sort();
-    plan.verified.sort();
-    plan.pending.sort();
-    plan.closing_observed.sort();
-    plan.closing_gone.sort();
     plan
+}
+
+/// Where each namespace actually is, according to the compositor.
+fn locate(observed: &obayebar_core::hypr::LayerMap) -> HashMap<&str, &str> {
+    let mut location = HashMap::new();
+    for (monitor, namespaces) in observed {
+        for namespace in namespaces {
+            location.insert(namespace.as_str(), monitor.as_str());
+        }
+    }
+    location
+}
+
+/// What [`plan_from_observation`] decided for one tracked record.
+enum Outcome {
+    /// Observed on the monitor it was requested for.
+    Verified,
+    /// Not observed yet but still inside its grace window.
+    Pending,
+    Close(CloseReason),
+    Forget(ForgetReason),
+}
+
+/// Decide what a single tracked record's observation means.
+///
+/// Takes `covered` by `&mut` because whether a record is verified or a
+/// duplicate depends on whether an earlier record (in id order) already
+/// claimed its monitor this pass; a record that stays `Pending` claims its
+/// monitor too, so a second bar is not spawned on top of one still on its
+/// way.
+fn classify_record<'a>(
+    record: &'a BarRecord,
+    location: &HashMap<&str, &'a str>,
+    expected: &HashSet<String>,
+    covered: &mut HashSet<&'a str>,
+    now: std::time::Instant,
+) -> Outcome {
+    let wanted_gone = !expected.contains(&record.monitor);
+    match location.get(record.namespace.as_str()) {
+        // Observed exactly where we asked.
+        Some(actual) if *actual == record.monitor => {
+            if wanted_gone {
+                Outcome::Close(CloseReason::MonitorDisconnected)
+            } else if covered.insert(actual) {
+                Outcome::Verified
+            } else {
+                // Another bar already holds this monitor. Duplicates are
+                // resolved by id order so the choice is stable.
+                Outcome::Close(CloseReason::DuplicateOnMonitor)
+            }
+        }
+        // Observed somewhere else: `OutputName` fell back to the focused
+        // output and nothing told us. This is the flagship bug, and the
+        // only reason it is fixable is that we can see it here.
+        Some(_) => Outcome::Close(CloseReason::WrongMonitor),
+        // Not mapped anywhere.
+        None if wanted_gone => Outcome::Forget(ForgetReason::MonitorDisconnected),
+        None => match record.state {
+            // It was there and is not any more: the surface died without a
+            // usable `Closed` event, which is precisely the lost-close case
+            // that used to strand a monitor forever.
+            BarState::Verified => Outcome::Forget(ForgetReason::SurfaceVanished),
+            // Out of patience — but *close* it rather than forget it. A
+            // surface that has not mapped yet is not a surface that is gone:
+            // it is very much alive, still on its way, and dropping the
+            // record here is what produced bars nothing could ever reach.
+            // This is the flagship bug's second half.
+            BarState::Mapping { spawned_at } if now.duration_since(spawned_at) >= VERIFY_GRACE => {
+                Outcome::Close(CloseReason::NeverAppeared)
+            }
+            // Still mapping. Hold its monitor so we do not spawn a second
+            // bar on top of a surface that is on its way.
+            BarState::Mapping { .. } => {
+                covered.insert(record.monitor.as_str());
+                Outcome::Pending
+            }
+        },
+    }
+}
+
+/// Bar namespaces on screen that belong to neither the tracked nor the
+/// closing set. Nothing in this process can close one, so it is reported,
+/// not actioned — it means a surface escaped tracking and the bug is
+/// upstream of here.
+fn orphans(
+    location: &HashMap<&str, &str>,
+    tracked: &HashMap<window::Id, BarRecord>,
+    closing: &HashMap<window::Id, ClosingRecord>,
+    prefix: &str,
+) -> Vec<String> {
+    let known: HashSet<&str> = tracked
+        .values()
+        .map(|r| r.namespace.as_str())
+        .chain(closing.values().map(|r| r.namespace.as_str()))
+        .collect();
+    let mut found: Vec<String> = location
+        .keys()
+        .filter(|ns| ns.starts_with(prefix) && !known.contains(*ns))
+        .map(|ns| (*ns).to_string())
+        .collect();
+    found.sort();
+    found
 }
 
 /// Whether a close that has not taken effect yet should be re-requested.
@@ -296,8 +330,8 @@ pub const fn should_reissue_close(attempts: u32) -> bool {
 #[allow(clippy::expect_used)]
 mod reconcile_tests {
     use super::{
-        plan_from_observation, should_reissue_close, BarPlan, BarRecord, BarState, CloseReason,
-        ClosingRecord, ForgetReason, VERIFY_GRACE,
+        locate, orphans, plan_from_observation, should_reissue_close, BarPlan, BarRecord, BarState,
+        CloseReason, ClosingRecord, ForgetReason, VERIFY_GRACE,
     };
     use iced::window;
     use std::collections::{HashMap, HashSet};
@@ -606,6 +640,59 @@ mod reconcile_tests {
     }
 
     #[test]
+    fn closing_and_verified_results_are_sorted_by_id() {
+        // Both fields come from walking a `HashMap` in an order this test
+        // sorts first — with unsorted ids this is the only thing that would
+        // catch a dropped `sort_by_key`.
+        let verified_1 = window::Id::unique();
+        let verified_2 = window::Id::unique();
+        let (v_lo, v_hi) = if verified_1 < verified_2 {
+            (verified_1, verified_2)
+        } else {
+            (verified_2, verified_1)
+        };
+        let observed_1 = window::Id::unique();
+        let observed_2 = window::Id::unique();
+        let (o_lo, o_hi) = if observed_1 < observed_2 {
+            (observed_1, observed_2)
+        } else {
+            (observed_2, observed_1)
+        };
+        let gone_1 = window::Id::unique();
+        let gone_2 = window::Id::unique();
+        let (g_lo, g_hi) = if gone_1 < gone_2 {
+            (gone_1, gone_2)
+        } else {
+            (gone_2, gone_1)
+        };
+
+        let plan = plan_from_observation(
+            Some(&observed([
+                ("DP-1", &["obayebar-bar-1"][..]),
+                ("DP-2", &["obayebar-bar-2"][..]),
+                ("DP-3", &["obayebar-bar-3", "obayebar-bar-4"][..]),
+            ])),
+            &expected(["DP-1", "DP-2"]),
+            &tracked([
+                (v_hi, "DP-1", "obayebar-bar-1", true),
+                (v_lo, "DP-2", "obayebar-bar-2", true),
+            ]),
+            &closing([
+                (o_hi, "obayebar-bar-3", 0),
+                (o_lo, "obayebar-bar-4", 0),
+                (g_hi, "obayebar-bar-5", 0),
+                (g_lo, "obayebar-bar-6", 0),
+            ]),
+            PREFIX,
+            Instant::now(),
+        );
+
+        assert_eq!(plan.verified, vec![v_lo, v_hi]);
+        assert_eq!(plan.closing_observed, vec![o_lo, o_hi]);
+        assert_eq!(plan.closing_gone, vec![g_lo, g_hi]);
+    }
+
+    #[test]
     fn a_closing_surface_is_not_reported_as_an_orphan() {
         // Otherwise every ordinary close would raise the alarm it exists for.
         let a = window::Id::unique();
@@ -738,5 +825,43 @@ mod reconcile_tests {
             &HashMap::new(),
         );
         assert_eq!(back.spawn.as_deref(), Some("DP-1"));
+    }
+
+    #[test]
+    fn locate_maps_each_namespace_to_its_monitor() {
+        let layers = observed([
+            ("DP-1", &["obayebar-bar-1"][..]),
+            ("DP-2", &["obayebar-bar-2", "waybar"][..]),
+        ]);
+        let location = locate(&layers);
+        assert_eq!(location.get("obayebar-bar-1"), Some(&"DP-1"));
+        assert_eq!(location.get("obayebar-bar-2"), Some(&"DP-2"));
+        assert_eq!(location.get("waybar"), Some(&"DP-2"));
+        assert_eq!(location.get("obayebar-bar-3"), None);
+    }
+
+    #[test]
+    fn orphans_reports_only_prefixed_namespaces_nothing_tracks() {
+        let a = window::Id::unique();
+        let b = window::Id::unique();
+        let layers = observed([(
+            "DP-1",
+            &[
+                "obayebar-bar-1",
+                "obayebar-bar-2",
+                "obayebar-bar-3",
+                "waybar",
+            ][..],
+        )]);
+        let location = locate(&layers);
+        let found = orphans(
+            &location,
+            &tracked([(a, "DP-1", "obayebar-bar-1", true)]),
+            &closing([(b, "obayebar-bar-2", 0)]),
+            PREFIX,
+        );
+        // obayebar-bar-1 is tracked, obayebar-bar-2 is closing, waybar is not
+        // ours at all: only obayebar-bar-3 is a surface escaping tracking.
+        assert_eq!(found, vec!["obayebar-bar-3".to_string()]);
     }
 }
