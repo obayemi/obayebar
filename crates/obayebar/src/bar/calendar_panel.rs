@@ -1,11 +1,11 @@
 use super::widgets::{icon_button, panel_body, scroll_lines, separator};
+use crate::calendar::{Day, DayKind, Month, Pager, Paging, Step, Week, WEEK_START};
 use crate::panel::PanelKind;
+use crate::style;
 use crate::Message;
 use chrono::{DateTime, Datelike, Local, NaiveDate, WeekdaySet};
 use iced::widget::{column, container, mouse_area, row, text, Row};
 use iced::{Alignment, Background, Color, Element, Length};
-use obayebar::calendar::{Day, DayKind, Month, Pager, Paging, Step, Week, WEEK_START};
-use obayebar::style;
 
 pub fn view(now: &DateTime<Local>, pager: Pager) -> Element<'static, Message> {
     let today = now.date_naive();
@@ -125,8 +125,8 @@ fn cell(label: String, color: Color, fill: Option<Color>) -> Element<'static, Me
 #[cfg(test)]
 mod tests {
     use super::day_style;
-    use obayebar::calendar::DayKind;
-    use obayebar::style;
+    use crate::calendar::DayKind;
+    use crate::style;
 
     #[test]
     fn today_is_filled_solid() {

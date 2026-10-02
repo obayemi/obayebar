@@ -1,11 +1,11 @@
 use super::widgets::{panel_body, panel_header, GaugeProgram};
 use crate::panel::PanelKind;
 use crate::services::sysinfo::{self, SysInfo};
+use crate::style;
 use crate::Message;
 use iced::widget::canvas;
 use iced::widget::{column, container, row, text, Stack};
 use iced::{Alignment, Element, Length};
-use obayebar::style;
 
 const GAUGE_SIZE: f32 = style::SYSINFO_GAUGE_SIZE;
 const ARC_WIDTH: f32 = GAUGE_SIZE / 13.0;

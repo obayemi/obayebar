@@ -7,10 +7,10 @@ use crate::media::controls::{Controls, PlayPause};
 use crate::media::{Action, MediaState, Message as MediaMessage, Rotation};
 use crate::panel::PanelKind;
 use crate::services::media::{LoopStatus, Player};
+use crate::style;
 use crate::Message;
 use iced::widget::{button, column, container, image, row, text, Space, Stack};
 use iced::{Alignment, Color, Element, Length, Theme};
-use obayebar::style;
 
 /// Peak deviation of the wave from the track line at full amplitude.
 const WAVE_AMPLITUDE: f32 = 3.5;

@@ -20,12 +20,12 @@ pub mod workspaces;
 
 use std::sync::Arc;
 
+use crate::style;
 use crate::App;
 use crate::Message;
 use chrono::{Datelike, Timelike};
 use iced::widget::{column, container, lazy, Space};
 use iced::{Background, Element, Length};
-use obayebar::style;
 
 /// Bucket a percentage into threshold categories for cache-key hashing.
 /// 0 = normal, 1 = elevated (>=70%), 2 = critical (>=90%)

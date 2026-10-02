@@ -27,7 +27,6 @@ pub fn cache_dir() -> Option<PathBuf> {
 /// Blocking, and meant to run on a blocking thread: it reads (and on a cold
 /// cache decodes and resizes) one file per entry.
 #[must_use]
-#[allow(clippy::implicit_hasher)]
 pub fn load(icon_paths: &HashMap<String, PathBuf>) -> HashMap<String, image::Handle> {
     let dir = cache_dir();
     let mut icons = HashMap::with_capacity(icon_paths.len());

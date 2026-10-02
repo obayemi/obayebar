@@ -276,7 +276,6 @@ pub fn load_launch_counts() -> HashMap<String, u32> {
 }
 
 /// Save launch frequency counts to the XDG data directory.
-#[allow(clippy::implicit_hasher)]
 pub fn save_launch_counts(counts: &HashMap<String, u32>) {
     let Some(dir) = data_dir() else {
         return;

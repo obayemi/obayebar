@@ -1,10 +1,10 @@
 use super::widgets::{hover_button_style, panel_body, panel_header, separator};
 use crate::panel::PanelKind;
 use crate::services::audio::AudioInfo;
+use crate::style;
 use crate::Message;
 use iced::widget::{button, column, container, row, slider, text};
 use iced::{Alignment, Element, Length};
-use obayebar::style;
 
 fn sink_entry(description: &str, sink_id: u32, is_selected: bool) -> Element<'_, Message> {
     let (bg, text_color) = if is_selected {

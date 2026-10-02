@@ -1,10 +1,10 @@
 use super::rotated_text::{render_rotated_text, truncate_with_ellipsis};
 use crate::services::hyprland::WindowInfo;
+use crate::style;
 use crate::Message;
 use ab_glyph::FontArc;
 use iced::widget::{container, image};
 use iced::{Alignment, Element, Length};
-use obayebar::style;
 
 pub fn view(window: Option<&WindowInfo>, font: Option<&FontArc>) -> Element<'static, Message> {
     let title = window.map_or_else(

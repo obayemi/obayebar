@@ -1,7 +1,7 @@
 use iced::Rectangle;
 use num_traits::ToPrimitive;
 
-use obayebar::style;
+use crate::style;
 
 /// Where a panel's trigger sits on its bar, in the bar surface's logical
 /// pixels. The bar spans its output's full height, so this is also where the

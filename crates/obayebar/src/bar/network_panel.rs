@@ -1,10 +1,10 @@
 use super::widgets::{icon_button, panel_body, panel_header, separator, styled_toggler};
 use crate::panel::PanelKind;
 use crate::services::network::NetworkInfo;
+use crate::style;
 use crate::Message;
 use iced::widget::{column, container, row, text, Space};
 use iced::{Alignment, Border, Element, Length};
-use obayebar::style;
 
 fn network_entry<'a>(
     ssid: &'a str,

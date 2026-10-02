@@ -1,13 +1,15 @@
 mod bar;
+mod calendar;
 mod config;
 mod control;
+mod launcher;
 mod media;
 mod notifications;
 mod panel;
 mod services;
+mod style;
 
-use obayebar::launcher::{self, Launcher};
-use obayebar::style;
+use launcher::Launcher;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -334,7 +336,7 @@ pub struct App {
     pub focused_monitor: Option<String>,
     pub active_window: Option<WindowInfo>,
     pub time: chrono::DateTime<chrono::Local>,
-    pub calendar: obayebar::calendar::Pager,
+    pub calendar: calendar::Pager,
     pub battery: BatteryInfo,
     /// Behind an `Arc` because `bar::view` clones it on every frame — and the
     /// workspace spring drives 60 frames a second per monitor while animating,
@@ -395,7 +397,7 @@ pub enum Message {
     PanelHovered(panel::OpenRequest),
     /// The open delay of this hover elapsed.
     PanelOpenDelayElapsed(panel::Ticket),
-    Calendar(obayebar::calendar::Paging),
+    Calendar(calendar::Paging),
     Bluetooth(BluetoothInfo),
     BluetoothToggleDevice {
         path: String,
@@ -478,7 +480,7 @@ impl App {
                 focused_monitor: None,
                 active_window: None,
                 time: chrono::Local::now(),
-                calendar: obayebar::calendar::Pager::default(),
+                calendar: calendar::Pager::default(),
                 battery: BatteryInfo::default(),
                 network: Arc::new(NetworkInfo::default()),
                 connecting_ssid: None,
@@ -784,7 +786,7 @@ impl App {
                     let network = Arc::make_mut(&mut self.network);
                     network.wifi_enabled = enabled;
                     if !enabled {
-                        network.icon_name = obayebar::style::ICON_WIFI_OFF;
+                        network.icon_name = style::ICON_WIFI_OFF;
                     }
                 }
                 services::network::set_wifi_enabled(enabled);
@@ -1966,9 +1968,9 @@ impl App {
 /// View state to drop back to when a panel opens fresh, per kind. Only the
 /// calendar carries any: it always opens on the current month, never on
 /// wherever a previous visit paged it to.
-fn reset_panel_view(calendar: &mut obayebar::calendar::Pager, kind: PanelKind) {
+fn reset_panel_view(calendar: &mut calendar::Pager, kind: PanelKind) {
     if kind == PanelKind::Calendar {
-        *calendar = obayebar::calendar::Pager::default();
+        *calendar = calendar::Pager::default();
     }
 }
 
@@ -2818,7 +2820,7 @@ mod panel_pointer_tests {
 #[cfg(test)]
 mod reset_panel_view_tests {
     use super::{reset_panel_view, PanelKind};
-    use obayebar::calendar::{Pager, Step};
+    use crate::calendar::{Pager, Step};
 
     #[test]
     fn opening_the_calendar_resets_its_pager() {

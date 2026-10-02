@@ -5,9 +5,9 @@
 use std::f32::consts::TAU;
 use std::time::Duration;
 
+use crate::style;
 use iced::widget::canvas::{self, Frame, Geometry, LineCap, Path, Stroke};
 use iced::{mouse, Element, Length, Point, Rectangle, Renderer, Theme};
-use obayebar::style;
 
 use crate::media::Action;
 use crate::Message;

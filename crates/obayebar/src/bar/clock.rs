@@ -1,10 +1,10 @@
 use super::widgets::panel_trigger;
 use crate::panel::PanelKind;
+use crate::style;
 use crate::Message;
 use chrono::{DateTime, Local, Timelike};
 use iced::widget::{column, container, text, Space};
 use iced::{Alignment, Background, Element, Length};
-use obayebar::style;
 
 /// Render the bar clock, which opens the calendar panel.
 pub fn view(time: &DateTime<Local>, monitor: Option<String>) -> Element<'static, Message> {

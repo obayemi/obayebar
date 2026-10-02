@@ -1,10 +1,10 @@
 use super::widgets::{hover_button_style, panel_header, panel_with_exit, separator};
 use crate::panel::PanelKind;
 use crate::services::gitlab::{self, AuthState, GitlabInfo, TodoItem, TODO_PAGE_PATH};
+use crate::style;
 use crate::Message;
 use iced::widget::{button, column, container, row, scrollable, text, text_input, Space};
 use iced::{Alignment, Color, Element, Length};
-use obayebar::style;
 
 fn todo_entry(item: &TodoItem) -> Element<'_, Message> {
     let action_label = format!(

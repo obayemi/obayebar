@@ -1,11 +1,11 @@
 use super::widgets::{hover_button_style, panel_body, panel_header, separator, GaugeProgram};
 use crate::panel::PanelKind;
 use crate::services::battery::BatteryInfo;
+use crate::style;
 use crate::Message;
 use iced::widget::canvas;
 use iced::widget::{button, column, container, row, text, Stack};
 use iced::{Alignment, Element, Length};
-use obayebar::style;
 
 const GAUGE_SIZE: f32 = style::BATTERY_GAUGE_SIZE;
 const ARC_WIDTH: f32 = GAUGE_SIZE / 14.0;

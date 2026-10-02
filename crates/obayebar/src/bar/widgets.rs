@@ -2,13 +2,13 @@
 
 use super::trigger::PanelTrigger;
 use crate::panel::PanelKind;
+use crate::style;
 use crate::Message;
 use iced::widget::canvas::{self, path::Arc, Frame, Geometry, LineCap, Path, Stroke};
 use iced::widget::{button, container, mouse_area, text, toggler, Space};
 use iced::{
     mouse, Alignment, Color, Element, Length, Padding, Point, Radians, Rectangle, Renderer, Theme,
 };
-use obayebar::style;
 
 /// Pixels of touchpad scroll a compositor reports per wheel notch.
 const PIXELS_PER_LINE: f32 = 120.0;

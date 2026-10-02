@@ -63,7 +63,7 @@ impl Default for NetworkInfo {
             wifi_strength: 0,
             wifi_ssid: None,
             ethernet: false,
-            icon_name: obayebar::style::ICON_WIFI_OFF,
+            icon_name: crate::style::ICON_WIFI_OFF,
             access_points: Vec::new(),
             active_connections: Vec::new(),
         }
@@ -71,7 +71,7 @@ impl Default for NetworkInfo {
 }
 
 fn connection_icon(conn_type: &str) -> &'static str {
-    use obayebar::style;
+    use crate::style;
     match conn_type {
         "802-3-ethernet" => style::ICON_CABLE,
         "wireguard" | "vpn" => style::ICON_VPN,
@@ -80,7 +80,7 @@ fn connection_icon(conn_type: &str) -> &'static str {
 }
 
 const fn wifi_icon(strength: u8) -> &'static str {
-    use obayebar::style;
+    use crate::style;
     match strength {
         75..=100 => style::ICON_WIFI_4,
         50..=74 => style::ICON_WIFI_3,
@@ -279,13 +279,13 @@ async fn read_network_dbus(conn: &zbus::Connection) -> NetworkInfo {
     }
 
     let icon_name = if ethernet {
-        obayebar::style::ICON_CABLE
+        crate::style::ICON_CABLE
     } else if wifi {
         wifi_icon(wifi_strength)
     } else if connected {
-        obayebar::style::ICON_LANGUAGE
+        crate::style::ICON_LANGUAGE
     } else {
-        obayebar::style::ICON_WIFI_OFF
+        crate::style::ICON_WIFI_OFF
     };
 
     // Deliberately not gated on whether the panel is open. Withholding the

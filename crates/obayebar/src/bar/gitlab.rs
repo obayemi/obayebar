@@ -1,10 +1,10 @@
 use super::widgets::{icon_text, panel_trigger};
 use crate::panel::PanelKind;
 use crate::services::gitlab::AuthState;
+use crate::style;
 use crate::Message;
 use iced::widget::{column, text};
 use iced::{Alignment, Element};
-use obayebar::style;
 
 /// Render the bar entry: GitLab icon, plus a count badge when there are open
 /// todos. Clicking opens the popup. The icon color also signals the auth state

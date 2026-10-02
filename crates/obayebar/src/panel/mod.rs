@@ -4,8 +4,8 @@ use iced_layershell::reexport::{
 };
 
 use crate::services;
+use crate::style;
 use crate::Message;
-use obayebar::style;
 
 mod intent;
 mod placement;

@@ -3,10 +3,10 @@ use super::widgets::{
 };
 use crate::panel::PanelKind;
 use crate::services::bluetooth::BluetoothInfo;
+use crate::style;
 use crate::Message;
 use iced::widget::{button, column, container, row, text, Space};
 use iced::{Alignment, Border, Element, Length};
-use obayebar::style;
 
 fn device_icon(icon_hint: &str) -> &'static str {
     match icon_hint {

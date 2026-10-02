@@ -38,7 +38,7 @@ impl Default for BatteryInfo {
             present: false,
             percentage: 100.0,
             charging: false,
-            icon_name: obayebar::style::ICON_BATTERY_FULL,
+            icon_name: crate::style::ICON_BATTERY_FULL,
             time_to_empty: 0,
             time_to_full: 0,
             power_profiles: None,
@@ -47,7 +47,7 @@ impl Default for BatteryInfo {
 }
 
 fn battery_icon(percentage: f64, charging: bool) -> &'static str {
-    use obayebar::style;
+    use crate::style;
     if charging {
         if percentage >= 90.0 {
             style::ICON_BATTERY_CHARGING_FULL

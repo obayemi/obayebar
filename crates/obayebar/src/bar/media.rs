@@ -3,11 +3,11 @@ use super::widgets::{icon_text, panel_trigger};
 use crate::media::{MediaState, Trigger};
 use crate::panel::PanelKind;
 use crate::services::media::Player;
+use crate::style;
 use crate::Message;
 use ab_glyph::FontArc;
 use iced::widget::{column, image, lazy};
 use iced::{Alignment, Element};
-use obayebar::style;
 
 /// Longest label the bar shows before truncating it.
 const MAX_LABEL_CHARS: usize = 28;
