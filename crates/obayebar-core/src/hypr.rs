@@ -138,7 +138,7 @@ impl MonitorGeom {
 /// connected".
 #[derive(Debug, thiserror::Error)]
 pub enum IpcError {
-    #[error("HYPRLAND_INSTANCE_SIGNATURE or XDG_RUNTIME_DIR is unset")]
+    #[error("HYPRLAND_INSTANCE_SIGNATURE or XDG_RUNTIME_DIR is unset or not absolute")]
     NoSocketDir,
     #[error("connecting to {path}")]
     Connect {
@@ -171,7 +171,7 @@ pub enum IpcError {
 }
 
 /// The per-instance socket directory, or `None` when we are not running under
-/// Hyprland.
+/// Hyprland or `XDG_RUNTIME_DIR` is unset or relative.
 ///
 /// Always resolved through `HYPRLAND_INSTANCE_SIGNATURE` rather than by
 /// globbing: a machine can hold several instance directories at once, and a
@@ -179,8 +179,7 @@ pub enum IpcError {
 #[must_use]
 pub fn socket_dir() -> Option<PathBuf> {
     let sig = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok()?;
-    let xdg = std::env::var("XDG_RUNTIME_DIR").ok()?;
-    Some(PathBuf::from(xdg).join("hypr").join(sig))
+    Some(dirs::runtime_dir()?.join("hypr").join(sig))
 }
 
 /// Send `command` over the control socket and return the reply verbatim.

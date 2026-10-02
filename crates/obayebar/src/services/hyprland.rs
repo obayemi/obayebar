@@ -198,7 +198,7 @@ pub fn stream() -> impl Stream<Item = HyprEvent> {
                 State::Starting => {
                     let Some(dir) = socket_dir() else {
                         log::warn!(
-                            "hyprland: HYPRLAND_INSTANCE_SIGNATURE or XDG_RUNTIME_DIR unset, retrying"
+                            "hyprland: HYPRLAND_INSTANCE_SIGNATURE or XDG_RUNTIME_DIR unset or not absolute, retrying"
                         );
                         tokio::time::sleep(RETRY_DELAY).await;
                         state = State::Starting;
