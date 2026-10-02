@@ -155,7 +155,8 @@ impl BarFleet {
         self.tracked.values().any(|r| r.monitor == monitor)
     }
 
-    /// Spawn one layer-shell bar aimed at `monitor`, under a unique namespace.
+    /// Record a new bar aimed at `monitor` under a unique namespace, and
+    /// build the layer-shell settings the caller spawns it with.
     ///
     /// The namespace is the whole point: `OutputOption::OutputName` is a
     /// request, not a guarantee — on a name-cache miss layershellev creates the
