@@ -393,9 +393,10 @@ RUST_LOG=error obayebar-wallpaper             # less
 RUST_LOG=obayebar::services=debug obayebar    # one module
 ```
 
-`obayebar-lock` and `obayebar-launcher` are one-shot commands that report
-their own failures on stderr, so they stay at `error` unless `RUST_LOG`
-says otherwise.
+`obayebar-lock` stays at `error` unless `RUST_LOG` says otherwise.
+`obayebar-launcher` has no logging at all: it is a one-shot client that
+writes its failures straight to stderr, so `RUST_LOG` has
+nothing to raise.
 
 ## Wallpapers
 
