@@ -140,13 +140,13 @@ impl BarFleet {
 
     /// Record that a close we asked for landed. `None` if `id` was not a bar
     /// we were closing.
-    pub fn closing_remove(&mut self, id: window::Id) -> Option<ClosingRecord> {
+    pub fn close_landed(&mut self, id: window::Id) -> Option<ClosingRecord> {
         self.closing.remove(&id)
     }
 
     /// Record that the compositor closed a bar surface on its own. `None` if
     /// `id` was not one of our bars.
-    pub fn remove_bar(&mut self, id: window::Id) -> Option<BarRecord> {
+    pub fn bar_closed_by_compositor(&mut self, id: window::Id) -> Option<BarRecord> {
         self.tracked.remove(&id)
     }
 
