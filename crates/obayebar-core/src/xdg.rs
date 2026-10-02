@@ -1,4 +1,8 @@
 //! XDG base-directory helpers, anchored to the obayebar subdir.
+//!
+//! Resolution itself is [`dirs`]'s job: it ignores a relative
+//! `$XDG_*_HOME` per spec, and falls back to the passwd entry when `$HOME`
+//! is unset. This module only joins on the app subdir.
 
 use std::path::{Path, PathBuf};
 
@@ -7,48 +11,35 @@ const APP_DIR: &str = "obayebar";
 /// `$XDG_CONFIG_HOME/obayebar` or `$HOME/.config/obayebar`.
 #[must_use]
 pub fn config_dir() -> Option<PathBuf> {
-    resolve("XDG_CONFIG_HOME", ".config")
+    dirs::config_dir().map(|d| d.join(APP_DIR))
 }
 
 /// `$XDG_CACHE_HOME/obayebar` or `$HOME/.cache/obayebar`.
 #[must_use]
 pub fn cache_dir() -> Option<PathBuf> {
-    resolve("XDG_CACHE_HOME", ".cache")
+    dirs::cache_dir().map(|d| d.join(APP_DIR))
 }
 
 /// `$XDG_DATA_HOME/obayebar` or `$HOME/.local/share/obayebar`.
 #[must_use]
 pub fn data_dir() -> Option<PathBuf> {
-    resolve("XDG_DATA_HOME", ".local/share")
+    dirs::data_dir().map(|d| d.join(APP_DIR))
 }
 
-fn resolve(env_var: &str, home_subpath: &str) -> Option<PathBuf> {
-    if let Ok(base) = std::env::var(env_var) {
-        if !base.is_empty() {
-            return Some(PathBuf::from(base).join(APP_DIR));
-        }
-    }
-    let home = std::env::var("HOME").ok()?;
-    Some(PathBuf::from(home).join(home_subpath).join(APP_DIR))
-}
-
-/// `$XDG_RUNTIME_DIR/obayebar`, or `None` when it is unset.
+/// `$XDG_RUNTIME_DIR/obayebar`, or `None` when it is unset or not absolute.
 ///
 /// Deliberately no `$HOME` fallback, unlike the others: callers use this for
 /// files that must be mode-700 and torn down at logout (the generated hyprlock
 /// config names every wallpaper path). Silently landing those in a
 /// world-readable `$HOME` directory would defeat the reason for choosing the
-/// runtime dir in the first place.
+/// runtime dir in the first place. `dirs::runtime_dir` has no HOME fallback
+/// either.
 #[must_use]
 pub fn runtime_dir() -> Option<PathBuf> {
-    let base = std::env::var("XDG_RUNTIME_DIR").ok()?;
-    if base.is_empty() {
-        return None;
-    }
-    Some(PathBuf::from(base).join(APP_DIR))
+    dirs::runtime_dir().map(|d| d.join(APP_DIR))
 }
 
-/// Expand a leading `~` using `$HOME`.
+/// Expand a leading `~` using the user's home directory.
 ///
 /// Config files are hand-written, and `~/Images/wallpapers` is how a person
 /// writes that path. Only a leading `~` component expands — a `~` anywhere else
@@ -58,16 +49,16 @@ pub fn expand_tilde(path: &Path) -> PathBuf {
     let Ok(rest) = path.strip_prefix("~") else {
         return path.to_path_buf();
     };
-    match std::env::var("HOME") {
-        Ok(home) if !home.is_empty() => PathBuf::from(home).join(rest),
-        _ => {
+    dirs::home_dir().map_or_else(
+        || {
             log::warn!(
-                "xdg: cannot expand {} because HOME is unset",
+                "xdg: cannot expand {} because the home directory is unknown",
                 path.display()
             );
             path.to_path_buf()
-        }
-    }
+        },
+        |home| home.join(rest),
+    )
 }
 
 /// `runtime_dir()`, created if needed with mode 700.
@@ -81,12 +72,15 @@ pub fn expand_tilde(path: &Path) -> PathBuf {
 /// # Errors
 ///
 /// Returns an [`std::io::Error`] when the directory cannot be created, or
-/// `NotFound` when `XDG_RUNTIME_DIR` is unset.
+/// `NotFound` when `XDG_RUNTIME_DIR` is unset or not absolute.
 pub fn runtime_dir_create() -> std::io::Result<PathBuf> {
     use std::os::unix::fs::DirBuilderExt as _;
 
     let dir = runtime_dir().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::NotFound, "XDG_RUNTIME_DIR is unset")
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "XDG_RUNTIME_DIR is unset or not absolute",
+        )
     })?;
     if !dir.exists() {
         std::fs::DirBuilder::new()
