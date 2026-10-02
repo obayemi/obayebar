@@ -6,26 +6,39 @@ use crate::Message;
 use iced::widget::{column, container, row, text, Space};
 use iced::{Alignment, Border, Element, Length};
 
-fn network_entry<'a>(
-    ssid: &'a str,
-    icon_name: &'a str,
-    state: WifiRowState,
-) -> Element<'a, Message> {
-    let (bg, text_color, icon_color) = match state {
+fn network_entry(row: WifiRow<'_>) -> Element<'_, Message> {
+    let ssid = row.ap.ssid.as_str();
+    let icon_name = row.ap.icon_name;
+
+    let (bg, text_color, icon_color, show_spinner, action) = match row.state {
         WifiRowState::Active => (
             style::with_alpha(style::M3_PRIMARY, 0.15),
             style::M3_PRIMARY,
             style::M3_PRIMARY,
+            false,
+            icon_button(
+                style::ICON_CLOSE,
+                style::M3_ON_SURFACE_VARIANT,
+                Message::NetworkDisconnect,
+            ),
         ),
         WifiRowState::Connecting => (
             style::with_alpha(style::M3_TERTIARY, 0.10),
             style::M3_TERTIARY,
             style::M3_TERTIARY,
+            true,
+            Space::new().width(0.0).into(),
         ),
         WifiRowState::Idle => (
             iced::Color::TRANSPARENT,
             style::M3_ON_SURFACE,
             style::M3_ON_SURFACE_VARIANT,
+            false,
+            icon_button(
+                style::ICON_WIFI_4,
+                style::M3_ON_SURFACE_VARIANT,
+                Message::NetworkConnect(ssid.to_string()),
+            ),
         ),
     };
 
@@ -39,7 +52,7 @@ fn network_entry<'a>(
         .align_y(Alignment::Center)
         .width(Length::Fill);
 
-    if state == WifiRowState::Connecting {
+    if show_spinner {
         label_row = label_row.push(
             text(style::ICON_AUTORENEW)
                 .font(style::ICON_FONT)
@@ -47,21 +60,6 @@ fn network_entry<'a>(
                 .color(style::M3_TERTIARY),
         );
     }
-
-    let action: Element<'a, Message> = if state == WifiRowState::Connecting {
-        // No action button while connecting
-        Space::new().width(0.0).into()
-    } else {
-        let (action_icon, action_msg) = if state == WifiRowState::Active {
-            (style::ICON_CLOSE, Message::NetworkDisconnect)
-        } else {
-            (
-                style::ICON_WIFI_4,
-                Message::NetworkConnect(ssid.to_string()),
-            )
-        };
-        icon_button(action_icon, style::M3_ON_SURFACE_VARIANT, action_msg)
-    };
 
     let content = row![wifi_icon, label_row, action]
         .spacing(style::SPACING_SMALLER)
@@ -134,6 +132,7 @@ enum WifiRowState {
     Idle,
 }
 
+#[derive(Clone, Copy)]
 struct WifiRow<'a> {
     ap: &'a AccessPointInfo,
     state: WifiRowState,
@@ -258,8 +257,7 @@ pub fn view<'a>(
                 style::PANEL_MAX_VISIBLE_ROWS,
             );
             for row in rows {
-                network_list =
-                    network_list.push(network_entry(&row.ap.ssid, row.ap.icon_name, row.state));
+                network_list = network_list.push(network_entry(row));
             }
 
             content = content.push(network_list);
