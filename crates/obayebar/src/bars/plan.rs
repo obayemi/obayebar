@@ -320,8 +320,8 @@ fn orphans(
 /// Whether a close that has not taken effect yet should be re-requested.
 ///
 /// Thinned out to powers of two rather than repeated every pass: the first
-/// request is the one that matters, and a surface that ignores it is not going
-/// to be talked round by a request every 250ms.
+/// request is the one that matters, and a surface that ignores it will not be
+/// talked round by repeating it.
 pub const fn should_reissue_close(attempts: u32) -> bool {
     attempts.is_power_of_two()
 }
@@ -674,8 +674,6 @@ mod reconcile_tests {
 
     #[test]
     fn close_requests_are_repeated_but_thinned_out() {
-        // The first ask is the one that works; a surface ignoring it will not
-        // be won over by one every 250ms for the rest of the session.
         let reissued: Vec<u32> = (0..17).filter(|n| should_reissue_close(*n)).collect();
         assert_eq!(reissued, vec![1, 2, 4, 8, 16]);
     }
