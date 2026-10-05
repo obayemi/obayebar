@@ -234,9 +234,11 @@ the XDG directories. The `~` form works only in a hand-written
 
 - The module adds the package to `home.packages`. Thus all four programs are
   on the `PATH`.
-- The module writes `~/.config/obayebar/config.toml` from the options. The
-  module writes only the sections that you enable. If you enable no section,
-  the module writes no file.
+- The module writes `~/.config/obayebar/config.toml` from the options, with
+  a key only for each option you set: a value option that is not null, or a
+  switch turned away from its default. `wallpaper.enable` and `lock.enable`
+  add the wallpaper service and the hypridle wiring, not config keys. If you
+  set no such option, the module writes no file.
 - The module adds the `obayebar` systemd user service. The service starts with
   `programs.obayebar.systemd.target`, and starts again after a failure.
 - The module adds the slice of `systemd.slice`, `app-obayebar.slice` by
