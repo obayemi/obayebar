@@ -257,16 +257,17 @@ impl BarFleet {
     fn apply_verified(&mut self, verified: &[window::Id]) {
         for id in verified {
             if let Some(record) = self.tracked.get_mut(id) {
-                if !matches!(record.state, BarState::Verified) {
-                    log::info!("bars: {} confirmed on {}", record.namespace, record.monitor);
-                    // Something is working; stop backing off. Only on the
-                    // transition: re-confirming a bar that was already fine is
-                    // not progress, and treating it as such kept the backoff
-                    // pinned at its minimum while a stuck surface was polled
-                    // four times a second forever.
-                    self.verify_backoff = VERIFY_DELAY;
+                if matches!(record.state, BarState::Verified) {
+                    continue;
                 }
+                log::info!("bars: {} confirmed on {}", record.namespace, record.monitor);
                 record.state = BarState::Verified;
+                // Something is working; stop backing off. Only on the
+                // transition: re-confirming a bar that was already fine is
+                // not progress, and treating it as such kept the backoff
+                // pinned at its minimum while a stuck surface was polled
+                // four times a second forever.
+                self.reset_backoff();
             }
         }
     }
