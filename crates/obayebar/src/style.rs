@@ -625,7 +625,10 @@ fn icon_font_search_dirs(
     ]
 }
 
-/// Load the Material Symbols font from the system or `OBAYEBAR_FONT_DIR` env var.
+/// Load the Material Symbols Outlined font from `OBAYEBAR_FONT_DIR`, then
+/// the NixOS system profile's fonts, then the user font directory, then a
+/// fontdb query of the system fonts, taking the first match; empty when
+/// none has it.
 pub fn load_icon_font() -> Vec<Cow<'static, [u8]>> {
     let font_dirs = icon_font_search_dirs(
         std::env::var_os("OBAYEBAR_FONT_DIR").map(std::path::PathBuf::from),
