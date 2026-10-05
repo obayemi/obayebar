@@ -390,9 +390,9 @@ impl BarFleet {
             .min(MAX_VERIFY_BACKOFF);
     }
 
-    /// Report invariant violations against the *observation*, always — not
-    /// against our own tracking. A self-referential check would report
-    /// success in every broken state.
+    /// Report invariant violations against the observation; see
+    /// [`BarFleet::reconcile`] for why it must be the observation and not our
+    /// own tracking.
     fn log_invariants(&self, observed: Option<&LayerMap>, expected: &HashSet<String>) {
         let Some(observed) = observed else {
             return;
