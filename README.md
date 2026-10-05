@@ -710,8 +710,8 @@ decisions come from that goal:
   four conditions: the monitor disconnected, a duplicate bar sits on one
   monitor, the bar landed on the wrong monitor, or the surface never appeared
   within two seconds. The bar forgets a record without closing it in two
-  conditions: the monitor is gone and its surface never mapped there, or a
-  verified surface vanished without a close event. Any monitor left without a
+  conditions: the monitor is gone and its surface is no longer on screen, or
+  a verified surface vanished without a close event. Any monitor left without a
   bar then gets one new bar, one monitor per pass. The bar continues until
   the compositor agrees. The bar starts the surfaces one at a time. Thus a
   group of surfaces cannot use an old output-name cache, and cannot collect on
