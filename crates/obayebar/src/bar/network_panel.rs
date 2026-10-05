@@ -148,27 +148,22 @@ fn select_wifi_rows<'a>(
     connecting_ssid: Option<&str>,
     max_visible: usize,
 ) -> Vec<WifiRow<'a>> {
-    let mut rows = Vec::new();
-
-    if let Some(c_ssid) = connecting_ssid {
-        if active_ssid != Some(c_ssid) {
-            if let Some(ap) = access_points.iter().find(|a| a.ssid == c_ssid) {
-                rows.push(WifiRow {
-                    ap,
-                    state: WifiRowState::Connecting,
-                });
-            }
-        }
-    }
-
-    if let Some(ssid) = active_ssid {
-        if let Some(ap) = access_points.iter().find(|a| a.ssid == ssid) {
-            rows.push(WifiRow {
-                ap,
-                state: WifiRowState::Active,
-            });
-        }
-    }
+    let pinned = [
+        (
+            connecting_ssid.filter(|c| active_ssid != Some(*c)),
+            WifiRowState::Connecting,
+        ),
+        (active_ssid, WifiRowState::Active),
+    ];
+    let mut rows: Vec<WifiRow<'a>> = pinned
+        .into_iter()
+        .filter_map(|(ssid, state)| {
+            let ap = access_points
+                .iter()
+                .find(|a| Some(a.ssid.as_str()) == ssid)?;
+            Some(WifiRow { ap, state })
+        })
+        .collect();
 
     for ap in access_points {
         if rows.len() >= max_visible {
