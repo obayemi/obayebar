@@ -269,7 +269,11 @@ the XDG directories. The `~` form works only in a hand-written
   compositor cannot be asked — a Hyprland version or another compositor
   without that global, or no Wayland display at all — `--replace` falls
   back to taking over as before, restarting the lock screen and losing
-  the grace period and the typed password.
+  the grace period and the typed password. The module also sets
+  hypridle's `lock_cmd` to the same `obayebar-lock --replace`, so
+  `loginctl lock-session` — a keybind, the lid switch, anything that goes
+  through logind — locks through obayebar too, not only the two timeouts
+  above.
 - The module reads `gitlab.tokenFile` at start, and puts the contents in
   `OBAYEBAR_GITLAB_TOKEN`. The module reads the path at run time. Thus the
   token does not go into the Nix store.
