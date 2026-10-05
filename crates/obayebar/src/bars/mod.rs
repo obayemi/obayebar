@@ -276,7 +276,7 @@ impl BarFleet {
     fn apply_verified(&mut self, verified: &[window::Id]) {
         for id in verified {
             if let Some(record) = self.tracked.get_mut(id) {
-                if matches!(record.state, BarState::Verified) {
+                if record.state == BarState::Verified {
                     continue;
                 }
                 log::info!("bars: {} confirmed on {}", record.namespace, record.monitor);
@@ -370,10 +370,7 @@ impl BarFleet {
     /// left surfaces on screen with no one watching for them.
     fn needs_verification(&self, expected: &HashSet<String>) -> bool {
         !self.closing.is_empty()
-            || self
-                .tracked
-                .values()
-                .any(|r| !matches!(r.state, BarState::Verified))
+            || self.tracked.values().any(|r| r.state != BarState::Verified)
             || expected.iter().any(|m| !self.has_verified_bar_on(m))
     }
 
