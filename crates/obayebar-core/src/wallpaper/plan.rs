@@ -190,10 +190,18 @@ pub fn parse_interval(s: &str) -> Result<Option<Duration>, IntervalError> {
     // Not trimmed: the whole string was trimmed already, so any leftover
     // whitespace is *internal* ("30 m") and should be rejected, not absorbed.
     let digits = text.strip_suffix(unit).unwrap_or("");
-    let count: u64 = digits.parse().map_err(|_| IntervalError::NotANumber {
-        input: s.to_string(),
-        digits: digits.to_string(),
-        unit,
+    let count: u64 = digits.parse().map_err(|e: std::num::ParseIntError| {
+        if *e.kind() == std::num::IntErrorKind::PosOverflow {
+            IntervalError::TooLarge {
+                input: s.to_string(),
+            }
+        } else {
+            IntervalError::NotANumber {
+                input: s.to_string(),
+                digits: digits.to_string(),
+                unit,
+            }
+        }
     })?;
     if count == 0 {
         return Ok(None);
@@ -407,8 +415,18 @@ mod tests {
 
     #[test]
     fn interval_rejects_overflow() {
-        assert!(parse_interval("99999999999999999999d").is_err());
-        assert!(parse_interval(&format!("{}d", u64::MAX)).is_err());
+        assert_eq!(
+            parse_interval("99999999999999999999d")
+                .unwrap_err()
+                .to_string(),
+            r#""99999999999999999999d" is too large to be an interval"#
+        );
+        assert_eq!(
+            parse_interval(&format!("{}d", u64::MAX))
+                .unwrap_err()
+                .to_string(),
+            format!(r#""{}d" is too large to be an interval"#, u64::MAX)
+        );
     }
 
     #[test]
