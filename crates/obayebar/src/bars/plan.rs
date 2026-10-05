@@ -327,64 +327,16 @@ pub const fn should_reissue_close(attempts: u32) -> bool {
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod reconcile_tests {
-    use super::super::test_support::{expected, observed};
+    use super::super::test_support::{closing, expected, mapping, observed, tracked};
+    use super::super::BAR_NAMESPACE_PREFIX;
     use super::{
         locate, next_spawn, orphans, partition_closing, plan_from_observation,
         should_reissue_close, uncovered_monitors, BarPlan, BarRecord, BarState, CloseReason,
-        ClosingRecord, ForgetReason, VERIFY_GRACE,
+        ForgetReason, VERIFY_GRACE,
     };
     use iced::window;
     use std::collections::{BTreeMap, HashSet};
     use std::time::Instant;
-
-    /// Stands in for the per-instance prefix; the tests name their surfaces
-    /// with it so a name from another instance stays distinguishable.
-    const PREFIX: &str = "obayebar-bar-";
-
-    /// A tracking map from `(id, monitor, namespace, verified)` tuples.
-    /// Records start with their full grace window ahead of them.
-    fn tracked<const N: usize>(
-        entries: [(window::Id, &str, &str, bool); N],
-    ) -> BTreeMap<window::Id, BarRecord> {
-        entries
-            .into_iter()
-            .map(|(id, monitor, namespace, verified)| {
-                let state = if verified {
-                    BarState::Verified
-                } else {
-                    BarState::Mapping {
-                        spawned_at: Instant::now(),
-                    }
-                };
-                (
-                    id,
-                    BarRecord {
-                        monitor: monitor.to_string(),
-                        namespace: namespace.to_string(),
-                        state,
-                    },
-                )
-            })
-            .collect()
-    }
-
-    /// A closing set from `(id, namespace, attempts)` tuples.
-    fn closing<const N: usize>(
-        entries: [(window::Id, &str, u32); N],
-    ) -> BTreeMap<window::Id, ClosingRecord> {
-        entries
-            .into_iter()
-            .map(|(id, namespace, attempts)| {
-                (
-                    id,
-                    ClosingRecord {
-                        namespace: namespace.to_string(),
-                        attempts,
-                    },
-                )
-            })
-            .collect()
-    }
 
     /// Two fresh ids, lowest first, for a test that asserts on sort order.
     fn ordered_ids() -> (window::Id, window::Id) {
@@ -408,7 +360,7 @@ mod reconcile_tests {
             monitors,
             bars,
             &BTreeMap::new(),
-            PREFIX,
+            BAR_NAMESPACE_PREFIX,
             Instant::now(),
         )
     }
@@ -428,7 +380,7 @@ mod reconcile_tests {
         let plan = plan(
             Some(&observed([("DP-1", &["obayebar-bar-1"][..])])),
             &HashSet::new(),
-            &tracked([(a, "DP-1", "obayebar-bar-1", true)]),
+            &tracked([(a, "DP-1", "obayebar-bar-1", BarState::Verified)]),
         );
         assert_eq!(plan, BarPlan::default());
     }
@@ -459,7 +411,7 @@ mod reconcile_tests {
         let plan = plan(
             Some(&observed([("DP-1", &["obayebar-bar-1"][..])])),
             &expected(["DP-1"]),
-            &tracked([(a, "DP-1", "obayebar-bar-1", false)]),
+            &tracked([(a, "DP-1", "obayebar-bar-1", mapping())]),
         );
         assert_eq!(plan.verified, vec![a]);
         assert_eq!(plan.spawn, None);
@@ -474,7 +426,7 @@ mod reconcile_tests {
         let plan = plan(
             Some(&observed([("DP-1", &["obayebar-bar-1"][..])])),
             &expected(["DP-1", "DP-2"]),
-            &tracked([(a, "DP-2", "obayebar-bar-1", false)]),
+            &tracked([(a, "DP-2", "obayebar-bar-1", mapping())]),
         );
         assert_eq!(plan.close, vec![(a, CloseReason::WrongMonitor)]);
         // DP-1 has no bar of ours that we asked for, DP-2 lost its only
@@ -492,8 +444,8 @@ mod reconcile_tests {
             )])),
             &expected(["DP-1"]),
             &tracked([
-                (kept, "DP-1", "obayebar-bar-1", true),
-                (dropped, "DP-1", "obayebar-bar-2", true),
+                (kept, "DP-1", "obayebar-bar-1", BarState::Verified),
+                (dropped, "DP-1", "obayebar-bar-2", BarState::Verified),
             ]),
         );
         assert_eq!(plan.verified, vec![kept]);
@@ -507,7 +459,7 @@ mod reconcile_tests {
         let plan = plan(
             Some(&observed([("DP-2", &["obayebar-bar-1"][..])])),
             &expected(["DP-1"]),
-            &tracked([(a, "DP-2", "obayebar-bar-1", true)]),
+            &tracked([(a, "DP-2", "obayebar-bar-1", BarState::Verified)]),
         );
         assert_eq!(plan.close, vec![(a, CloseReason::MonitorDisconnected)]);
         assert_eq!(plan.drop_state_for, vec!["DP-2".to_string()]);
@@ -520,7 +472,7 @@ mod reconcile_tests {
         let plan = plan(
             Some(&observed([])),
             &expected(["DP-1"]),
-            &tracked([(a, "DP-2", "obayebar-bar-1", true)]),
+            &tracked([(a, "DP-2", "obayebar-bar-1", BarState::Verified)]),
         );
         assert_eq!(plan.forget, vec![(a, ForgetReason::MonitorDisconnected)]);
         assert!(plan.close.is_empty(), "{:?}", plan.close);
@@ -535,7 +487,7 @@ mod reconcile_tests {
         let plan = plan(
             Some(&observed([("DP-1", &[][..])])),
             &expected(["DP-1"]),
-            &tracked([(a, "DP-1", "obayebar-bar-1", true)]),
+            &tracked([(a, "DP-1", "obayebar-bar-1", BarState::Verified)]),
         );
         assert_eq!(plan.forget, vec![(a, ForgetReason::SurfaceVanished)]);
         assert_eq!(plan.spawn.as_deref(), Some("DP-1"));
@@ -551,7 +503,7 @@ mod reconcile_tests {
         let plan = plan(
             Some(&observed([])),
             &expected(["DP-1"]),
-            &tracked([(a, "DP-1", "obayebar-bar-1", false)]),
+            &tracked([(a, "DP-1", "obayebar-bar-1", mapping())]),
         );
         assert_eq!(plan.pending, vec![a]);
         assert_eq!(plan.spawn, None, "must not double-spawn while mapping");
@@ -569,18 +521,20 @@ mod reconcile_tests {
         let long_ago = now
             .checked_sub(VERIFY_GRACE)
             .expect("the clock has been running at least as long as the grace window");
-        let mut map = tracked([(a, "DP-1", "obayebar-bar-1", false)]);
-        map.entry(a).and_modify(|r| {
-            r.state = BarState::Mapping {
+        let map = tracked([(
+            a,
+            "DP-1",
+            "obayebar-bar-1",
+            BarState::Mapping {
                 spawned_at: long_ago,
-            };
-        });
+            },
+        )]);
         let plan = plan_from_observation(
             Some(&observed([])),
             &expected(["DP-1"]),
             &map,
             &closing([]),
-            PREFIX,
+            BAR_NAMESPACE_PREFIX,
             now,
         );
         assert_eq!(plan.close, vec![(a, CloseReason::NeverAppeared)]);
@@ -595,7 +549,7 @@ mod reconcile_tests {
         // window in a fraction of a second, condemning bars that were merely
         // slow to map. Many passes inside the window must change nothing.
         let a = window::Id::unique();
-        let map = tracked([(a, "DP-1", "obayebar-bar-1", false)]);
+        let map = tracked([(a, "DP-1", "obayebar-bar-1", mapping())]);
         for _ in 0..50 {
             let plan = plan(Some(&observed([])), &expected(["DP-1"]), &map);
             assert_eq!(plan.pending, vec![a]);
@@ -611,7 +565,7 @@ mod reconcile_tests {
             &expected(["DP-1"]),
             &BTreeMap::new(),
             &closing([(a, "obayebar-bar-1", 0)]),
-            PREFIX,
+            BAR_NAMESPACE_PREFIX,
             Instant::now(),
         );
         assert_eq!(still_there.closing_observed, vec![a]);
@@ -624,7 +578,7 @@ mod reconcile_tests {
             &expected(["DP-1"]),
             &BTreeMap::new(),
             &closing([(a, "obayebar-bar-1", 3)]),
-            PREFIX,
+            BAR_NAMESPACE_PREFIX,
             Instant::now(),
         );
         assert_eq!(gone.closing_gone, vec![a]);
@@ -648,8 +602,8 @@ mod reconcile_tests {
             ])),
             &expected(["DP-1", "DP-2"]),
             &tracked([
-                (v_hi, "DP-1", "obayebar-bar-1", true),
-                (v_lo, "DP-2", "obayebar-bar-2", true),
+                (v_hi, "DP-1", "obayebar-bar-1", BarState::Verified),
+                (v_lo, "DP-2", "obayebar-bar-2", BarState::Verified),
             ]),
             &closing([
                 (o_hi, "obayebar-bar-3", 0),
@@ -657,7 +611,7 @@ mod reconcile_tests {
                 (g_hi, "obayebar-bar-5", 0),
                 (g_lo, "obayebar-bar-6", 0),
             ]),
-            PREFIX,
+            BAR_NAMESPACE_PREFIX,
             Instant::now(),
         );
 
@@ -675,7 +629,7 @@ mod reconcile_tests {
             &expected(["DP-1"]),
             &BTreeMap::new(),
             &closing([(a, "obayebar-bar-1", 0)]),
-            PREFIX,
+            BAR_NAMESPACE_PREFIX,
             Instant::now(),
         );
         assert_eq!(plan.orphans, Vec::<String>::new());
@@ -735,7 +689,7 @@ mod reconcile_tests {
                 &["waybar", "obayebar-bar-1", "gtk-layer-shell"][..],
             )])),
             &expected(["DP-1"]),
-            &tracked([(a, "DP-1", "obayebar-bar-1", true)]),
+            &tracked([(a, "DP-1", "obayebar-bar-1", BarState::Verified)]),
         );
         assert_eq!(plan.verified, vec![a]);
         assert_eq!(plan.spawn, None);
@@ -755,8 +709,8 @@ mod reconcile_tests {
             ])),
             &expected(["DP-1", "DP-2"]),
             &tracked([
-                (a, "DP-1", "obayebar-bar-1", true),
-                (b, "DP-2", "obayebar-bar-2", true),
+                (a, "DP-1", "obayebar-bar-1", BarState::Verified),
+                (b, "DP-2", "obayebar-bar-2", BarState::Verified),
             ]),
         );
         assert_eq!(plan.spawn, None);
@@ -786,7 +740,7 @@ mod reconcile_tests {
         // DP-2 disappears and comes back while its bar was still unverified.
         // The stale record must not mask the returning monitor.
         let a = window::Id::unique();
-        let map = tracked([(a, "DP-2", "obayebar-bar-1", false)]);
+        let map = tracked([(a, "DP-2", "obayebar-bar-1", mapping())]);
 
         // Gone: forget it, and DP-1 is the only monitor left to serve.
         let gone = plan(Some(&observed([])), &expected(["DP-1"]), &map);
@@ -819,9 +773,9 @@ mod reconcile_tests {
         let b = window::Id::unique();
         let c = window::Id::unique();
         let records = tracked([
-            (a, "DP-2", "obayebar-bar-1", true),
-            (b, "DP-1", "obayebar-bar-2", true),
-            (c, "DP-2", "obayebar-bar-3", true),
+            (a, "DP-2", "obayebar-bar-1", BarState::Verified),
+            (b, "DP-1", "obayebar-bar-2", BarState::Verified),
+            (c, "DP-2", "obayebar-bar-3", BarState::Verified),
         ]);
         assert_eq!(
             uncovered_monitors(&records, &HashSet::new()),
@@ -873,9 +827,9 @@ mod reconcile_tests {
         let location = locate(&layers);
         let found = orphans(
             &location,
-            &tracked([(a, "DP-1", "obayebar-bar-1", true)]),
+            &tracked([(a, "DP-1", "obayebar-bar-1", BarState::Verified)]),
             &closing([(b, "obayebar-bar-2", 0)]),
-            PREFIX,
+            BAR_NAMESPACE_PREFIX,
         );
         // obayebar-bar-1 is tracked, obayebar-bar-2 is closing, waybar is not
         // ours at all: only obayebar-bar-3 is a surface escaping tracking.

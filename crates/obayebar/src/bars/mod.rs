@@ -457,7 +457,10 @@ fn log_orphans(orphans: &[String]) {
 /// planner boundary.
 #[cfg(test)]
 pub mod test_support {
-    use std::collections::HashSet;
+    use super::{BarRecord, BarState, ClosingRecord};
+    use iced::window;
+    use std::collections::{BTreeMap, HashSet};
+    use std::time::Instant;
 
     pub fn expected<const N: usize>(monitors: [&str; N]) -> HashSet<String> {
         monitors.iter().map(|m| (*m).to_string()).collect()
@@ -476,12 +479,56 @@ pub mod test_support {
             })
             .collect()
     }
+
+    /// A tracking map from `(id, monitor, namespace, state)` tuples.
+    pub fn tracked<const N: usize>(
+        entries: [(window::Id, &str, &str, BarState); N],
+    ) -> BTreeMap<window::Id, BarRecord> {
+        entries
+            .into_iter()
+            .map(|(id, monitor, namespace, state)| {
+                (
+                    id,
+                    BarRecord {
+                        monitor: monitor.to_string(),
+                        namespace: namespace.to_string(),
+                        state,
+                    },
+                )
+            })
+            .collect()
+    }
+
+    /// A closing set from `(id, namespace, attempts)` tuples.
+    pub fn closing<const N: usize>(
+        entries: [(window::Id, &str, u32); N],
+    ) -> BTreeMap<window::Id, ClosingRecord> {
+        entries
+            .into_iter()
+            .map(|(id, namespace, attempts)| {
+                (
+                    id,
+                    ClosingRecord {
+                        namespace: namespace.to_string(),
+                        attempts,
+                    },
+                )
+            })
+            .collect()
+    }
+
+    /// A freshly spawned bar's state: requested but not yet observed.
+    pub fn mapping() -> BarState {
+        BarState::Mapping {
+            spawned_at: Instant::now(),
+        }
+    }
 }
 
 #[cfg(test)]
 mod fleet_tests {
-    use super::test_support::{expected, observed};
-    use super::{BarClosed, BarFleet, BarRecord, BarState, ClosingRecord, VERIFY_DELAY};
+    use super::test_support::{closing, expected, mapping, observed, tracked};
+    use super::{BarClosed, BarFleet, BarState, BAR_NAMESPACE_PREFIX, VERIFY_DELAY};
     use iced::window;
     use iced_layershell::reexport::OutputOption;
     use std::collections::BTreeMap;
@@ -491,16 +538,9 @@ mod fleet_tests {
     /// a reset is observable.
     fn fleet_with(id: window::Id, monitor: &str, namespace: &str, state: BarState) -> BarFleet {
         BarFleet {
-            tracked: BTreeMap::from([(
-                id,
-                BarRecord {
-                    monitor: monitor.to_string(),
-                    namespace: namespace.to_string(),
-                    state,
-                },
-            )]),
+            tracked: tracked([(id, monitor, namespace, state)]),
             closing: BTreeMap::new(),
-            prefix: "obayebar-bar-".to_string(),
+            prefix: BAR_NAMESPACE_PREFIX.to_string(),
             generation: 0,
             verify_pending: false,
             verify_backoff: Duration::from_secs(8),
@@ -517,27 +557,14 @@ mod fleet_tests {
             "unrelated",
             BarState::Verified,
         );
-        fleet.closing.insert(
-            id,
-            ClosingRecord {
-                namespace: "obayebar-bar-1".to_string(),
-                attempts,
-            },
-        );
+        fleet.closing = closing([(id, "obayebar-bar-1", attempts)]);
         fleet
     }
 
     #[test]
     fn verifying_a_pending_bar_resets_backoff() {
         let id = window::Id::unique();
-        let mut fleet = fleet_with(
-            id,
-            "DP-1",
-            "obayebar-bar-1",
-            BarState::Mapping {
-                spawned_at: Instant::now(),
-            },
-        );
+        let mut fleet = fleet_with(id, "DP-1", "obayebar-bar-1", mapping());
         let obs = observed([("DP-1", &["obayebar-bar-1"])]);
         fleet.reconcile(Some(&obs), &expected(["DP-1"]), Instant::now());
 
@@ -706,14 +733,12 @@ mod fleet_tests {
     ) -> Result<(), &'static str> {
         let id = window::Id::unique();
         let mut fleet = fleet_with(id, "DP-1", "obayebar-bar-1", BarState::Verified);
-        fleet.tracked.insert(
+        fleet.tracked.extend(tracked([(
             window::Id::unique(),
-            BarRecord {
-                monitor: "DP-1".to_string(),
-                namespace: "obayebar-bar-2".to_string(),
-                state: BarState::Verified,
-            },
-        );
+            "DP-1",
+            "obayebar-bar-2",
+            BarState::Verified,
+        )]));
         let BarClosed::Died { uncovered } = fleet.on_closed(id) else {
             return Err("expected Died");
         };
