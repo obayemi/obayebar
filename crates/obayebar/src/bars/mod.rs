@@ -258,9 +258,6 @@ impl BarFleet {
 
         self.log_invariants(observed, expected);
 
-        // Keep verifying while anything is unconfirmed or uncovered. Once
-        // every monitor has a verified bar this stops scheduling, so a
-        // settled multi-monitor setup costs nothing.
         let needs_verify = self.needs_verification(expected);
 
         ReconcileOutcome {
@@ -380,7 +377,9 @@ impl BarFleet {
     ///
     /// A pending close counts: until an observation says the surface is gone,
     /// the close is a request nobody has confirmed, and stopping there is what
-    /// left surfaces on screen with no one watching for them.
+    /// left surfaces on screen with no one watching for them. Once every
+    /// monitor has a verified bar and nothing is closing, this stops
+    /// scheduling, so a settled multi-monitor setup costs nothing.
     fn needs_verification(&self, expected: &HashSet<String>) -> bool {
         !self.closing.is_empty()
             || self.tracked.values().any(|r| r.state != BarState::Verified)
