@@ -369,9 +369,7 @@ mod reconcile_tests {
 
     #[test]
     fn a_failed_observation_changes_nothing() {
-        // The single most damaging old behaviour: an IPC failure read as "no
-        // monitors" closed every bar, which under StartMode::Active emptied
-        // `units` and killed the process.
+        // Reading a failed query as "no monitors" would close every bar.
         let plan = plan(None, &expected(["DP-1"]), &BTreeMap::new());
         assert_eq!(plan, BarPlan::default());
     }
@@ -422,8 +420,6 @@ mod reconcile_tests {
 
     #[test]
     fn a_bar_on_the_wrong_monitor_is_closed_and_respawned() {
-        // The OutputName silent fallback. Previously invisible and permanent:
-        // the app kept believing the bar was on DP-2 forever.
         let a = window::Id::unique();
         let plan = plan(
             Some(&observed([("DP-1", &["obayebar-bar-1"][..])])),
@@ -514,10 +510,7 @@ mod reconcile_tests {
 
     #[test]
     fn a_bar_that_never_appears_is_closed_not_merely_forgotten() {
-        // The bug that put three bars on one screen after a dock hotplug.
-        // Giving up used to drop the record and nothing else, so when the
-        // surface finally mapped — a slow compositor, not a dead spawn — it
-        // belonged to no one: unclosable, and invisible to every later pass.
+        // Closing instead of forgetting keeps a late map reachable.
         let a = window::Id::unique();
         let now = Instant::now();
         let long_ago = now
@@ -546,10 +539,6 @@ mod reconcile_tests {
 
     #[test]
     fn the_grace_window_is_wall_clock_not_a_pass_count() {
-        // Passes are scheduled by monitor-set changes, and a hotplug emits a
-        // burst of those. Counting passes let the burst spend a whole grace
-        // window in a fraction of a second, condemning bars that were merely
-        // slow to map. Many passes inside the window must change nothing.
         let a = window::Id::unique();
         let map = tracked([(a, "DP-1", "obayebar-bar-1", mapping())]);
         for _ in 0..50 {
@@ -639,9 +628,6 @@ mod reconcile_tests {
 
     #[test]
     fn a_bar_surface_belonging_to_no_record_is_reported() {
-        // The shape of the bug, as seen from the outside: a bar on screen that
-        // nothing tracks. Unreachable now, and worth an error if it ever
-        // happens again.
         let plan = plan(
             Some(&observed([(
                 "DP-1",
