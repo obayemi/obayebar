@@ -8,7 +8,7 @@
 
 mod plan;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use crate::style;
@@ -88,7 +88,7 @@ pub struct BarFleet {
     /// This is bookkeeping, not truth: a record says which monitor we *asked*
     /// for, and `BarRecord::state` says whether the compositor was ever
     /// observed agreeing.
-    tracked: HashMap<window::Id, BarRecord>,
+    tracked: BTreeMap<window::Id, BarRecord>,
     /// Bar surfaces we have asked the compositor to close, kept until an
     /// observation shows they are actually gone.
     ///
@@ -96,7 +96,7 @@ pub struct BarFleet {
     /// tracking the moment we *ask* for its close can still map a moment
     /// later, and once that happens nothing tracks it and nothing can reach
     /// it to close it again.
-    closing: HashMap<window::Id, ClosingRecord>,
+    closing: BTreeMap<window::Id, ClosingRecord>,
     /// Namespace prefix for this instance's bars: [`BAR_NAMESPACE_PREFIX`] and
     /// our pid. Also what tells our surfaces from another instance's.
     prefix: String,
@@ -119,8 +119,8 @@ pub struct BarFleet {
 impl BarFleet {
     pub fn new() -> Self {
         Self {
-            tracked: HashMap::new(),
-            closing: HashMap::new(),
+            tracked: BTreeMap::new(),
+            closing: BTreeMap::new(),
             prefix: format!("{BAR_NAMESPACE_PREFIX}{}-", std::process::id()),
             generation: 0,
             verify_pending: false,
@@ -435,7 +435,7 @@ impl BarFleet {
 }
 
 /// Log each record still inside its grace window, waiting to be observed.
-fn log_pending(tracked: &HashMap<window::Id, BarRecord>, pending: &[window::Id]) {
+fn log_pending(tracked: &BTreeMap<window::Id, BarRecord>, pending: &[window::Id]) {
     for id in pending {
         if let Some(record) = tracked.get(id) {
             log::debug!(
@@ -487,14 +487,14 @@ mod fleet_tests {
     use super::{BarClosed, BarFleet, BarRecord, BarState, ClosingRecord, VERIFY_DELAY};
     use iced::window;
     use iced_layershell::reexport::OutputOption;
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
     use std::time::{Duration, Instant};
 
     /// A fleet with one tracked record, backed off well past the minimum so
     /// a reset is observable.
     fn fleet_with(id: window::Id, monitor: &str, namespace: &str, state: BarState) -> BarFleet {
         BarFleet {
-            tracked: HashMap::from([(
+            tracked: BTreeMap::from([(
                 id,
                 BarRecord {
                     monitor: monitor.to_string(),
@@ -502,7 +502,7 @@ mod fleet_tests {
                     state,
                 },
             )]),
-            closing: HashMap::new(),
+            closing: BTreeMap::new(),
             prefix: "obayebar-bar-".to_string(),
             generation: 0,
             verify_pending: false,

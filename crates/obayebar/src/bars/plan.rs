@@ -4,7 +4,7 @@
 //! testable without a compositor — the bugs it needs to catch all lived in
 //! the gap between a tracking map and reality.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use iced::window;
 
@@ -139,8 +139,8 @@ pub struct BarPlan {
 pub fn plan_from_observation(
     observed: Option<&obayebar_core::hypr::LayerMap>,
     expected: &HashSet<String>,
-    tracked: &HashMap<window::Id, BarRecord>,
-    closing: &HashMap<window::Id, ClosingRecord>,
+    tracked: &BTreeMap<window::Id, BarRecord>,
+    closing: &BTreeMap<window::Id, ClosingRecord>,
     prefix: &str,
     now: std::time::Instant,
 ) -> BarPlan {
@@ -157,14 +157,10 @@ pub fn plan_from_observation(
 
     let location = locate(observed);
 
-    // Walk records in id order so the plan does not depend on HashMap order.
-    let mut records: Vec<(&window::Id, &BarRecord)> = tracked.iter().collect();
-    records.sort_by_key(|(id, _)| **id);
-
     // Monitors that end this pass with a bar we trust to be there.
     let mut covered: HashSet<&str> = HashSet::new();
 
-    for (id, record) in records {
+    for (id, record) in tracked {
         match classify_record(record, &location, expected, &mut covered, now) {
             Outcome::Verified => plan.verified.push(*id),
             Outcome::Pending => plan.pending.push(*id),
@@ -187,22 +183,20 @@ pub fn plan_from_observation(
 /// A bar on its way out deliberately does not count as covering a monitor,
 /// so a replacement is spawned without waiting for the close.
 fn partition_closing(
-    closing: &HashMap<window::Id, ClosingRecord>,
+    closing: &BTreeMap<window::Id, ClosingRecord>,
     location: &HashMap<&str, &str>,
 ) -> (Vec<window::Id>, Vec<window::Id>) {
-    let mut ids: Vec<window::Id> = closing.keys().copied().collect();
-    ids.sort();
-    ids.into_iter().partition(|id| {
-        closing
-            .get(id)
-            .is_some_and(|r| location.contains_key(r.namespace.as_str()))
-    })
+    let (still_there, gone): (Vec<_>, Vec<_>) = closing
+        .iter()
+        .partition(|(_, r)| location.contains_key(r.namespace.as_str()));
+    let ids = |pairs: Vec<(&window::Id, _)>| pairs.into_iter().map(|(id, _)| *id).collect();
+    (ids(still_there), ids(gone))
 }
 
 /// Monitors a tracked record names but that end this pass without a bar we
 /// trust to be there; their per-monitor state should be dropped.
 fn uncovered_monitors(
-    tracked: &HashMap<window::Id, BarRecord>,
+    tracked: &BTreeMap<window::Id, BarRecord>,
     covered: &HashSet<&str>,
 ) -> Vec<String> {
     tracked
@@ -302,8 +296,8 @@ fn classify_record<'a>(
 /// Our-prefix namespaces on screen that neither set claims.
 fn orphans(
     location: &HashMap<&str, &str>,
-    tracked: &HashMap<window::Id, BarRecord>,
-    closing: &HashMap<window::Id, ClosingRecord>,
+    tracked: &BTreeMap<window::Id, BarRecord>,
+    closing: &BTreeMap<window::Id, ClosingRecord>,
     prefix: &str,
 ) -> Vec<String> {
     let known: HashSet<&str> = tracked
@@ -339,7 +333,7 @@ mod reconcile_tests {
         ClosingRecord, ForgetReason, VERIFY_GRACE,
     };
     use iced::window;
-    use std::collections::{HashMap, HashSet};
+    use std::collections::{BTreeMap, HashSet};
     use std::time::Instant;
 
     /// Stands in for the per-instance prefix; the tests name their surfaces
@@ -350,7 +344,7 @@ mod reconcile_tests {
     /// Records start with their full grace window ahead of them.
     fn tracked<const N: usize>(
         entries: [(window::Id, &str, &str, bool); N],
-    ) -> HashMap<window::Id, BarRecord> {
+    ) -> BTreeMap<window::Id, BarRecord> {
         entries
             .into_iter()
             .map(|(id, monitor, namespace, verified)| {
@@ -376,7 +370,7 @@ mod reconcile_tests {
     /// A closing set from `(id, namespace, attempts)` tuples.
     fn closing<const N: usize>(
         entries: [(window::Id, &str, u32); N],
-    ) -> HashMap<window::Id, ClosingRecord> {
+    ) -> BTreeMap<window::Id, ClosingRecord> {
         entries
             .into_iter()
             .map(|(id, namespace, attempts)| {
@@ -406,13 +400,13 @@ mod reconcile_tests {
     fn plan(
         observation: Option<&obayebar_core::hypr::LayerMap>,
         monitors: &HashSet<String>,
-        bars: &HashMap<window::Id, BarRecord>,
+        bars: &BTreeMap<window::Id, BarRecord>,
     ) -> BarPlan {
         plan_from_observation(
             observation,
             monitors,
             bars,
-            &HashMap::new(),
+            &BTreeMap::new(),
             PREFIX,
             Instant::now(),
         )
@@ -423,7 +417,7 @@ mod reconcile_tests {
         // The single most damaging old behaviour: an IPC failure read as "no
         // monitors" closed every bar, which under StartMode::Active emptied
         // `units` and killed the process.
-        let plan = plan(None, &expected(["DP-1"]), &HashMap::new());
+        let plan = plan(None, &expected(["DP-1"]), &BTreeMap::new());
         assert_eq!(plan, BarPlan::default());
     }
 
@@ -440,7 +434,7 @@ mod reconcile_tests {
 
     #[test]
     fn an_empty_setup_spawns_for_one_monitor() {
-        let plan = plan(Some(&observed([])), &expected(["DP-1"]), &HashMap::new());
+        let plan = plan(Some(&observed([])), &expected(["DP-1"]), &BTreeMap::new());
         assert_eq!(plan.spawn.as_deref(), Some("DP-1"));
         assert!(plan.close.is_empty(), "{:?}", plan.close);
     }
@@ -453,7 +447,7 @@ mod reconcile_tests {
         let plan = plan(
             Some(&observed([])),
             &expected(["DP-1", "DP-2", "HDMI-A-1"]),
-            &HashMap::new(),
+            &BTreeMap::new(),
         );
         assert_eq!(plan.spawn.as_deref(), Some("DP-1"));
     }
@@ -614,7 +608,7 @@ mod reconcile_tests {
         let still_there = plan_from_observation(
             Some(&observed([("DP-1", &["obayebar-bar-1"][..])])),
             &expected(["DP-1"]),
-            &HashMap::new(),
+            &BTreeMap::new(),
             &closing([(a, "obayebar-bar-1", 0)]),
             PREFIX,
             Instant::now(),
@@ -627,7 +621,7 @@ mod reconcile_tests {
         let gone = plan_from_observation(
             Some(&observed([("DP-1", &[][..])])),
             &expected(["DP-1"]),
-            &HashMap::new(),
+            &BTreeMap::new(),
             &closing([(a, "obayebar-bar-1", 3)]),
             PREFIX,
             Instant::now(),
@@ -638,9 +632,9 @@ mod reconcile_tests {
 
     #[test]
     fn closing_and_verified_results_are_sorted_by_id() {
-        // Both fields come from walking a `HashMap` in an order this test
-        // sorts first — with unsorted ids this is the only thing that would
-        // catch a dropped `sort_by_key`.
+        // Both fields come from walking a `BTreeMap`, which iterates in id
+        // order regardless of insertion order — entries below are inserted
+        // high-before-low to prove that.
         let (v_lo, v_hi) = ordered_ids();
         let (o_lo, o_hi) = ordered_ids();
         let (g_lo, g_hi) = ordered_ids();
@@ -678,7 +672,7 @@ mod reconcile_tests {
         let plan = plan_from_observation(
             Some(&observed([("DP-1", &["obayebar-bar-1"][..])])),
             &expected(["DP-1"]),
-            &HashMap::new(),
+            &BTreeMap::new(),
             &closing([(a, "obayebar-bar-1", 0)]),
             PREFIX,
             Instant::now(),
@@ -697,7 +691,7 @@ mod reconcile_tests {
                 &["obayebar-bar-1", "obayebar-panel-audio", "waybar"][..],
             )])),
             &expected(["DP-1"]),
-            &HashMap::new(),
+            &BTreeMap::new(),
         );
         assert_eq!(plan.orphans, vec!["obayebar-bar-1".to_string()]);
     }
@@ -711,7 +705,7 @@ mod reconcile_tests {
         let plan = plan_from_observation(
             Some(&observed([("DP-1", &["obayebar-bar-999-1"][..])])),
             &expected(["DP-1"]),
-            &HashMap::new(),
+            &BTreeMap::new(),
             &closing([]),
             "obayebar-bar-1000-",
             Instant::now(),
@@ -781,7 +775,7 @@ mod reconcile_tests {
                 &["obayebar-panel-audio", "obayebar-notifications"][..],
             )])),
             &expected(["DP-1"]),
-            &HashMap::new(),
+            &BTreeMap::new(),
         );
         assert_eq!(plan.spawn.as_deref(), Some("DP-1"));
     }
@@ -801,7 +795,7 @@ mod reconcile_tests {
         let back = plan(
             Some(&observed([("DP-1", &["obayebar-bar-2"][..])])),
             &expected(["DP-1", "DP-2"]),
-            &HashMap::new(),
+            &BTreeMap::new(),
         );
         assert_eq!(back.spawn.as_deref(), Some("DP-1"));
     }
