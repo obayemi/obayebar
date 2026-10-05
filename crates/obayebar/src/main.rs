@@ -1034,8 +1034,9 @@ impl App {
         Task::batch(tasks)
     }
 
-    /// Ask the compositor where our bars actually are, after a delay that
-    /// grows if a spawn keeps failing to appear.
+    /// Ask the compositor where our bars actually are, after the fleet's
+    /// backoff delay (see [`bars::BarFleet::begin_verify`]), which grows
+    /// while a spawn or a close goes unhonoured.
     ///
     /// The delay exists because a surface is not mapped the instant
     /// `NewLayerShell` is queued; verifying immediately would see nothing and
