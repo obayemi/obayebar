@@ -126,8 +126,30 @@ pub fn plan_wallpapers<S: std::hash::BuildHasher>(
 
 /// Why an interval string could not be understood.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("{0}")]
-pub struct IntervalError(pub String);
+pub enum IntervalError {
+    /// No trailing `s`/`m`/`h`/`d` unit.
+    #[error("{input:?}: expected a trailing unit of s, m, h or d, as in \"30m\"")]
+    MissingUnit {
+        /// The untrimmed string that was rejected.
+        input: String,
+    },
+    /// The leading digits are not a whole number of the trailing unit.
+    #[error("{input:?}: {digits:?} is not a whole number of {unit} units")]
+    NotANumber {
+        /// The untrimmed string that was rejected.
+        input: String,
+        /// The leading digits, stripped of their trailing unit.
+        digits: String,
+        /// The trailing unit the digits were read against.
+        unit: char,
+    },
+    /// The interval, converted to seconds, overflows `u64`.
+    #[error("{input:?} is too large to be an interval")]
+    TooLarge {
+        /// The untrimmed string that was rejected.
+        input: String,
+    },
+}
 
 /// Parse a rotation interval such as `"30m"`.
 ///
@@ -138,8 +160,10 @@ pub struct IntervalError(pub String);
 ///
 /// # Errors
 ///
-/// Returns [`IntervalError`] when the string has no `s`/`m`/`h`/`d` suffix, when
-/// the leading digits are not a whole number, or when the result would overflow.
+/// Returns [`IntervalError::MissingUnit`] when the string has no `s`/`m`/`h`/`d`
+/// suffix, [`IntervalError::NotANumber`] when the leading digits are not a
+/// whole number, and [`IntervalError::TooLarge`] when the result would
+/// overflow.
 pub fn parse_interval(s: &str) -> Result<Option<Duration>, IntervalError> {
     let text = s.trim().to_ascii_lowercase();
     if matches!(text.as_str(), "" | "0" | "off" | "never" | "none") {
@@ -157,26 +181,28 @@ pub fn parse_interval(s: &str) -> Result<Option<Duration>, IntervalError> {
         'h' => 3_600,
         'd' => 86_400,
         _ => {
-            return Err(IntervalError(format!(
-                "{s:?}: expected a trailing unit of s, m, h or d, as in \"30m\""
-            )))
+            return Err(IntervalError::MissingUnit {
+                input: s.to_string(),
+            })
         }
     };
 
     // Not trimmed: the whole string was trimmed already, so any leftover
     // whitespace is *internal* ("30 m") and should be rejected, not absorbed.
     let digits = text.strip_suffix(unit).unwrap_or("");
-    let count: u64 = digits.parse().map_err(|_| {
-        IntervalError(format!(
-            "{s:?}: {digits:?} is not a whole number of {unit} units"
-        ))
+    let count: u64 = digits.parse().map_err(|_| IntervalError::NotANumber {
+        input: s.to_string(),
+        digits: digits.to_string(),
+        unit,
     })?;
     if count == 0 {
         return Ok(None);
     }
     let secs = count
         .checked_mul(secs_per)
-        .ok_or_else(|| IntervalError(format!("{s:?} is too large to be an interval")))?;
+        .ok_or_else(|| IntervalError::TooLarge {
+            input: s.to_string(),
+        })?;
 
     Ok(Some(Duration::from_secs(secs.max(MIN_INTERVAL_SECS))))
 }
@@ -383,5 +409,13 @@ mod tests {
     fn interval_rejects_overflow() {
         assert!(parse_interval("99999999999999999999d").is_err());
         assert!(parse_interval(&format!("{}d", u64::MAX)).is_err());
+    }
+
+    #[test]
+    fn interval_error_text_names_the_bad_digits() {
+        assert_eq!(
+            parse_interval("3xm").unwrap_err().to_string(),
+            r#""3xm": "3x" is not a whole number of m units"#
+        );
     }
 }
