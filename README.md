@@ -362,6 +362,17 @@ obayebar-lock [OPTIONS]
   -V, --version           Print version
 ```
 
+`obayebar-lock` exits 0 once the session is unlocked again, or once it has
+detached; 1 on a failure to start or run hyprlock, an unreadable default
+config, or a failed `--check`; 2 on bad usage, or a `--config` that was
+named but cannot be read; 3 when a lock screen is already running. A
+keybind or an idle daemon can act on these. `--replace` and `--no-scope`
+are refused together, since without a scope there is no lock screen to
+take over, and `--no-scope` is also refused inside a systemd unit, where a
+unit restart could kill the lock screen out from under its session. The
+hyprlock binary can be overridden with `OBAYEBAR_HYPRLOCK`, which the Nix
+package sets so the wrapped binary does not depend on `PATH`.
+
 `obayebar-launcher` takes `--help` and `--version`, and nothing else. Each
 other use shows or hides the launcher of the running bar.
 
