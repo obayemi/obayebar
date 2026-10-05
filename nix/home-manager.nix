@@ -154,9 +154,9 @@ in {
         default = false;
         description = ''
           Let systemd-oomd kill programs launched from the bar when the
-          session runs out of memory. They all live in the
-          app-obayebar.slice cgroup, so oomd can shed the whole slice
-          while leaving the session's own services alone.
+          session runs out of memory. They all live in the slice named
+          by `systemd.slice`, so oomd can shed the whole slice while
+          leaving the session's own services alone.
 
           Off by default: closing someone's browser without warning is
           a surprise, and it does nothing at all unless systemd-oomd is
