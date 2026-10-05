@@ -317,9 +317,9 @@ mod select_wifi_rows_tests {
 
     #[test]
     fn active_and_connecting_rows_are_shown_even_past_the_cap() {
+        use super::WifiRowState::{Active, Connecting};
         let aps = [ap("a"), ap("b"), ap("c")];
         let rows = select_wifi_rows(&aps, Some("a"), Some("b"), 1);
-        let ssids: Vec<&str> = rows.iter().map(|r| r.ap.ssid.as_str()).collect();
-        assert_eq!(ssids, ["b", "a"]);
+        assert_eq!(states(&rows), vec![("b", Connecting), ("a", Active)]);
     }
 }
