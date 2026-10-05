@@ -5,8 +5,10 @@
 //! the gap between a tracking map and reality.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::time::{Duration, Instant};
 
 use iced::window;
+use obayebar_core::hypr::LayerMap;
 
 /// How long a freshly spawned bar gets to show up in `j/layers` before we give
 /// up on it and replace it.
@@ -17,7 +19,7 @@ use iced::window;
 /// inside a fraction of a second — long before a compositor busy re-creating
 /// outputs has mapped anything. Two seconds comfortably covers a hotplug map
 /// without leaving a monitor bare.
-pub const VERIFY_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+pub const VERIFY_GRACE: Duration = Duration::from_secs(2);
 
 /// One bar surface we have asked the compositor for.
 ///
@@ -46,7 +48,7 @@ pub enum BarState {
     /// Requested but not yet observed. Given the benefit of the doubt for
     /// `VERIFY_GRACE` from `spawned_at`, so a surface that has not mapped yet
     /// does not mask its monitor forever.
-    Mapping { spawned_at: std::time::Instant },
+    Mapping { spawned_at: Instant },
     /// Observed on the monitor it was requested for.
     Verified,
 }
@@ -137,12 +139,12 @@ pub struct BarPlan {
 /// means the query failed. `now` is the clock the grace window is measured
 /// against, passed in so this stays a pure function of its inputs.
 pub fn plan_from_observation(
-    observed: Option<&obayebar_core::hypr::LayerMap>,
+    observed: Option<&LayerMap>,
     expected: &HashSet<String>,
     tracked: &BTreeMap<window::Id, BarRecord>,
     closing: &BTreeMap<window::Id, ClosingRecord>,
     prefix: &str,
-    now: std::time::Instant,
+    now: Instant,
 ) -> BarPlan {
     let mut plan = BarPlan::default();
 
@@ -219,7 +221,7 @@ fn next_spawn(expected: &HashSet<String>, covered: &HashSet<&str>) -> Option<Str
 }
 
 /// Where each namespace actually is, according to the compositor.
-fn locate(observed: &obayebar_core::hypr::LayerMap) -> HashMap<&str, &str> {
+fn locate(observed: &LayerMap) -> HashMap<&str, &str> {
     observed
         .iter()
         .flat_map(|(monitor, namespaces)| {
@@ -252,7 +254,7 @@ fn classify_record<'a>(
     location: &HashMap<&str, &'a str>,
     expected: &HashSet<String>,
     covered: &mut HashSet<&'a str>,
-    now: std::time::Instant,
+    now: Instant,
 ) -> Outcome {
     let monitor_disconnected = !expected.contains(&record.monitor);
     match location.get(record.namespace.as_str()) {
@@ -332,7 +334,7 @@ mod reconcile_tests {
     use super::{
         locate, next_spawn, orphans, partition_closing, plan_from_observation,
         should_reissue_close, uncovered_monitors, BarPlan, BarRecord, BarState, CloseReason,
-        ForgetReason, VERIFY_GRACE,
+        ForgetReason, LayerMap, VERIFY_GRACE,
     };
     use iced::window;
     use std::collections::{BTreeMap, HashSet};
@@ -351,7 +353,7 @@ mod reconcile_tests {
 
     /// The common case: nothing being closed, every grace window still open.
     fn plan(
-        observation: Option<&obayebar_core::hypr::LayerMap>,
+        observation: Option<&LayerMap>,
         monitors: &HashSet<String>,
         bars: &BTreeMap<window::Id, BarRecord>,
     ) -> BarPlan {
