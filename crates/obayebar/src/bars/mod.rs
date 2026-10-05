@@ -241,7 +241,7 @@ impl BarFleet {
         );
 
         self.apply_verified(&plan.verified);
-        log_pending(&self.tracked, &plan.pending);
+        self.log_pending(&plan.pending);
         self.apply_forgets(&plan.forget);
         let mut close_ids = self.apply_closes(&plan.close);
         close_ids.extend(self.apply_closing(&plan.closing_observed, &plan.closing_gone));
@@ -318,6 +318,19 @@ impl BarFleet {
             close_ids.push(*id);
         }
         close_ids
+    }
+
+    /// Log each record still inside its grace window, waiting to be observed.
+    fn log_pending(&self, pending: &[window::Id]) {
+        for id in pending {
+            if let Some(record) = self.tracked.get(id) {
+                log::debug!(
+                    "bars: still waiting for {} on {}",
+                    record.namespace,
+                    record.monitor
+                );
+            }
+        }
     }
 
     /// Drop each record whose surface the observation shows is genuinely
@@ -427,19 +440,6 @@ impl BarFleet {
                 // verification passes will surface as a persistent message.
                 log::debug!("bars: monitor {monitor} has no bar yet");
             }
-        }
-    }
-}
-
-/// Log each record still inside its grace window, waiting to be observed.
-fn log_pending(tracked: &BTreeMap<window::Id, BarRecord>, pending: &[window::Id]) {
-    for id in pending {
-        if let Some(record) = tracked.get(id) {
-            log::debug!(
-                "bars: still waiting for {} on {}",
-                record.namespace,
-                record.monitor
-            );
         }
     }
 }
