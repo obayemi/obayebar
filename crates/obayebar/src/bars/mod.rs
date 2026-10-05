@@ -405,16 +405,16 @@ impl BarFleet {
             .values()
             .map(|r| r.namespace.as_str())
             .collect();
-        let mut per_monitor: HashMap<&str, usize> = HashMap::new();
-        for (monitor, namespaces) in observed {
-            let count = namespaces
-                .iter()
-                .filter(|ns| ours.contains(ns.as_str()))
-                .count();
-            if count > 0 {
-                per_monitor.insert(monitor.as_str(), count);
-            }
-        }
+        let per_monitor: HashMap<&str, usize> = observed
+            .iter()
+            .filter_map(|(monitor, namespaces)| {
+                let count = namespaces
+                    .iter()
+                    .filter(|ns| ours.contains(ns.as_str()))
+                    .count();
+                (count > 0).then_some((monitor.as_str(), count))
+            })
+            .collect();
         for (monitor, count) in &per_monitor {
             if *count > 1 {
                 log::error!("bar invariant: {count} bars observed on monitor {monitor}");

@@ -220,13 +220,14 @@ fn next_spawn(expected: &HashSet<String>, covered: &HashSet<&str>) -> Option<Str
 
 /// Where each namespace actually is, according to the compositor.
 fn locate(observed: &obayebar_core::hypr::LayerMap) -> HashMap<&str, &str> {
-    let mut location = HashMap::new();
-    for (monitor, namespaces) in observed {
-        for namespace in namespaces {
-            location.insert(namespace.as_str(), monitor.as_str());
-        }
-    }
-    location
+    observed
+        .iter()
+        .flat_map(|(monitor, namespaces)| {
+            namespaces
+                .iter()
+                .map(move |namespace| (namespace.as_str(), monitor.as_str()))
+        })
+        .collect()
 }
 
 /// What [`plan_from_observation`] decided for one tracked record.
