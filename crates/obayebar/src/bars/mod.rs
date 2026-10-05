@@ -242,8 +242,8 @@ impl BarFleet {
 
         self.apply_verified(&plan.verified);
         log_pending(&self.tracked, &plan.pending);
-        let mut close_ids = self.apply_closes(&plan.close);
         self.apply_forgets(&plan.forget);
+        let mut close_ids = self.apply_closes(&plan.close);
         close_ids.extend(self.apply_closing(&plan.closing_observed, &plan.closing_gone));
         log_orphans(&plan.orphans);
 
