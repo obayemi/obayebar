@@ -44,9 +44,6 @@ let
     inherit (cfg.systemd) slice;
   };
 
-  # The union of every section, not just GitLab's. Gating on one feature's
-  # attrs meant a wallpaper-only configuration produced no config.toml at all,
-  # with no warning — the file simply was not written.
   settings =
     lib.optionalAttrs (gitlabAttrs != { }) { gitlab = gitlabAttrs; }
     // lib.optionalAttrs (mediaAttrs != { }) { media = mediaAttrs; }
