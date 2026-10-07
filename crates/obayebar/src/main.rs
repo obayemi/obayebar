@@ -619,8 +619,10 @@ impl App {
                 Task::none()
             }
             Message::NotifActivate(id) => {
-                let notif = self.popup_notifications.iter().find(|n| n.id == id);
-                let action_key = notif
+                let action_key = self
+                    .popup_notifications
+                    .iter()
+                    .find(|n| n.id == id)
                     .and_then(|n| n.actions.first())
                     .map_or_else(|| "default".to_string(), |(key, _)| key.clone());
                 self.popup_notifications.retain(|n| n.id != id);

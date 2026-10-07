@@ -333,7 +333,7 @@ An overlay is also available. The overlay adds `obayebar` to `pkgs`.
 | Bluetooth       | BlueZ (dbus)                             | The panel starts the adapter, finds devices, and forgets devices.                                                                                           |
 | Battery / power | UPower + `power-profiles-daemon` (dbus)  | Hidden when no battery is present. The panel changes the power profile.                                                                                     |
 | Sysinfo         | `/proc`, NVML                            | Shows CPU, GPU, RAM, and network rates. The color changes at a limit.                                                                                       |
-| Notifications   | `org.freedesktop.Notifications` (dbus)   | Left click runs the default action with an activation token, right click dismisses. Replaces `mako` and `dunst`. Maximum height is 2/5 of the monitor.      |
+| Notifications   | `org.freedesktop.Notifications` (dbus)   | Left click invokes the first advertised action, else `default`; right click dismisses. Replaces `mako` and `dunst`. Maximum height is 2/5 of the monitor.   |
 
 ## Command-line reference
 
@@ -757,6 +757,7 @@ decisions come from that goal:
 | `serde` + `toml`              | Config file parsing                                                  |
 | `ab_glyph` + `fontdb`         | Vector text on the workspace canvas                                  |
 | `thiserror`                   | Typed errors on the IPC and rendering paths                          |
+| `wayland-protocols`           | `xdg_activation_v1`, the token a click hands to the app it opens     |
 | `wayland-protocols-hyprland`  | `hyprland_lock_notifier_v1`, whether the session is locked           |
 
 ## Build from source

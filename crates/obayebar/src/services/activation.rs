@@ -7,7 +7,7 @@
 //! trades it for a token on demand. Whether the token then moves focus is the
 //! compositor's call (`misc:focus_on_activate` on Hyprland).
 
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use tokio::sync::oneshot;
@@ -30,13 +30,16 @@ struct Activation {
     queue: QueueHandle<Tracker>,
     seat: WlSeat,
     manager: XdgActivationV1,
-    last_click: Mutex<Option<u32>>,
+    last_click: Arc<Mutex<Option<u32>>>,
 }
 
 static ACTIVATION: OnceLock<Activation> = OnceLock::new();
 
-/// Dispatch target of the activation queue; its state lives in [`ACTIVATION`].
-struct Tracker;
+/// Dispatch state of the activation queue: the serial of the latest click,
+/// shared with [`Activation`].
+struct Tracker {
+    last_click: Arc<Mutex<Option<u32>>>,
+}
 
 type PendingToken = Mutex<Option<oneshot::Sender<String>>>;
 
@@ -57,20 +60,23 @@ pub fn connect() -> Option<Connection> {
 fn track_clicks(connection: &Connection) -> Result<(), Box<dyn std::error::Error>> {
     let (globals, mut queue) = registry_queue_init::<Tracker>(connection)?;
     let qh = queue.handle();
+    let mut tracker = Tracker {
+        last_click: Arc::default(),
+    };
     let activation = Activation {
         connection: connection.clone(),
         seat: globals.bind(&qh, 1..=5, ())?,
         manager: globals.bind(&qh, 1..=1, ())?,
         queue: qh,
-        last_click: Mutex::new(None),
+        last_click: Arc::clone(&tracker.last_click),
     };
-    if ACTIVATION.set(activation).is_err() {
-        return Err("already tracking clicks".into());
-    }
+    ACTIVATION
+        .set(activation)
+        .map_err(|_| "already tracking clicks")?;
     std::thread::Builder::new()
         .name("activation".into())
         .spawn(move || loop {
-            if let Err(e) = queue.blocking_dispatch(&mut Tracker) {
+            if let Err(e) = queue.blocking_dispatch(&mut tracker) {
                 log::warn!("activation: event queue stopped: {e}");
                 break;
             }
@@ -86,20 +92,21 @@ pub async fn token() -> Option<String> {
     let activation = ACTIVATION.get()?;
     let serial = (*activation.last_click.lock().ok()?)?;
     let (sender, receiver) = oneshot::channel();
-    let token = activation
+    let request = activation
         .manager
         .get_activation_token(&activation.queue, Mutex::new(Some(sender)));
-    token.set_serial(serial, &activation.seat);
-    token.commit();
-    if let Err(e) = activation.connection.flush() {
-        log::warn!("activation: token request not sent: {e}");
-        return None;
-    }
-    let granted = tokio::time::timeout(TOKEN_TIMEOUT, receiver).await;
-    if granted.is_err() {
-        log::warn!("activation: no token granted for serial {serial}");
-    }
-    granted.ok()?.ok()
+    request.set_serial(serial, &activation.seat);
+    request.commit();
+    activation
+        .connection
+        .flush()
+        .inspect_err(|e| log::warn!("activation: token request not sent: {e}"))
+        .ok()?;
+    tokio::time::timeout(TOKEN_TIMEOUT, receiver)
+        .await
+        .inspect_err(|_| log::warn!("activation: no token granted for serial {serial}"))
+        .ok()?
+        .ok()
 }
 
 impl Dispatch<WlRegistry, GlobalListContents> for Tracker {
@@ -136,7 +143,7 @@ impl Dispatch<WlSeat, ()> for Tracker {
 
 impl Dispatch<WlPointer, ()> for Tracker {
     fn event(
-        _: &mut Self,
+        state: &mut Self,
         _: &WlPointer,
         event: wl_pointer::Event,
         (): &(),
@@ -144,7 +151,7 @@ impl Dispatch<WlPointer, ()> for Tracker {
         _: &QueueHandle<Self>,
     ) {
         if let wl_pointer::Event::Button { serial, .. } = event {
-            if let Some(Ok(mut last_click)) = ACTIVATION.get().map(|a| a.last_click.lock()) {
+            if let Ok(mut last_click) = state.last_click.lock() {
                 *last_click = Some(serial);
             }
         }

@@ -16,7 +16,6 @@ pub struct NotificationImage {
 #[derive(Debug, Clone)]
 pub struct NotificationData {
     pub id: u32,
-    pub app_name: String,
     pub app_icon: String,
     pub summary: String,
     pub body: String,
@@ -127,7 +126,6 @@ impl NotificationServer {
 
         let notif = NotificationData {
             id,
-            app_name,
             app_icon,
             summary,
             body,
@@ -220,7 +218,7 @@ pub fn emit_closed(id: u32, reason: u32) {
     });
 }
 
-/// Emit `ActionInvoked` for the "default" action, then close the notification.
+/// Emit `ActionInvoked` for `action_key`, then close the notification.
 ///
 /// An `ActivationToken` goes first when the compositor grants one, so the app
 /// can raise the window that handles the action.

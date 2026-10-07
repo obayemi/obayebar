@@ -222,7 +222,7 @@ pub struct Program {
     /// `ManagedOOMPreference=avoid`: oomd kills the rest of the slice first.
     protected: bool,
     /// Variables set for this program alone, on top of the session's.
-    env: Vec<(String, OsString)>,
+    own_env: Vec<(String, OsString)>,
 }
 
 impl Program {
@@ -246,14 +246,14 @@ impl Program {
             slice: configured_slice().to_string(),
             singleton: None,
             protected: false,
-            env: Vec::new(),
+            own_env: Vec::new(),
         }
     }
 
     /// Set `name` to `value` in this program's environment only.
     #[must_use]
     pub fn env(mut self, name: &str, value: impl Into<OsString>) -> Self {
-        self.env.push((name.to_string(), value.into()));
+        self.own_env.push((name.to_string(), value.into()));
         self
     }
 
@@ -463,7 +463,7 @@ impl Program {
         let mut command = Command::new(program);
         command
             .args(rest)
-            .envs(self.env.iter().map(|(name, value)| (name, value)));
+            .envs(self.own_env.iter().map(|(name, value)| (name, value)));
         if self.mode == Mode::Service {
             // `run` reads stderr to report why systemd-run said no. A scope is
             // handed to the caller instead, and piping a stream nobody reads
@@ -509,7 +509,7 @@ impl Program {
                         // program is up: a launcher click should not wait on
                         // an application's startup.
                         argv.push("--no-block".into());
-                        for (name, value) in env.iter().chain(&self.env) {
+                        for (name, value) in env.iter().chain(&self.own_env) {
                             let mut arg = OsString::from(format!("--setenv={name}="));
                             arg.push(value);
                             argv.push(arg);
