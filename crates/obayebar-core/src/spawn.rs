@@ -221,6 +221,8 @@ pub struct Program {
     singleton: Option<OnCollision>,
     /// `ManagedOOMPreference=avoid`: oomd kills the rest of the slice first.
     protected: bool,
+    /// Variables set for this program alone, on top of the session's.
+    env: Vec<(String, OsString)>,
 }
 
 impl Program {
@@ -244,7 +246,15 @@ impl Program {
             slice: configured_slice().to_string(),
             singleton: None,
             protected: false,
+            env: Vec::new(),
         }
+    }
+
+    /// Set `name` to `value` in this program's environment only.
+    #[must_use]
+    pub fn env(mut self, name: &str, value: impl Into<OsString>) -> Self {
+        self.env.push((name.to_string(), value.into()));
+        self
     }
 
     /// Put this one program in `slice` rather than in whatever the config
@@ -451,7 +461,9 @@ impl Program {
             .split_first()
             .map_or((OsString::new(), [].as_slice()), |(p, r)| (p.clone(), r));
         let mut command = Command::new(program);
-        command.args(rest);
+        command
+            .args(rest)
+            .envs(self.env.iter().map(|(name, value)| (name, value)));
         if self.mode == Mode::Service {
             // `run` reads stderr to report why systemd-run said no. A scope is
             // handed to the caller instead, and piping a stream nobody reads
@@ -497,7 +509,7 @@ impl Program {
                         // program is up: a launcher click should not wait on
                         // an application's startup.
                         argv.push("--no-block".into());
-                        for (name, value) in env {
+                        for (name, value) in env.iter().chain(&self.env) {
                             let mut arg = OsString::from(format!("--setenv={name}="));
                             arg.push(value);
                             argv.push(arg);
@@ -718,6 +730,27 @@ mod tests {
             &env,
         ));
         assert!(!scope.iter().any(|a| a.starts_with("--setenv")));
+    }
+
+    #[test]
+    fn a_service_carries_its_own_environment() {
+        let program = Program::new("xdg-open").env("XDG_ACTIVATION_TOKEN", "t0k3n");
+        let argv = strings(&program.wrapped_argv(&systemd(), None, &[]));
+        assert!(argv.contains(&"--setenv=XDG_ACTIVATION_TOKEN=t0k3n".to_string()));
+    }
+
+    #[test]
+    fn a_scope_hands_its_own_environment_to_the_program() {
+        let program = Program::new("xdg-open")
+            .mode(Mode::Scope)
+            .env("XDG_ACTIVATION_TOKEN", "t0k3n");
+        let command = program.command_with(&systemd(), None, &[]);
+        assert!(
+            command
+                .get_envs()
+                .any(|(name, value)| name == "XDG_ACTIVATION_TOKEN"
+                    && value == Some("t0k3n".as_ref()))
+        );
     }
 
     #[test]
