@@ -178,6 +178,13 @@ impl NotificationServer {
     ) -> zbus::Result<()>;
 
     #[zbus(signal)]
+    async fn activation_token(
+        emitter: &SignalEmitter<'_>,
+        id: u32,
+        activation_token: &str,
+    ) -> zbus::Result<()>;
+
+    #[zbus(signal)]
     async fn action_invoked(
         emitter: &SignalEmitter<'_>,
         id: u32,
@@ -214,12 +221,22 @@ pub fn emit_closed(id: u32, reason: u32) {
 }
 
 /// Emit `ActionInvoked` for the "default" action, then close the notification.
+///
+/// An `ActivationToken` goes first when the compositor grants one, so the app
+/// can raise the window that handles the action.
 pub fn invoke_action(id: u32, action_key: String) {
     tokio::spawn(async move {
+        let token = super::activation::token().await;
         let Some(iface) = interface_ref("ActionInvoked").await else {
             return;
         };
         let emitter = iface.signal_emitter();
+        if let Some(token) = token {
+            log_emit(
+                "ActivationToken",
+                NotificationServer::activation_token(emitter, id, &token).await,
+            );
+        }
         log_emit(
             "ActionInvoked",
             NotificationServer::action_invoked(emitter, id, &action_key).await,

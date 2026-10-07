@@ -276,18 +276,22 @@ enum FetchError {
     Network(String),
 }
 
-/// Open the URL in the user's preferred browser. Focus is left to the
-/// compositor, so the pointer and the workspace stay where they are.
-pub fn open_in_browser(url: &str) {
-    // Through the spawner, so the browser this opens survives a bar
-    // restart instead of going down with the bar's cgroup.
-    if let Err(e) = obayebar_core::spawn::Program::new("xdg-open")
-        .arg(url)
-        .tag("browser")
-        .spawn()
-    {
-        log::warn!("gitlab: opening {url} failed: {e}");
-    }
+/// Open the URL in the user's preferred browser, handing it an activation
+/// token so the compositor can raise the window that shows the URL.
+pub fn open_in_browser(url: String) {
+    tokio::spawn(async move {
+        let mut browser = obayebar_core::spawn::Program::new("xdg-open")
+            .arg(&url)
+            .tag("browser");
+        if let Some(token) = super::activation::token().await {
+            browser = browser.env("XDG_ACTIVATION_TOKEN", token);
+        }
+        // Through the spawner, so the browser this opens survives a bar
+        // restart instead of going down with the bar's cgroup.
+        if let Err(e) = browser.spawn() {
+            log::warn!("gitlab: opening {url} failed: {e}");
+        }
+    });
 }
 
 /// Open the user's editor on the token file path, creating the directory first.

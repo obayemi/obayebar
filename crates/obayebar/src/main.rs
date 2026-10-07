@@ -217,6 +217,7 @@ fn main() {
             },
             fonts: icon_fonts,
             antialiasing: true,
+            with_connection: services::activation::connect().map(Into::into),
             ..Settings::default()
         })
         .subscription(App::subscription)
@@ -644,7 +645,7 @@ impl App {
             }
             Message::GitlabOpenUrl(url) => {
                 if !url.is_empty() {
-                    services::gitlab::open_in_browser(&url);
+                    services::gitlab::open_in_browser(url);
                 }
                 self.close_all_panels()
             }

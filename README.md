@@ -39,6 +39,10 @@ refusal, but hypridle runs its command through a shell and discards
 hyprctl's reply, so the idle path fails silently: the screens just never
 blank, with nothing logged.
 
+The bar never moves focus itself. A click on a notification or a GitLab
+todo hands the app an xdg-activation token, and Hyprland raises the window
+that handles it only with `misc:focus_on_activate` enabled.
+
 ### 1. Install the programs
 
 The flake gives all four programs. Start the bar immediately:
@@ -329,7 +333,7 @@ An overlay is also available. The overlay adds `obayebar` to `pkgs`.
 | Bluetooth       | BlueZ (dbus)                             | The panel starts the adapter, finds devices, and forgets devices.                                                                                           |
 | Battery / power | UPower + `power-profiles-daemon` (dbus)  | Hidden when no battery is present. The panel changes the power profile.                                                                                     |
 | Sysinfo         | `/proc`, NVML                            | Shows CPU, GPU, RAM, and network rates. The color changes at a limit.                                                                                       |
-| Notifications   | `org.freedesktop.Notifications` (dbus)   | Left click runs the default action, right click dismisses. Replaces `mako` and `dunst`. Maximum height is 2/5 of the monitor.                               |
+| Notifications   | `org.freedesktop.Notifications` (dbus)   | Left click runs the default action with an activation token, right click dismisses. Replaces `mako` and `dunst`. Maximum height is 2/5 of the monitor.      |
 
 ## Command-line reference
 

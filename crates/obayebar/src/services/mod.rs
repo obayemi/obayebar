@@ -1,3 +1,4 @@
+pub mod activation;
 pub mod audio;
 pub mod battery;
 pub mod bluetooth;

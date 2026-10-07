@@ -3118,6 +3118,8 @@ dependencies = [
  "toml",
  "url",
  "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
  "zbus",
 ]
 
