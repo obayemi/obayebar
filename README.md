@@ -329,7 +329,7 @@ An overlay is also available. The overlay adds `obayebar` to `pkgs`.
 | Bluetooth       | BlueZ (dbus)                             | The panel starts the adapter, finds devices, and forgets devices.                                                                                           |
 | Battery / power | UPower + `power-profiles-daemon` (dbus)  | Hidden when no battery is present. The panel changes the power profile.                                                                                     |
 | Sysinfo         | `/proc`, NVML                            | Shows CPU, GPU, RAM, and network rates. The color changes at a limit.                                                                                       |
-| Notifications   | `org.freedesktop.Notifications` (dbus)   | Left click focuses the sending app, right click dismisses. Replaces `mako` and `dunst`. Maximum height is 2/5 of the monitor.                               |
+| Notifications   | `org.freedesktop.Notifications` (dbus)   | Left click runs the default action, right click dismisses. Replaces `mako` and `dunst`. Maximum height is 2/5 of the monitor.                               |
 
 ## Command-line reference
 

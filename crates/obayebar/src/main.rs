@@ -622,15 +622,11 @@ impl App {
                 let action_key = notif
                     .and_then(|n| n.actions.first())
                     .map_or_else(|| "default".to_string(), |(key, _)| key.clone());
-                let app_name = notif.map(|n| n.app_name.clone());
                 self.popup_notifications.retain(|n| n.id != id);
                 if self.hovered_notif_id == Some(id) {
                     self.hovered_notif_id = None;
                 }
                 services::notifications::invoke_action(id, action_key);
-                if let Some(name) = app_name {
-                    services::hyprland::focus_window(&name);
-                }
                 self.maybe_close_popup_window()
             }
             Message::PanelOpen(request) => self.open_panel(request),
@@ -648,7 +644,7 @@ impl App {
             }
             Message::GitlabOpenUrl(url) => {
                 if !url.is_empty() {
-                    services::gitlab::open_in_browser(url);
+                    services::gitlab::open_in_browser(&url);
                 }
                 self.close_all_panels()
             }
